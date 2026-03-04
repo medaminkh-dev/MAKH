@@ -175,5 +175,53 @@ Phase 2 can now build upon this foundation to add:
 - Serial port logging
 - Basic shell
 
+## Changes from Initial Version to Working Version
+
+The following modifications were made to fix issues and make the kernel boot successfully:
+
+### 1. Bootloader Fixes (boot.asm)
+
+| Fix | Description | Impact |
+|-----|-------------|--------|
+| **GDT Copy to Low Memory** | Copy GDT to address `0x800` (below 1MB) to ensure Identity Mapping | Fixed General Protection Fault when entering Long Mode |
+| **Checksum Fix** | Changed checksum calculation from `0x100000000 - (...)` to `-(...) & 0xFFFFFFFF` | Corrected Multiboot2 header checksum value |
+| **SSE Enable** | Enable SSE before entering Long Mode (`CR0.MP`, `CR4.OSFXSR`) | Fixed crashes with optimized code |
+| **VGA Access Fix** | Use `dword` moves instead of `word` moves | Fixed VGA buffer access issues |
+| **GDT Load Before Paging** | Load GDT64 **before** enabling Paging | Ensures valid GDT exists in Compatibility Mode |
+| **Far Jump via RETF** | Use `retf` trick instead of direct `jmp` | Solved address calculation issue in 32-bit mode |
+| **Multiboot Alignment** | Push `0` then `esi` to create 64-bit value | Fixed pointer alignment when popping in 64-bit |
+
+### 2. Makefile Improvements
+- Added `-Werror` to treat warnings as errors
+- Added `-fno-pic` to prevent Position Independent Code
+- Added `-fomit-frame-pointer` and `-fno-asynchronous-unwind-tables` for cleaner code
+
+### 3. GRUB Configuration (grub.cfg)
+- Hide GRUB menu (`timeout=0`, `hidden_timeout=0`)
+- Removed Debug Mode entry
+
+### 4. VGA Driver Enhancements
+- Added `terminal_initialize_noclear()` to preserve screen content
+- Preserves bootloader messages for diagnostics
+
+### 5. Kernel Checkpoints
+Added 12 diagnostic checkpoints on screen:
+```
+3 2 - b i t X A E 3 G P    (First line - 32-bit mode)
+L D P S K C R              (Third line - 64-bit mode)
+k t i B b                  (Inside kernel_main)
+```
+
+### Summary of Critical Fixes
+
+1. **GDT Issue**: The initial version tried to use GDT at a high address (`0x100000+`), but after enabling Paging, the CPU entered Compatibility Mode and couldn't find a valid GDT at selector `0x08`.
+
+2. **VGA Issue**: Using `mov [edi], ax` in 32-bit mode with `bits 32` directive didn't work correctly with some QEMU configurations.
+
+3. **SSE Issue**: Optimized code uses XMM registers which require SSE to be enabled.
+
+4. **Multiboot Alignment**: The info pointer must be 64-bit aligned when popped in long mode.
+
 ---
 Report generated: 2026-03-03
+Last updated: 2026-03-04 (Post-GitHub fixes)
