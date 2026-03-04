@@ -10,9 +10,12 @@ CC = $(shell which x86_64-elf-gcc 2>/dev/null || echo gcc)
 LD = $(shell which x86_64-elf-ld 2>/dev/null || echo ld)
 
 # Compiler flags
-CFLAGS = -m64 -march=x86-64 -ffreestanding -O2 -Wall -Wextra -nostdlib -nostartfiles
-CFLAGS += -fno-exceptions -fno-rtti -fno-stack-protector -mno-red-zone -mcmodel=large
+CFLAGS = -m64 -march=x86-64 -ffreestanding -O2 -Wall -Wextra -Werror -nostdlib -nostartfiles
+CFLAGS += -fno-stack-protector -mno-red-zone -mcmodel=large -fno-pic
+CFLAGS += -fomit-frame-pointer -fno-asynchronous-unwind-tables
 CFLAGS += -Ikernel/include
+# Debug flags (uncomment for debugging)
+# CFLAGS += -g -DDEBUG
 
 # Assembler
 AS = nasm
