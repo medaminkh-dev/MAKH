@@ -23,6 +23,18 @@ void terminal_initialize(void) {
 }
 
 /**
+ * terminal_initialize_noclear - Initialize VGA without clearing screen
+ * Preserves existing content (useful for preserving bootloader messages)
+ */
+void terminal_initialize_noclear(void) {
+    terminal.buffer = (uint16_t*)VGA_BUFFER_ADDR;
+    terminal.row = 3;  /* Start after bootloader messages */
+    terminal.column = 0;
+    terminal.color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    /* Intentionally NOT calling terminal_clear() */
+}
+
+/**
  * terminal_setcolor - Set the current text color
  * @color: The color byte (foreground | background << 4)
  */
