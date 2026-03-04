@@ -108,6 +108,13 @@ ISR_NOERR 29  ; Reserved
 ISR_ERR   30  ; Security Exception
 ISR_NOERR 31  ; Reserved
 
+; IRQ stubs (vectors 32-47)
+%assign i 32
+%rep 16
+    ISR_NOERR i
+%assign i i+1
+%endrep
+
 ; Test vectors
 ISR_NOERR 0x30  ; Test vector 48 (0x30)
 ISR_NOERR 0x48  ; Test vector 72 (0x48)
@@ -123,11 +130,9 @@ isr_stub_table:
     dq isr16, isr17, isr18, isr19, isr20, isr21, isr22, isr23
     dq isr24, isr25, isr26, isr27, isr28, isr29, isr30, isr31
     
-    ; Vectors 32-47 (reserved/IRQs) - use default
-    dq isr_default, isr_default, isr_default, isr_default
-    dq isr_default, isr_default, isr_default, isr_default
-    dq isr_default, isr_default, isr_default, isr_default
-    dq isr_default, isr_default, isr_default, isr_default
+    ; IRQs 32-47 (remapped from PIC)
+    dq isr32, isr33, isr34, isr35, isr36, isr37, isr38, isr39
+    dq isr40, isr41, isr42, isr43, isr44, isr45, isr46, isr47
     
     ; Vectors 48-71 - fill with defaults
     dq isr0x30  ; Custom test handler at vector 0x30 (48)
