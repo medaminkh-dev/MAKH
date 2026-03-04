@@ -1,4 +1,5 @@
 # MakhOS - Makefile
+# Version: 0.0.2
 # Build system for x86_64 kernel
 
 # Target architecture
@@ -25,8 +26,8 @@ ASFLAGS = -f elf64
 LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
-ASM_SOURCES = boot/boot.asm
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c
+ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
