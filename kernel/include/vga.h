@@ -43,6 +43,7 @@ struct terminal_state {
 
 /* Function prototypes */
 void terminal_initialize(void);
+void terminal_initialize_noclear(void);
 void terminal_setcolor(uint8_t color);
 void terminal_putchar(char c);
 void terminal_writestring(const char* str);
