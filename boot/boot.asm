@@ -1,4 +1,4 @@
-; MakhOS Bootloader - Phase 1
+; MakhOS Bootloader - Version 0.0.2
 ; boot.asm - Multiboot2 compliant bootloader with 32→64 bit transition
 ; Target: x86_64 (amd64)
 
@@ -301,6 +301,9 @@ long_mode_start:
     ; Restore multiboot info pointer
     pop rdi                         ; RDI = multiboot2 info structure (first arg for C)
     
+    ; Store multiboot info pointer in global variable for C code
+    mov [multiboot_info_ptr], rdi
+    
     ; Checkpoint: 'P' for Pop done
     mov al, 'P'
     mov [rcx + 4], ax
@@ -353,6 +356,19 @@ long_mode_start:
 ; EXTERNAL SYMBOLS (defined in C code)
 ; ============================================================================
 extern kernel_main
+
+; ============================================================================
+; GLOBAL SYMBOLS (exported to C code)
+; ============================================================================
+global multiboot_info_ptr
+
+; ============================================================================
+; DATA SECTION
+; ============================================================================
+section .data
+align 8
+multiboot_info_ptr:
+    dq 0                            ; Will be set to RDI value in long_mode_start
 
 ; ============================================================================
 ; BSS SECTION (uninitialized data)
