@@ -11,7 +11,7 @@
 /* Kernel version */
 #define KERNEL_NAME     "MakhOS"
 #define KERNEL_VERSION  "0.0.2"
-#define KERNEL_PHASE    "Phase 2 Part 4"
+#define KERNEL_PHASE    "Phase 2 Part 5"
 
 /* Kernel main entry point - called from boot.asm */
 void kernel_main(void);
