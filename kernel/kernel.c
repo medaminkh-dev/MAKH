@@ -54,14 +54,31 @@ static void print_banner(void) {
  * Note: The multiboot info pointer is passed in RDI by boot.asm
  */
 void kernel_main(void) {
-    /* Initialize VGA terminal (starts after bootloader messages) */
-    terminal_initialize();
+    /* Early checkpoint - direct VGA write before any function calls */
+    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+    vga[80] = (0x0F << 8) | 'k';  /* 'k' white on black at line 1 */
+    
+    /* Checkpoint - about to init terminal */
+    vga[81] = (0x0F << 8) | 't';  /* 't' for terminal init start */
+    
+    /* Initialize VGA terminal without clearing screen
+     * (preserve bootloader checkmarks for debugging) */
+    terminal_initialize_noclear();
+    
+    /* Checkpoint - terminal init done */
+    vga[82] = (0x0F << 8) | 'i';  /* 'i' for init done */
     
     /* Position cursor after bootloader messages (line 3) */
     terminal_setcursor(3, 0);
     
+    /* Checkpoint - about to print banner */
+    vga[83] = (0x0F << 8) | 'B';  /* 'B' for banner start */
+    
     /* Print banner */
     print_banner();
+    
+    /* Checkpoint - banner printed */
+    vga[84] = (0x0F << 8) | 'b';  /* 'b' for banner done */
     
     /* Print version info */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
