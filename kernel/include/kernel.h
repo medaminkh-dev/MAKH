@@ -10,11 +10,15 @@
 
 /* Kernel version */
 #define KERNEL_NAME     "MakhOS"
-#define KERNEL_VERSION  "0.0.1"
-#define KERNEL_PHASE    "Phase 1"
+#define KERNEL_VERSION  "0.0.2"
+#define KERNEL_PHASE    "Phase 2 Part 4"
 
 /* Kernel main entry point - called from boot.asm */
 void kernel_main(void);
+
+/* Utility functions (from kernel.c) */
+void uint64_to_string(uint64_t value, char* buf);
+void uint64_to_hex(uint64_t value, char* buf);
 
 /* System halt functions */
 void kernel_halt(void);
