@@ -63,6 +63,9 @@ void idt_disable_interrupts(void);
 // Common handler (called from assembly)
 void exception_handler(registers_t* regs);
 
+// IRQ handler (called from exception_handler for vectors 32-47)
+void irq_handler(registers_t* regs);
+
 // Assembly ISR stub table
 extern uint64_t isr_stub_table[256];
 
