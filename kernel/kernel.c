@@ -1,5 +1,6 @@
 /**
  * MakhOS - kernel.c
+ * Version: 0.0.2
  * Main kernel entry point
  */
 
@@ -7,9 +8,67 @@
 #include "include/vga.h"
 #include "include/multiboot.h"
 #include "include/types.h"
+#include "include/mm/pmm.h"
+#include "include/mm/vmm.h"
+#include "include/mm/kheap.h"
+#include "include/stdlib.h"
+#include "include/arch/idt.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
+
+/**
+ * uint64_to_string - Convert uint64 to decimal string
+ */
+void uint64_to_string(uint64_t value, char* buf) {
+    char temp[24];
+    int i = 0;
+    
+    if (value == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+    
+    while (value > 0) {
+        temp[i++] = '0' + (value % 10);
+        value /= 10;
+    }
+    
+    int j;
+    for (j = 0; j < i; j++) {
+        buf[j] = temp[i - 1 - j];
+    }
+    buf[i] = '\0';
+}
+
+/**
+ * uint64_to_hex - Convert uint64 to hex string
+ */
+void uint64_to_hex(uint64_t value, char* buf) {
+    const char* hex = "0123456789ABCDEF";
+    char temp[20];
+    int i = 0;
+    
+    if (value == 0) {
+        buf[0] = '0';
+        buf[1] = '\0';
+        return;
+    }
+    
+    while (value > 0) {
+        temp[i++] = hex[value & 0xF];
+        value >>= 4;
+    }
+    
+    buf[0] = '0';
+    buf[1] = 'x';
+    int j;
+    for (j = 0; j < i; j++) {
+        buf[j + 2] = temp[i - 1 - j];
+    }
+    buf[i + 2] = '\0';
+}
 
 /**
  * print_ok - Print [OK] in green
@@ -45,6 +104,228 @@ static void print_banner(void) {
     terminal_writestring(" /_/  /_/_/  \\__/_//_/_/ |_/_/ /_/___/\n");
     terminal_writestring("\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+}
+
+/**
+ * test_vmm - Test the Virtual Memory Manager
+ */
+void test_vmm(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Testing Virtual Memory Manager...\n");
+    
+    /* Allocate virtual page */
+    void* virt = vmm_alloc_page(PAGE_PRESENT | PAGE_WRITABLE);
+    terminal_writestring("  Allocated virtual page at: ");
+    uint64_to_hex((uint64_t)(uintptr_t)virt, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    /* Write value */
+    uint64_t* ptr = (uint64_t*)virt;
+    *ptr = 0xDEADBEEF;
+    terminal_writestring("  Wrote 0xDEADBEEF to virtual address\n");
+    
+    /* Get physical address */
+    uint64_t phys = vmm_get_physical((uint64_t)(uintptr_t)virt);
+    terminal_writestring("  Physical address: ");
+    uint64_to_hex(phys, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    /* Verify virtual != physical (paging works) */
+    if (phys != (uint64_t)(uintptr_t)virt) {
+        terminal_writestring("  [OK] Virtual != Physical (paging works)\n");
+    }
+    
+    /* Read from physical address (identity mapped) */
+    uint64_t* phys_ptr = (uint64_t*)(uintptr_t)phys;
+    terminal_writestring("  Value at physical address: 0x");
+    uint64_to_hex(*phys_ptr, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    if (*phys_ptr == 0xDEADBEEF) {
+        terminal_writestring("  [OK] Physical memory contains correct value\n");
+    }
+    
+    /* Test fixed mapping */
+    uint64_t fixed_virt = 0xFFFF800000100000ULL;
+    uint64_t fixed_phys = (uint64_t)(uintptr_t)pmm_alloc_page();
+    
+    if (fixed_phys != 0 && vmm_map_page(fixed_virt, fixed_phys, PAGE_PRESENT | PAGE_WRITABLE) == 0) {
+        terminal_writestring("  Mapped fixed virt ");
+        uint64_to_hex(fixed_virt, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" -> phys ");
+        uint64_to_hex(fixed_phys, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        
+        *(uint64_t*)(uintptr_t)fixed_virt = 0x12345678;
+        if (*(uint64_t*)(uintptr_t)fixed_phys == 0x12345678) {
+            terminal_writestring("  [OK] Fixed mapping works\n");
+        }
+        
+        vmm_unmap_page(fixed_virt);
+        pmm_free_page((void*)(uintptr_t)fixed_phys);
+    }
+    
+    vmm_free_page(virt);
+    terminal_writestring("[TEST] VMM tests complete\n");
+}
+
+/**
+ * memset - Fill memory with a byte value
+ */
+static void* memset(void* s, int c, size_t n) {
+    unsigned char* p = (unsigned char*)s;
+    while (n--) {
+        *p++ = (unsigned char)c;
+    }
+    return s;
+}
+
+/**
+ * strcpy - Copy a string
+ */
+static char* strcpy(char* dest, const char* src) {
+    char* d = dest;
+    while ((*d++ = *src++) != '\0');
+    return dest;
+}
+
+/**
+ * test_kheap - Test the Kernel Heap Manager
+ */
+void test_kheap(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Testing Kernel Heap...\n");
+    
+    /* Test 1: Basic allocation */
+    terminal_writestring("  Test 1: Basic allocation...\n");
+    char* str = (char*)kmalloc(32);
+    if (str != NULL) {
+        strcpy(str, "Hello Heap!");
+        terminal_writestring("    Allocated string: ");
+        terminal_writestring(str);
+        terminal_writestring("\n");
+        kfree(str);
+        terminal_writestring("    [OK] Basic allocation works\n");
+    }
+    
+    /* Test 2: Multiple allocations */
+    terminal_writestring("  Test 2: Multiple allocations...\n");
+    void* ptrs[10];
+    int all_ok = 1;
+    for (int i = 0; i < 10; i++) {
+        ptrs[i] = kmalloc(128);
+        if (ptrs[i] == NULL) {
+            all_ok = 0;
+        } else {
+            memset(ptrs[i], i, 128);
+        }
+    }
+    for (int i = 0; i < 10; i++) {
+        if (ptrs[i] != NULL) kfree(ptrs[i]);
+    }
+    if (all_ok) {
+        terminal_writestring("    [OK] Multiple allocations work\n");
+    }
+    
+    /* Test 3: Variable sizes and alignment */
+    terminal_writestring("  Test 3: Variable sizes and alignment...\n");
+    size_t sizes[] = {8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
+    all_ok = 1;
+    for (int i = 0; i < 10; i++) {
+        void* p = kmalloc(sizes[i]);
+        if (p == NULL) {
+            all_ok = 0;
+        } else {
+            /* Check 16-byte alignment */
+            if (((uint64_t)(uintptr_t)p & 15) != 0) {
+                all_ok = 0;
+            }
+            kfree(p);
+        }
+    }
+    if (all_ok) {
+        terminal_writestring("    [OK] All sizes allocated with 16-byte alignment\n");
+    }
+    
+    /* Test 4: kcalloc (zeroed memory) */
+    terminal_writestring("  Test 4: kcalloc (zeroed memory)...\n");
+    int* array = (int*)kcalloc(100, sizeof(int));
+    if (array != NULL) {
+        int all_zero = 1;
+        for (int i = 0; i < 100; i++) {
+            if (array[i] != 0) {
+                all_zero = 0;
+                break;
+            }
+        }
+        kfree(array);
+        if (all_zero) {
+            terminal_writestring("    [OK] kcalloc returns zeroed memory\n");
+        }
+    }
+    
+    /* Test 5: Reallocation */
+    terminal_writestring("  Test 5: krealloc...\n");
+    char* rptr = (char*)kmalloc(16);
+    if (rptr != NULL) {
+        strcpy(rptr, "Hello");
+        char* new_rptr = (char*)krealloc(rptr, 64);
+        if (new_rptr != NULL) {
+            /* Verify data preserved */
+            if (new_rptr[0] == 'H' && new_rptr[1] == 'e') {
+                terminal_writestring("    [OK] krealloc preserves data\n");
+            }
+            kfree(new_rptr);
+        } else {
+            kfree(rptr);
+        }
+    }
+    
+    /* Test 6: Statistics */
+    terminal_writestring("  Test 6: Heap statistics...\n");
+    terminal_writestring("    Total heap: ");
+    uint64_to_string(kheap_get_total(), buf);
+    terminal_writestring(buf);
+    terminal_writestring(" bytes\n");
+    
+    terminal_writestring("    Used: ");
+    uint64_to_string(kheap_get_used(), buf);
+    terminal_writestring(buf);
+    terminal_writestring(" bytes\n");
+    
+    terminal_writestring("    Free: ");
+    uint64_to_string(kheap_get_free(), buf);
+    terminal_writestring(buf);
+    terminal_writestring(" bytes\n");
+    
+    /* Test 7: malloc/free via stdlib.h */
+    terminal_writestring("  Test 7: stdlib malloc/free macros...\n");
+    void* std_ptr = malloc(256);
+    if (std_ptr != NULL) {
+        free(std_ptr);
+        terminal_writestring("    [OK] stdlib macros work\n");
+    }
+    
+    terminal_writestring("[TEST] Kernel heap tests complete\n");
+}
+
+/**
+ * test_interrupts - Test the Interrupt Descriptor Table
+ */
+void test_interrupts(void) {
+    terminal_writestring("\n[TEST] Testing Interrupt Descriptor Table...\n");
+    
+    // Test 1: Try a simple software interrupt first
+    terminal_writestring("  Test 1: Triggering software interrupt int 0x30...\n");
+    __asm__ volatile("int $0x30");
+    terminal_writestring("  [ERROR] Should not reach here after int 0x30!\n");
 }
 
 /**
@@ -103,15 +384,98 @@ void kernel_main(void) {
     print_ok();
     terminal_writestring("VGA driver initialized\n");
     
-    /* Parse multiboot info */
-    /* Note: In a real implementation, we'd get the pointer from RDI */
-    /* For now, we'll skip detailed parsing in Phase 1 */
+    /* Check 4: Parse multiboot info */
     print_ok();
     terminal_writestring("Multiboot2 info structure received\n");
     
-    /* Memory check */
+    /* Initialize PMM using multiboot memory map */
     print_check();
-    terminal_writestring("Memory map parsed (basic)\n");
+    terminal_writestring("Initializing Physical Memory Manager...\n");
+    
+    /* Find mmap tag from multiboot info */
+    struct multiboot_tag_mmap* mmap_tag = NULL;
+    if (multiboot_info_ptr != 0) {
+        struct multiboot_info* mb_info = (struct multiboot_info*)(uintptr_t)multiboot_info_ptr;
+        struct multiboot_tag* tag = (struct multiboot_tag*)((uintptr_t)mb_info + 8);
+        
+        while (tag->type != MULTIBOOT_TAG_TYPE_END) {
+            if (tag->type == MULTIBOOT_TAG_TYPE_MMAP) {
+                mmap_tag = (struct multiboot_tag_mmap*)tag;
+                break;
+            }
+            /* Move to next tag (8-byte aligned) */
+            uintptr_t next_addr = ((uintptr_t)tag + ((tag->size + 7) & ~7));
+            tag = (struct multiboot_tag*)next_addr;
+        }
+    }
+    
+    /* Initialize PMM */
+    pmm_init(mmap_tag);
+    
+    /* PMM Tests */
+    print_ok();
+    terminal_writestring("PMM initialized, running tests...\n");
+    
+    /* Test 1: Allocate 2 pages */
+    terminal_writestring("  Test 1: Allocating 2 pages...\n");
+    void* page1 = pmm_alloc_page();
+    void* page2 = pmm_alloc_page();
+    
+    char buf[32];
+    terminal_writestring("    Page 1: ");
+    uint64_to_hex((uint64_t)(uintptr_t)page1, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    terminal_writestring("    Page 2: ");
+    uint64_to_hex((uint64_t)(uintptr_t)page2, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    /* Test 2: Free first page */
+    terminal_writestring("  Test 2: Freeing page 1...\n");
+    pmm_free_page(page1);
+    
+    /* Test 3: Print memory statistics */
+    terminal_writestring("  Memory Statistics:\n");
+    terminal_writestring("    Total pages: ");
+    uint64_to_string(pmm_get_total_page_count(), buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    terminal_writestring("    Used pages: ");
+    uint64_to_string(pmm_get_used_page_count(), buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    terminal_writestring("    Free memory: ");
+    uint64_to_string(pmm_get_free_memory() / (1024 * 1024), buf);
+    terminal_writestring(buf);
+    terminal_writestring(" MB\n");
+    
+    /* Initialize VMM */
+    print_check();
+    terminal_writestring("Initializing Virtual Memory Manager...\n");
+    vmm_init();
+    
+    /* Run VMM tests */
+    test_vmm();
+    
+    /* Initialize Kernel Heap */
+    print_check();
+    terminal_writestring("Initializing Kernel Heap...\n");
+    kheap_init();
+    
+    /* Run heap tests */
+    test_kheap();
+    
+    /* Initialize IDT */
+    print_check();
+    terminal_writestring("Initializing Interrupt Descriptor Table...\n");
+    idt_init();
+    
+    /* Test interrupts */
+    test_interrupts();
     
     /* Success message */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
