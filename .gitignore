@@ -1,0 +1,10 @@
+# Build artifacts
+*.o
+*.iso
+*.kernel
+trace.log
+serial.log
+test_output.txt
+
+# Directories
+iso_check/
