@@ -4,6 +4,8 @@
  */
 
 #include <arch/idt.h>
+#include <arch/pic.h>
+#include <drivers/timer.h>
 #include <kernel.h>
 #include <vga.h>
 
@@ -61,6 +63,13 @@ void idt_init(void) {
         }
     }
     
+    // Set gates for vectors 32-47 (IRQs)
+    for (int i = 32; i < 48; i++) {
+        if (isr_stub_table[i] != 0) {
+            idt_set_gate(i, isr_stub_table[i], IDT_FLAGS_KERNEL_INT);
+        }
+    }
+    
     // Set test gates for vectors 0x30 and 0x48
     if (isr_stub_table[0x30] != 0) {
         idt_set_gate(0x30, isr_stub_table[0x30], IDT_FLAGS_KERNEL_INT);
@@ -75,7 +84,7 @@ void idt_init(void) {
     
     __asm__ volatile("lidt %0" : : "m"(idt_ptr));
     
-    terminal_writestring("[IDT] Loaded 32 exception gates + syscall gate\n");
+    terminal_writestring("[IDT] Loaded 32 exception gates + 16 IRQ gates + syscall gate\n");
 }
 
 void idt_set_gate(uint8_t vector, uint64_t handler, uint8_t flags) {
@@ -101,6 +110,12 @@ void idt_disable_interrupts(void) {
 void exception_handler(registers_t* regs) {
     uint8_t vector = regs->int_no;
     char buf[32];
+    
+    // Handle IRQs (vectors 32-47) separately
+    if (vector >= 32 && vector < 48) {
+        irq_handler(regs);
+        return;
+    }
     
     terminal_writestring("\n!!! EXCEPTION CAUGHT !!!\n");
     
@@ -151,4 +166,58 @@ void exception_handler(registers_t* regs) {
     for(;;) {
         __asm__ volatile("hlt");
     }
+}
+
+/**
+ * irq_handler - Handle hardware interrupts (IRQs)
+ * @regs: CPU register state (including interrupt number)
+ * 
+ * Called from assembly ISR stubs for vectors 32-47 (IRQ0-IRQ15).
+ * Dispatches to appropriate device handler and sends EOI to PIC.
+ */
+void irq_handler(registers_t* regs) {
+    uint8_t vector = regs->int_no;
+    uint8_t irq = vector - 32;  // Convert vector to IRQ number
+    
+    // Handle spurious IRQs (IRQ7 and IRQ15)
+    // These can occur if an IRQ is triggered during PIC initialization
+    if (irq == 7) {
+        // Check if this is a real IRQ7 or spurious
+        // Read ISR register from master PIC
+        outb(PIC1_COMMAND, 0x0B);  // Read ISR
+        uint8_t isr = inb(PIC1_COMMAND);
+        if (!(isr & 0x80)) {
+            // Spurious IRQ7 - don't send EOI
+            return;
+        }
+    } else if (irq == 15) {
+        // Check if this is a real IRQ15 or spurious
+        outb(PIC2_COMMAND, 0x0B);  // Read ISR from slave
+        uint8_t isr = inb(PIC2_COMMAND);
+        if (!(isr & 0x80)) {
+            // Spurious IRQ15 - only send EOI to master (for cascade)
+            outb(PIC1_COMMAND, PIC_EOI);
+            return;
+        }
+    }
+    
+    // Dispatch to appropriate handler based on IRQ number
+    switch (irq) {
+        case IRQ_TIMER:
+            // Timer interrupt (IRQ0)
+            timer_handler(regs);
+            break;
+            
+        case IRQ_KEYBOARD:
+            // Keyboard interrupt (IRQ1) - not yet implemented
+            // uint8_t scancode = inb(0x60);
+            break;
+            
+        default:
+            // Other IRQs - just acknowledge for now
+            break;
+    }
+    
+    // Send End of Interrupt to PIC
+    pic_send_eoi(irq);
 }
