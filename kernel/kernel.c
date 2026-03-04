@@ -13,6 +13,8 @@
 #include "include/mm/kheap.h"
 #include "include/stdlib.h"
 #include "include/arch/idt.h"
+#include "include/arch/pic.h"
+#include "include/drivers/timer.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -329,6 +331,55 @@ void test_interrupts(void) {
 }
 
 /**
+ * test_timer - Test the PIC and Timer interrupts
+ */
+void test_timer(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Testing Timer Interrupts...\n");
+    
+    // Initialize PIC
+    print_check();
+    terminal_writestring("Initializing Programmable Interrupt Controller...\n");
+    pic_init();
+    
+    // Initialize Timer
+    print_check();
+    terminal_writestring("Initializing Timer...\n");
+    timer_init(TIMER_FREQUENCY);
+    
+    // Enable interrupts
+    print_check();
+    terminal_writestring("Enabling interrupts...\n");
+    idt_enable_interrupts();
+    
+    // Test timer with busy-wait sleep
+    terminal_writestring("\n  Waiting for 2 seconds...\n");
+    uint64_t ticks_before = timer_get_ticks();
+    timer_sleep(2000);  // 2 seconds
+    uint64_t ticks_after = timer_get_ticks();
+    
+    terminal_writestring("  ");
+    uint64_t elapsed_ticks = ticks_after - ticks_before;
+    if (elapsed_ticks >= 195 && elapsed_ticks <= 205) {
+        print_ok();
+        terminal_writestring("Timer counted ");
+        uint64_to_string(elapsed_ticks, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" ticks in 2 seconds (expected ~200)\n");
+    } else {
+        terminal_writestring("[WARNING] Timer counted ");
+        uint64_to_string(elapsed_ticks, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" ticks (expected ~200)\n");
+    }
+    
+    // Print final statistics
+    terminal_writestring("\n");
+    timer_print_stats();
+}
+
+/**
  * kernel_main - Main kernel entry point
  * Called from boot.asm after switching to long mode
  * 
@@ -474,8 +525,8 @@ void kernel_main(void) {
     terminal_writestring("Initializing Interrupt Descriptor Table...\n");
     idt_init();
     
-    /* Test interrupts */
-    test_interrupts();
+    /* Test timer and interrupts */
+    test_timer();
     
     /* Success message */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
@@ -491,10 +542,13 @@ void kernel_main(void) {
     terminal_writestring("  ====================================\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     
-    terminal_writestring("\nSystem halted. Press Ctrl+Alt+G (in QEMU) to exit.\n");
+    terminal_writestring("\nSystem running. Press Ctrl+Alt+G (in QEMU) to exit.\n");
+    terminal_writestring("Waiting for timer interrupts...\n\n");
     
-    /* Halt the system */
-    kernel_halt();
+    /* Main loop - wait for interrupts */
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 }
 
 /**
