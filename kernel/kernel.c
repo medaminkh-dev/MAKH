@@ -19,6 +19,7 @@
 #include "include/input_line.h"
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
+#include "include/syscall.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -337,6 +338,8 @@ void test_interrupts(void) {
 /**
  * test_timer - Test the PIC and Timer interrupts
  */
+void test_syscalls(void);
+
 void test_timer(void) {
     char buf[32];
     
@@ -352,10 +355,18 @@ void test_timer(void) {
     terminal_writestring("Initializing Timer...\n");
     timer_init(TIMER_FREQUENCY);
     
+    // Initialize system calls
+    print_check();
+    terminal_writestring("Initializing system calls...\n");
+    syscall_init();
+    
     // Enable interrupts
     print_check();
     terminal_writestring("Enabling interrupts...\n");
     idt_enable_interrupts();
+    
+    // Test syscalls
+    test_syscalls();
     
     // Test timer with busy-wait sleep
     terminal_writestring("\n  Waiting for 2 seconds...\n");
@@ -561,6 +572,61 @@ void test_gdt_tss(void) {
     if (ds == 0x28) {
         terminal_writestring("  [OK] TSS loaded in TR\n");
     }
+}
+
+void test_syscalls(void) {
+    terminal_writestring("\n[TEST] Testing System Calls...\n");
+    
+    // Test 1: sys_getpid
+    uint64_t pid = syscall0(SYS_GETPID);
+    terminal_writestring("  sys_getpid() = ");
+    char buf[32];
+    uint64_to_string(pid, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" (should be 1)\n");
+    
+    // Test 2: sys_write
+    const char* msg1 = "  Hello from syscall!\n";
+    uint64_t written = syscall3(SYS_WRITE, 1, (uint64_t)msg1, 23);
+    terminal_writestring("  sys_write wrote ");
+    uint64_to_string(written, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" bytes\n");
+    
+    // Test 3: sys_getticks
+    uint64_t ticks1 = syscall0(SYS_GETTICKS);
+    terminal_writestring("  sys_getticks() = ");
+    uint64_to_string(ticks1, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Test 4: sys_sleep
+    terminal_writestring("  Sleeping for 1 second...\n");
+    syscall1(SYS_SLEEP, 1000);
+    
+    uint64_t ticks2 = syscall0(SYS_GETTICKS);
+    terminal_writestring("  After sleep, ticks = ");
+    uint64_to_string(ticks2, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" (delta: ");
+    uint64_to_string(ticks2 - ticks1, buf);
+    terminal_writestring(buf);
+    terminal_writestring(")\n");
+    
+    // Test 5: Invalid syscall
+    uint64_t bad = syscall1(999, 0);
+    terminal_writestring("  Invalid syscall returned ");
+    int64_t bad_signed = (int64_t)bad;
+    if (bad_signed < 0) {
+        terminal_writestring("-");
+        uint64_to_string(-bad_signed, buf);
+    } else {
+        uint64_to_string(bad, buf);
+    }
+    terminal_writestring(buf);
+    terminal_writestring(" (should be -1)\n");
+    
+    terminal_writestring("[TEST] System call tests complete\n");
 }
 
 /**
