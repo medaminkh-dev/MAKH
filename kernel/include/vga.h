@@ -39,6 +39,13 @@ struct terminal_state {
     size_t row;
     size_t column;
     uint8_t color;
+    
+    /* Selection state */
+    int selection_active;
+    size_t sel_start_row;
+    size_t sel_start_col;
+    size_t sel_end_row;
+    size_t sel_end_col;
 };
 
 /* Function prototypes */
@@ -51,10 +58,22 @@ void terminal_write(const char* str, size_t len);
 void terminal_writestring_color(const char* str, uint8_t color);
 void terminal_newline(void);
 void terminal_clear(void);
+void terminal_enable_line_cursor(void);
+void terminal_enable_block_cursor(void);
 
 /* Cursor positioning */
 void terminal_setcursor(size_t row, size_t column);
 void terminal_getcursor(size_t* row, size_t* column);
+
+/* Selection functions */
+void terminal_start_selection(size_t row, size_t col);
+void terminal_extend_selection(size_t row, size_t col);
+void terminal_clear_selection(void);
+void terminal_delete_selection(void);
+void terminal_delete_forward(void);
+int terminal_has_selection(void);
+void terminal_highlight_selection(void);
+void terminal_clear_selection_highlight(void);
 
 /* Helper to create color byte */
 static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
