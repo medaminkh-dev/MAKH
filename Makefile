@@ -16,7 +16,7 @@ CFLAGS += -fno-stack-protector -mno-red-zone -mcmodel=large -fno-pic
 CFLAGS += -fomit-frame-pointer -fno-asynchronous-unwind-tables
 CFLAGS += -Ikernel/include
 # Debug flags (uncomment for debugging)
-# CFLAGS += -g -DDEBUG
+CFLAGS += -g -DDEBUG
 
 # Assembler
 AS = nasm
@@ -27,7 +27,7 @@ LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
 ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/drivers/timer.c
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
