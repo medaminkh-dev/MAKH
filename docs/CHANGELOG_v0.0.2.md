@@ -10,28 +10,115 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 
 ## Summary of Changes
 
-### Modified Files (4 files)
-1. **[`Makefile`](Makefile:1)** - Updated build configuration
-2. **[`boot/boot.asm`](boot/boot.asm:1)** - Added multiboot info pointer storage
-3. **[`kernel/include/kernel.h`](kernel/include/kernel.h:1)** - Added utility function declarations
-4. **[`kernel/kernel.c`](kernel/kernel.c:1)** - Integrated all new subsystems
+### Phase 6: Keyboard Driver (New in this update)
+**Status:** Complete  
+**New Files:** 2  
+**Modified Files:** 4
 
-### New Files (11 files)
+#### New Files (Phase 6)
+1. **[`kernel/include/drivers/keyboard.h`](kernel/include/drivers/keyboard.h:1)** - PS/2 Keyboard driver header
+2. **[`kernel/drivers/keyboard.c`](kernel/drivers/keyboard.c:1)** - PS/2 Keyboard driver implementation
 
-#### Memory Management Subsystem (8 files)
-1. **[`kernel/mm/pmm.c`](kernel/mm/pmm.c:1)** - Physical Memory Manager implementation
-2. **[`kernel/mm/vmm.c`](kernel/mm/vmm.c:1)** - Virtual Memory Manager implementation
-3. **[`kernel/mm/kheap.c`](kernel/mm/kheap.c:1)** - Kernel Heap Manager implementation
-4. **[`kernel/mm/paging_asm.asm`](kernel/mm/paging_asm.asm:1)** - Paging assembly helpers
-5. **[`kernel/include/mm/pmm.h`](kernel/include/mm/pmm.h:1)** - PMM header
-6. **[`kernel/include/mm/vmm.h`](kernel/include/mm/vmm.h:1)** - VMM header
-7. **[`kernel/include/mm/kheap.h`](kernel/include/mm/kheap.h:1)** - Heap header
-8. **[`kernel/include/stdlib.h`](kernel/include/stdlib.h:1)** - Standard library header
+#### Modified Files (Phase 6)
+3. **[`kernel/arch/idt.c`](kernel/arch/idt.c:1)** - Added keyboard handler dispatch
+4. **[`kernel/kernel.c`](kernel/kernel.c:1)** - Added `test_keyboard()` function
+5. **[`kernel/include/kernel.h`](kernel/include/kernel.h:1)** - Updated to "Phase 2 Complete"
+6. **[`Makefile`](Makefile:1)** - Added keyboard.c to build
 
-#### Interrupt Management Subsystem (3 files)
-9. **[`kernel/arch/idt.c`](kernel/arch/idt.c:1)** - Interrupt Descriptor Table implementation
-10. **[`kernel/arch/idt_asm.asm`](kernel/arch/idt_asm.asm:1)** - IDT assembly stubs
-11. **[`kernel/include/arch/idt.h`](kernel/include/arch/idt.h:1)** - IDT header
+---
+
+### Previous Phases (Already Documented)
+
+#### Phase 5: PIC and Timer
+- PIC driver (pic.c, pic.h)
+- Timer driver (timer.c, timer.h)
+- IDT IRQ support
+
+#### Phase 4: Interrupt Descriptor Table
+- IDT implementation (idt.c, idt_asm.asm, idt.h)
+- Exception handling
+
+#### Phase 2 Parts 1-3: Memory Management
+- Physical Memory Manager (pmm.c, pmm.h)
+- Virtual Memory Manager (vmm.c, vmm.h, paging_asm.asm)
+- Kernel Heap Manager (kheap.c, kheap.h)
+- Standard library (stdlib.h)
+
+### Total Files in v0.0.2
+- **New:** 13 files
+- **Modified:** 6 files
+- **Total Lines of Code:** ~8,000+
+
+---
+
+## Phase 6: Keyboard Driver Details
+
+### Overview
+The PS/2 Keyboard driver provides interrupt-driven keyboard input with the following features:
+
+- **Circular Buffer:** 256-character ring buffer for keystrokes
+- **Dual Keymaps:** Normal and shifted character mappings
+- **Modifier Tracking:** Shift, Ctrl, Alt, and Caps Lock states
+- **LED Control:** Caps Lock LED feedback
+- **Scancode Set 1:** Full support for standard PS/2 keyboards
+
+### API Functions
+
+**`void keyboard_init(void)`**
+- Resets keyboard controller and enables scanning
+- Unmasks IRQ1 for interrupt-driven input
+- Output: Initialization status messages
+
+**`char keyboard_get_char(void)`**
+- Blocking read from keyboard buffer
+- Returns ASCII characters including control codes (\n, \b, \t)
+- Uses HLT instruction to save CPU while waiting
+
+**`int keyboard_has_input(void)`**
+- Non-blocking check for available input
+- Returns 1 if character available, 0 otherwise
+
+**`void keyboard_clear_buffer(void)`**
+- Clears the circular input buffer
+
+**`uint8_t keyboard_get_modifiers(void)`**
+- Returns bitmask of active modifiers
+- Bits: 0=Shift, 1=Ctrl, 2=Alt, 3=Caps Lock
+
+### Key Features
+
+**Modifier Handling:**
+- Left/Right Shift: Toggles uppercase keymap
+- Caps Lock: Toggles case for letters with LED indicator
+- Ctrl/Alt: Tracked for future use
+
+**Special Keys:**
+- Enter: Returns '\n' character
+- Backspace: Returns '\b' character
+- Tab: Returns '\t' character
+- Space: Returns ' ' character
+
+**Interactive Test:**
+The `test_keyboard()` function in kernel.c provides:
+- Real-time character echo to screen
+- Backspace support for corrections
+- Pattern recognition (type "TEST")
+- Success/failure reporting
+
+### Example Usage
+```c
+// Initialize keyboard
+keyboard_init();
+
+// Blocking read
+char c = keyboard_get_char();
+terminal_putchar(c);
+
+// Check modifiers
+if (keyboard_get_modifiers() & 0x08) {
+    terminal_writestring("Caps Lock is ON\n");
+}
+```
 
 ---
 
