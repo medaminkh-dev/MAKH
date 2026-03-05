@@ -20,6 +20,7 @@
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
 #include "include/syscall.h"
+#include "include/proc.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -530,6 +531,75 @@ void test_keyboard(void) {
     terminal_writestring("[TEST] Keyboard test complete\n");
 }
 
+// Test functions for processes
+void test_process_1(void);
+void test_process_2(void);
+void test_context_switch(void);
+
+// Test function implementations
+void test_process_1(void) {
+    int counter = 0;
+    char buf[32];
+    while (1) {
+        terminal_writestring("[PID 1] Running... count: ");
+        uint64_to_hex(counter++, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        for (int i = 0; i < 10000000; i++) {
+            __asm__ volatile("pause");
+        }
+        proc_yield();
+    }
+}
+
+void test_process_2(void) {
+    int counter = 0;
+    char buf[32];
+    while (1) {
+        terminal_writestring("[PID 2] Running... count: ");
+        uint64_to_hex(counter++, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        for (int i = 0; i < 10000000; i++) {
+            __asm__ volatile("pause");
+        }
+        proc_yield();
+    }
+}
+
+void test_context_switch(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Testing Context Switch...\n");
+    
+    // Create two test processes
+    process_t* p1 = proc_create(test_process_1, 8192);
+    process_t* p2 = proc_create(test_process_2, 8192);
+    
+    if (p1 && p2) {
+        terminal_writestring("  Created test processes: PID ");
+        uint64_to_hex(p1->pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" and PID ");
+        uint64_to_hex(p2->pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        
+        // Add them to ready queue using the API
+        proc_add_to_ready(p1);
+        proc_add_to_ready(p2);
+        
+        terminal_writestring("  Processes added to ready queue\n");
+        
+        terminal_writestring("  Starting scheduler...\n");
+        
+        // This will switch between processes
+        proc_yield();
+    } else {
+        terminal_writestring("  Failed to create test processes\n");
+    }
+}
+
 void test_gdt_tss(void) {
     char buf[32];
     
@@ -795,6 +865,14 @@ void kernel_main(void) {
     
     /* Test timer and interrupts */
     test_timer();
+    
+    // Initialize process manager
+    proc_init();
+    
+    // Test context switch
+    test_context_switch();
+    
+    idt_enable_interrupts();
     
     /* Test keyboard */
     test_keyboard();
