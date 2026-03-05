@@ -15,6 +15,8 @@
 #include "include/arch/idt.h"
 #include "include/arch/pic.h"
 #include "include/drivers/timer.h"
+#include "include/drivers/keyboard.h"
+#include "include/input_line.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -380,6 +382,142 @@ void test_timer(void) {
 }
 
 /**
+ * test_keyboard - Test the PS/2 keyboard input
+ */
+void test_keyboard(void) {
+    terminal_writestring("\n[TEST] Testing Keyboard Input...\n");
+    terminal_writestring("Press some keys (they will appear on screen)\n");
+    terminal_writestring("Type 'TEST' to complete the test...\n\n");
+    
+    // Initialize keyboard
+    keyboard_init();
+    
+    // Buffer to track what user types
+    char typed[5] = {0};
+    int typed_index = 0;
+    
+    // Wait for user to type "TEST"
+    while (typed_index < 4) {
+        unsigned char c = (unsigned char)keyboard_get_char();
+        
+        // Display the character
+        if (c == '\n' || c == '\r') {
+            terminal_writestring("\n");
+        } else if (c == '\b') {
+            // Handle backspace - delete selection or shift left
+            if (terminal_has_selection()) {
+                terminal_delete_selection();
+            } else {
+                terminal_putchar('\b');
+            }
+            if (typed_index > 0) {
+                typed_index--;
+                typed[typed_index] = 0;
+            }
+        } else if (c == CHAR_SELECT_LEFT) {
+            // Shift+Left Arrow - extend selection left
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            
+            if (!terminal_has_selection()) {
+                terminal_start_selection(row, col);
+            }
+            
+            if (col > 0) {
+                terminal_setcursor(row, col - 1);
+                terminal_extend_selection(row, col - 1);
+            }
+        } else if (c == CHAR_SELECT_RIGHT) {
+            // Shift+Right Arrow - extend selection right
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            
+            if (!terminal_has_selection()) {
+                terminal_start_selection(row, col);
+            }
+            
+            if (col < VGA_WIDTH - 1) {
+                terminal_setcursor(row, col + 1);
+                terminal_extend_selection(row, col + 1);
+            }
+        } else if (c == CHAR_ARROW_UP) {
+            // Move cursor up - cancel selection
+            if (terminal_has_selection()) {
+                terminal_clear_selection();
+            }
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            if (row > 0) {
+                terminal_setcursor(row - 1, col);
+            }
+        } else if (c == CHAR_ARROW_DOWN) {
+            // Move cursor down - cancel selection
+            if (terminal_has_selection()) {
+                terminal_clear_selection();
+            }
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            if (row < VGA_HEIGHT - 1) {
+                terminal_setcursor(row + 1, col);
+            }
+        } else if (c == CHAR_ARROW_LEFT) {
+            // Move cursor left - cancel selection
+            if (terminal_has_selection()) {
+                terminal_clear_selection();
+            }
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            if (col > 0) {
+                terminal_setcursor(row, col - 1);
+            }
+        } else if (c == CHAR_ARROW_RIGHT) {
+            // Move cursor right - cancel selection
+            if (terminal_has_selection()) {
+                terminal_clear_selection();
+            }
+            size_t row, col;
+            terminal_getcursor(&row, &col);
+            if (col < VGA_WIDTH - 1) {
+                terminal_setcursor(row, col + 1);
+            }
+        } else if (c == CHAR_DELETE) {
+            // Delete key (forward delete) - delete character at cursor
+            if (terminal_has_selection()) {
+                terminal_delete_selection();
+            } else {
+                terminal_delete_forward();
+            }
+        } else if (c >= 32 && c <= 126) {
+            // Printable character - delete selection if active
+            if (terminal_has_selection()) {
+                terminal_delete_selection();
+            }
+            terminal_putchar(c);
+
+            // Track for "TEST" pattern
+            if (typed_index < 4) {
+                typed[typed_index++] = c;
+                typed[typed_index] = 0;
+            }
+        }
+    }
+    
+    // Check if user typed "TEST"
+    terminal_writestring("\n");
+    if (typed[0] == 'T' && typed[1] == 'E' &&
+        typed[2] == 'S' && typed[3] == 'T') {
+        print_ok();
+        terminal_writestring("Successfully typed 'TEST'\n");
+    } else {
+        terminal_writestring("[INFO] You typed: ");
+        terminal_writestring(typed);
+        terminal_writestring(" (expected TEST)\n");
+    }
+    
+    terminal_writestring("[TEST] Keyboard test complete\n");
+}
+
+/**
  * kernel_main - Main kernel entry point
  * Called from boot.asm after switching to long mode
  * 
@@ -528,6 +666,9 @@ void kernel_main(void) {
     /* Test timer and interrupts */
     test_timer();
     
+    /* Test keyboard */
+    test_keyboard();
+    
     /* Success message */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
     terminal_writestring("\n");
@@ -538,16 +679,114 @@ void kernel_main(void) {
     terminal_writestring(KERNEL_VERSION);
     terminal_writestring(" - ");
     terminal_writestring(KERNEL_PHASE);
-    terminal_writestring(" Complete [OK]\n");
+    terminal_writestring(" [OK]\n");
     terminal_writestring("  ====================================\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     
-    terminal_writestring("\nSystem running. Press Ctrl+Alt+G (in QEMU) to exit.\n");
-    terminal_writestring("Waiting for timer interrupts...\n\n");
+    terminal_writestring("\n[MAIN] System fully functional.\n");
+    terminal_writestring("Type anything - it will appear on screen.\n");
+    terminal_writestring("Press Ctrl+Alt+G to exit QEMU.\n\n");
     
-    /* Main loop - wait for interrupts */
+    /* Main loop - input line editing with history */
+    terminal_writestring("MakhOS> ");
+    size_t prompt_row;
+    terminal_getcursor(&prompt_row, NULL);
+    
+    input_line_t current_line;
+    input_history_t history;
+    input_line_init(&current_line);
+    input_history_init(&history);
+    
     while (1) {
-        __asm__ volatile("hlt");
+        input_line_render(&current_line, "MakhOS> ", prompt_row);
+        unsigned char c = (unsigned char)keyboard_get_char();
+        
+        if (c == '\n' || c == '\r') {
+            // Enter - execute command and add to history
+            terminal_writestring("\n");
+            if (current_line.length > 0) {
+                input_history_push(&history, current_line.buffer);
+            }
+            // Here you would process the command
+            // For now just show a new prompt
+            terminal_writestring("MakhOS> ");
+            terminal_getcursor(&prompt_row, NULL);
+            input_line_init(&current_line);
+        }
+        else if (c == '\b') {
+            // Backspace
+            input_line_backspace(&current_line);
+        }
+        else if (c == CHAR_DELETE) {
+            // Delete key (forward delete)
+            input_line_delete(&current_line);
+        }
+        else if (c == CHAR_ARROW_LEFT) {
+            // Left arrow
+            input_line_move_left(&current_line);
+        }
+        else if (c == CHAR_ARROW_RIGHT) {
+            // Right arrow
+            input_line_move_right(&current_line);
+        }
+        else if (c == CHAR_ARROW_UP) {
+            // Up arrow - previous history
+            char* prev = input_history_prev(&history);
+            if (prev) {
+                input_history_load(&current_line, prev);
+            }
+        }
+        else if (c == CHAR_ARROW_DOWN) {
+            // Down arrow - next history
+            char* next = input_history_next(&history);
+            if (next) {
+                input_history_load(&current_line, next);
+            } else {
+                input_line_init(&current_line);
+            }
+        }
+        else if (c == CHAR_SELECT_LEFT) {
+            // Shift+Left - extend selection
+            input_line_sel_extend_left(&current_line);
+        }
+        else if (c == CHAR_SELECT_RIGHT) {
+            // Shift+Right - extend selection
+            input_line_sel_extend_right(&current_line);
+        }
+        else if (c == CHAR_CTRL_A) {
+            // Ctrl+A - move to start of line
+            input_line_move_home(&current_line);
+        }
+        else if (c == CHAR_CTRL_E) {
+            // Ctrl+E - move to end of line
+            input_line_move_end(&current_line);
+        }
+        else if (c == CHAR_CTRL_K) {
+            // Ctrl+K - kill to end of line
+            input_line_kill_to_end(&current_line);
+        }
+        else if (c == CHAR_CTRL_U) {
+            // Ctrl+U - kill to start of line
+            input_line_kill_to_start(&current_line);
+        }
+        else if (c == CHAR_CTRL_W) {
+            // Ctrl+W - kill word back
+            input_line_kill_word_back(&current_line);
+        }
+        else if (c == CHAR_CTRL_Y) {
+            // Ctrl+Y - yank (paste)
+            input_line_yank(&current_line);
+        }
+        else if (c == CHAR_CTRL_L) {
+            // Ctrl+L - clear screen
+            terminal_clear();
+            terminal_writestring("MakhOS> ");
+            terminal_getcursor(&prompt_row, NULL);
+        }
+        else if (c >= 32 && c <= 126) {
+            // Printable character
+            input_line_insert(&current_line, (char)c);
+        }
     }
 }
 
