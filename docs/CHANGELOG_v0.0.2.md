@@ -27,6 +27,51 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 
 ---
 
+## Phase 7: GDT with TSS (New in this update)
+**Status:** Complete  
+**New Files:** 6  
+**Modified Files:** 2
+
+### Added
+- Task State Segment (TSS) implementation
+  - RSP0 for ring 0 stack transitions
+  - IST (Interrupt Stack Table) with 7 entries
+  - TSS initialization and management functions
+- Global Descriptor Table (GDT) with user mode support
+  - 7 entries: NULL, Kernel Code/Data, User Code/Data, TSS (128-bit)
+  - Proper x86_64 128-bit TSS descriptor format
+  - Segment register reloading with far return
+- String library for kernel
+  - memset, memcpy, strlen, strcmp functions
+- GDT/TSS verification tests
+  - Check CS, DS segment registers
+  - Verify TSS loaded in Task Register
+
+### Technical Details
+- TSS size: 104 bytes (0x68)
+- TSS limit: 0x67
+- GDT entries: 7 (6 regular + 2 for 128-bit TSS)
+- Critical fix: x86_64 requires 128-bit TSS descriptor using 2 GDT entries
+
+#### New Files (Phase 7)
+1. **[`kernel/include/arch/tss.h`](kernel/include/arch/tss.h:1)** - TSS structure definition
+2. **[`kernel/include/arch/gdt.h`](kernel/include/arch/gdt.h:1)** - GDT header with selectors
+3. **[`kernel/include/lib/string.h`](kernel/include/lib/string.h:1)** - String library declarations
+4. **[`kernel/lib/string.c`](kernel/lib/string.c:1)** - String library implementation
+5. **[`kernel/arch/tss.c`](kernel/arch/tss.c:1)** - TSS initialization and management
+6. **[`kernel/arch/gdt.c`](kernel/arch/gdt.c:1)** - GDT implementation with 128-bit TSS
+
+#### Modified Files (Phase 7)
+7. **[`kernel/kernel.c`](kernel/kernel.c:1)** - GDT/TSS integration and tests
+8. **[`Makefile`](Makefile:1)** - Added gdt.c, tss.c, string.c to build
+
+### Testing
+- Verified with GDB: No GPF when loading TSS
+- All segment registers correctly set
+- TR register contains TSS selector 0x28
+
+---
+
 ### Previous Phases (Already Documented)
 
 #### Phase 5: PIC and Timer
@@ -45,9 +90,9 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 - Standard library (stdlib.h)
 
 ### Total Files in v0.0.2
-- **New:** 13 files
-- **Modified:** 6 files
-- **Total Lines of Code:** ~8,000+
+- **New:** 19 files
+- **Modified:** 8 files
+- **Total Lines of Code:** ~9,000+
 
 ---
 
