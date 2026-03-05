@@ -17,6 +17,8 @@
 #include "include/drivers/timer.h"
 #include "include/drivers/keyboard.h"
 #include "include/input_line.h"
+#include "include/arch/gdt.h"
+#include "include/arch/tss.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -517,6 +519,50 @@ void test_keyboard(void) {
     terminal_writestring("[TEST] Keyboard test complete\n");
 }
 
+void test_gdt_tss(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Testing GDT and TSS...\n");
+    
+    uint16_t cs;
+    __asm__ volatile("mov %%cs, %0" : "=r"(cs));
+    terminal_writestring("  Current CS: 0x");
+    uint64_to_hex(cs, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" (should be 0x08)\n");
+    
+    if (cs == 0x08) {
+        terminal_writestring("  [OK] CS is kernel code segment\n");
+    }
+    
+    uint16_t ds;
+    __asm__ volatile("mov %%ds, %0" : "=r"(ds));
+    terminal_writestring("  Current DS: 0x");
+    uint64_to_hex(ds, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" (should be 0x10)\n");
+    
+    if (ds == 0x10) {
+        terminal_writestring("  [OK] DS is kernel data segment\n");
+    }
+    
+    __asm__ volatile(
+        "str %%ax\n"
+        "mov %%ax, %0"
+        : "=r"(ds)
+        :
+        : "ax"
+    );
+    terminal_writestring("  Task Register: 0x");
+    uint64_to_hex(ds, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" (should be 0x28)\n");
+    
+    if (ds == 0x28) {
+        terminal_writestring("  [OK] TSS loaded in TR\n");
+    }
+}
+
 /**
  * kernel_main - Main kernel entry point
  * Called from boot.asm after switching to long mode
@@ -662,6 +708,24 @@ void kernel_main(void) {
     print_check();
     terminal_writestring("Initializing Interrupt Descriptor Table...\n");
     idt_init();
+    
+    // Initialize TSS first
+    tss_init();
+    
+    // Set kernel stack for ring 0
+    uint64_t kernel_stack = (uint64_t)kmalloc(16384) + 16384;
+    tss_set_kernel_stack(kernel_stack);
+    
+    // Set IST for double fault
+    uint64_t ist_stack = (uint64_t)kmalloc(8192) + 8192;
+    tss_set_ist(1, ist_stack);
+    
+    // Initialize GDT with TSS
+    gdt_init();
+    gdt_load_tss();
+    
+    // Test GDT and TSS
+    test_gdt_tss();
     
     /* Test timer and interrupts */
     test_timer();
