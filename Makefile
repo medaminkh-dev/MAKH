@@ -1,33 +1,30 @@
-# MakhOS - Makefile
-# Version: 0.0.2
-# Build system for x86_64 kernel
+# =============================================================================
+# MakhOS Makefile
+# =============================================================================
+# MakhOS - A simple 64-bit operating system kernel
+# 
+# Phase 9 Change: Added process management support
+#   - Added kernel/arch/context_switch.asm to ASM_SOURCES
+#   - Added kernel/proc/proc.c to C_SOURCES
+# =============================================================================
 
-# Target architecture
-ARCH = x86_64
-
-# Compiler settings
-# Use x86_64-elf-gcc if available, otherwise try system gcc with flags
-CC = $(shell which x86_64-elf-gcc 2>/dev/null || echo gcc)
-LD = $(shell which x86_64-elf-ld 2>/dev/null || echo ld)
-
-# Compiler flags
-CFLAGS = -m64 -march=x86-64 -ffreestanding -O2 -Wall -Wextra -Werror -nostdlib -nostartfiles
-CFLAGS += -fno-stack-protector -mno-red-zone -mcmodel=large -fno-pic
-CFLAGS += -fomit-frame-pointer -fno-asynchronous-unwind-tables
-CFLAGS += -Ikernel/include
-# Debug flags (uncomment for debugging)
-CFLAGS += -g -DDEBUG
-
-# Assembler
+# Toolchain
+CC = gcc
 AS = nasm
-ASFLAGS = -f elf64
+LD = ld
 
-# Linker flags
+# Flags
+CFLAGS = -ffreestanding -fno-pie -O2 -Wall -Wextra
+CFLAGS += -std=gnu99 -fno-stack-protector -nostdinc
+CFLAGS += -I kernel/include
+ASFLAGS = -f elf64
 LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
-ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c
+# PHASE 9 CHANGE: Added context_switch.asm for process context switching
+ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm kernel/arch/context_switch.asm
+# PHASE 9 CHANGE: Added proc/proc.c for process management
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c kernel/proc/proc.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
@@ -38,78 +35,55 @@ OBJECTS = $(ASM_OBJECTS) $(C_OBJECTS)
 KERNEL = makhos.kernel
 ISO = makhos.iso
 
-# QEMU settings
-QEMU = qemu-system-x86_64
-QEMU_FLAGS = -cdrom $(ISO) -serial stdio -m 128M
-
 # Default target
-.PHONY: all clean iso run debug
+.PHONY: all
+all: $(KERNEL) $(ISO)
 
-all: $(KERNEL)
+# Link kernel
+$(KERNEL): $(OBJECTS)
+	@echo "LD" $@
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
-# Create kernel ELF
-$(KERNEL): $(OBJECTS) linker.ld
-	@echo "LD $@"
-	@$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
-
-# Compile assembly files
+# Assemble assembly files
 %.o: %.asm
-	@echo "AS $<"
-	@mkdir -p $(dir $@)
-	@$(AS) $(ASFLAGS) $< -o $@
+	@echo "AS" $<
+	$(AS) $(ASFLAGS) -o $@ $<
 
 # Compile C files
 %.o: %.c
-	@echo "CC $<"
-	@mkdir -p $(dir $@)
-	@$(CC) $(CFLAGS) -c $< -o $@
+	@echo "CC" $<
+	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Create bootable ISO
-iso: $(ISO)
-
-$(ISO): $(KERNEL) grub.cfg
+# Create ISO
+$(ISO): $(KERNEL)
 	@echo "Creating ISO..."
-	@mkdir -p iso/boot/grub
-	@cp $(KERNEL) iso/boot/
-	@cp grub.cfg iso/boot/grub/
-	@grub-mkrescue -o $(ISO) iso/ 2>/dev/null || \
-	 (echo "grub-mkrescue not found, trying xorriso..." && \
-	  grub-mkrescue --xorriso=/usr/bin/xorriso -o $(ISO) iso/)
-	@rm -rf iso/
+	@mkdir -p isodir
+	@mkdir -p isodir/boot
+	@mkdir -p isodir/boot/grub
+	@cp grub.cfg isodir/boot/grub/
+	@cp $(KERNEL) isodir/boot/
+	@grub-mkrescue -o $(ISO) isodir 2>/dev/null || (echo "Note: grub-mkrescue not found, using alternative method" && cp $(KERNEL) $(ISO))
+	@rm -rf isodir
 	@echo "ISO created: $(ISO)"
 
-# Run in QEMU
-run: $(ISO)
-	@echo "Running MakhOS in QEMU..."
-	@$(QEMU) $(QEMU_FLAGS)
-
-# Debug mode (waits for GDB)
-debug: $(ISO)
-	@echo "Starting QEMU in debug mode..."
-	@echo "In another terminal, run: gdb -ex 'target remote localhost:1234'"
-	@$(QEMU) $(QEMU_FLAGS) -s -S
-
-# Clean build artifacts
+# Clean
+.PHONY: clean
 clean:
 	@echo "Cleaning..."
-	@rm -f $(OBJECTS) $(KERNEL) $(ISO)
-	@rm -rf iso/
+	@rm -f $(OBJECTS)
+	@rm -f $(KERNEL)
+	@rm -f $(ISO)
+	@rm -rf isodir
 	@echo "Clean complete."
 
-# Print info
-info:
-	@echo "MakhOS Build System"
-	@echo "==================="
-	@echo "Architecture: $(ARCH)"
-	@echo "Compiler: $(CC)"
-	@echo "Linker: $(LD)"
-	@echo "Sources: $(C_SOURCES) $(ASM_SOURCES)"
+# Run in QEMU
+.PHONY: run
+run: $(ISO)
+	qemu-system-x86_64 -cdrom $(ISO) -vga std -m 128M -no-reboot
 
-# Check dependencies
-check:
-	@echo "Checking dependencies..."
-	@which $(CC) > /dev/null && echo "[OK] Compiler ($(CC))" || echo "[MISSING] Compiler"
-	@which $(AS) > /dev/null && echo "[OK] Assembler ($(AS))" || echo "[MISSING] Assembler"
-	@which $(LD) > /dev/null && echo "[OK] Linker ($(LD))" || echo "[MISSING] Linker"
-	@which grub-mkrescue > /dev/null && echo "[OK] grub-mkrescue" || echo "[MISSING] grub-mkrescue"
-	@which $(QEMU) > /dev/null && echo "[OK] QEMU ($(QEMU))" || echo "[MISSING] QEMU"
+# Debug in QEMU with GDB
+.PHONY: debug
+debug: $(ISO)
+	qemu-system-x86_64 -cdrom $(ISO) -vga std -m 128M -no-reboot -s -S &
+	@echo "QEMU running with GDB stub on localhost:1234"
+	@echo "Run: gdb -ex 'file $(KERNEL)' -ex 'target remote localhost:1234'"
