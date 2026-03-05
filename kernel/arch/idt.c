@@ -78,6 +78,10 @@ void idt_init(void) {
     if (isr_stub_table[0x48] != 0) {
         idt_set_gate(0x48, isr_stub_table[0x48], IDT_FLAGS_KERNEL_INT);
     }
+    // Note: We don't set up an IDT gate for syscall since x86_64 uses
+    // the syscall/sysret instructions instead of int 0x80. The syscall
+    // mechanism is configured via MSRs (STAR, LSTAR, FMASK) in syscall_init().
+    
     
     // Load IDT
     idt_ptr.limit = sizeof(idt) - 1;
@@ -85,7 +89,7 @@ void idt_init(void) {
     
     __asm__ volatile("lidt %0" : : "m"(idt_ptr));
     
-    terminal_writestring("[IDT] Loaded 32 exception gates + 16 IRQ gates + syscall gate\n");
+    terminal_writestring("[IDT] Loaded 32 exception gates + 16 IRQ gates\n");
 }
 
 void idt_set_gate(uint8_t vector, uint64_t handler, uint8_t flags) {
