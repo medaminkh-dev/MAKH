@@ -109,7 +109,8 @@ void proc_init(void) {
     }
     
     // Create init process (PID 1) - first user process
-    process_t* init = proc_create(NULL, 16384);
+    // FIX: Use proc_idle as entry to prevent crash (NULL would cause jump to 0)
+    process_t* init = proc_create(proc_idle, 16384);
     if (init) {
         init->pid = 1;
         init->state = PROC_READY;

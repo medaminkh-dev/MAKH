@@ -29,15 +29,13 @@ section .text
 global context_switch
 context_switch:
     ; ========================================================================
-    ; PHASE 9 CHANGE: This is a NEW file implementing context switching
-    ; The context_t structure (200 bytes) contains:
-    ;   - General purpose registers (rax, rbx, rcx, rdx, rsi, rdi, rbp, r8-r15)
-    ;   - Stack and instruction pointers (rsp, rip)
-    ;   - Flags register (rflags)
-    ;   - Page table register (cr3)
-    ;   - Segment registers (cs, ds, es, fs, gs, ss)
+    ; PHASE 9 BUG FIX: Handle NULL old pointer (first context switch)
+    ; If old is NULL, skip saving context and just jump to loading new
     ; ========================================================================
-
+    
+    test rdi, rdi              ; Check if old is NULL
+    jz .skip_save              ; If NULL, skip saving
+    
     ; Save current context to 'old' (rdi)
     
     ; Save general purpose registers
@@ -87,6 +85,7 @@ context_switch:
     mov rax, ss
     mov [rdi + 192], rax    ; ss
     
+.skip_save:
     ; At this point, rsi still points to new context
     ; rdi still points to old context
     
