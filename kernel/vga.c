@@ -50,17 +50,16 @@ static void terminal_update_cursor(void) {
 /**
  * terminal_initialize - Initialize the VGA terminal
  * Sets up the terminal at position (0,0) with light grey on black
+ * 
+ * PHASE 9 CHANGE: Initialize in_interrupt flag
  */
 void terminal_initialize(void) {
     terminal.buffer = (uint16_t*)VGA_BUFFER_ADDR;
     terminal.row = 0;
     terminal.column = 0;
     terminal.color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    terminal.in_interrupt = 0;  // PHASE 9: Initialize reentrant flag
     terminal.selection_active = 0;
-    terminal.sel_start_row = 0;
-    terminal.sel_start_col = 0;
-    terminal.sel_end_row = 0;
-    terminal.sel_end_col = 0;
     
     /* Clear the screen */
     terminal_clear();
@@ -72,12 +71,15 @@ void terminal_initialize(void) {
 /**
  * terminal_initialize_noclear - Initialize VGA without clearing screen
  * Preserves existing content (useful for preserving bootloader messages)
+ * 
+ * PHASE 9 CHANGE: Initialize in_interrupt flag
  */
 void terminal_initialize_noclear(void) {
     terminal.buffer = (uint16_t*)VGA_BUFFER_ADDR;
     terminal.row = 3;  /* Start after bootloader messages */
     terminal.column = 0;
     terminal.color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+    terminal.in_interrupt = 0;  // PHASE 9: Initialize reentrant flag
     terminal.selection_active = 0;
     terminal.sel_start_row = 0;
     terminal.sel_start_col = 0;
