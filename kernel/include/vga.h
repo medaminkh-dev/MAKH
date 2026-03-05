@@ -1,6 +1,12 @@
 /**
- * MakhOS - vga.h
- * VGA text mode driver header
+ * =============================================================================
+ * vga.h - VGA Text Mode Driver Header for MakhOS
+ * =============================================================================
+ * Provides definitions for VGA text mode output
+ *
+ * Phase 9 Changes:
+ *   - Added in_interrupt flag to terminal_state for reentrant printing
+ * =============================================================================
  */
 
 #ifndef VGA_H
@@ -33,12 +39,26 @@ enum vga_color {
     VGA_COLOR_WHITE         = 15,
 };
 
-/* Terminal state structure */
+/**
+ * Terminal state structure
+ * 
+ * PHASE 9 CHANGE: Added in_interrupt flag
+ * This flag helps prevent reentrant terminal writes during interrupt handling
+ */
 struct terminal_state {
     uint16_t* buffer;
     size_t row;
     size_t column;
     uint8_t color;
+    
+    /**
+     * PHASE 9 CHANGE (NEW):
+     * Reentrant flag to prevent printing during interrupts
+     * 
+     * When set to 1, indicates terminal write is in progress.
+     * Used to prevent nested terminal writes from timer interrupts.
+     */
+    volatile int in_interrupt;
     
     /* Selection state */
     int selection_active;
@@ -75,12 +95,18 @@ int terminal_has_selection(void);
 void terminal_highlight_selection(void);
 void terminal_clear_selection_highlight(void);
 
-/* Helper to create color byte */
+/**
+ * Helper to create VGA color byte
+ * Combines foreground and background colors
+ */
 static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
     return fg | (bg << 4);
 }
 
-/* Helper to create VGA entry */
+/**
+ * Helper to create VGA entry
+ * Combines character and color attribute
+ */
 static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
     return (uint16_t)uc | ((uint16_t)color << 8);
 }
