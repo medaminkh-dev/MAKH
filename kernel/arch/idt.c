@@ -6,6 +6,7 @@
 #include <arch/idt.h>
 #include <arch/pic.h>
 #include <drivers/timer.h>
+#include <drivers/keyboard.h>
 #include <kernel.h>
 #include <vga.h>
 
@@ -209,8 +210,8 @@ void irq_handler(registers_t* regs) {
             break;
             
         case IRQ_KEYBOARD:
-            // Keyboard interrupt (IRQ1) - not yet implemented
-            // uint8_t scancode = inb(0x60);
+            // Keyboard interrupt (IRQ1)
+            keyboard_handler(regs);
             break;
             
         default:
