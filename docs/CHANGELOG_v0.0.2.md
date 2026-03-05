@@ -72,6 +72,42 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 
 ---
 
+## Phase 8: System Call Interface (Completed)
+**Status:** Complete  
+**New Files:** 3  
+**Modified Files:** 3
+
+### Added
+- x86_64 syscall/sysret mechanism
+  - syscall_entry assembly stub (99 lines)
+  - MSR initialization (EFER, STAR, LSTAR, FMASK)
+  - 5 system calls: exit, write, getpid, sleep, getticks
+- Syscall table with 64-entry capacity
+- MSR read/write helper functions
+- Comprehensive syscall test suite (5 tests)
+
+### Technical Highlights
+- syscall instruction: ~3x faster than legacy int 0x80
+- Native x86_64 support (int 0x80 not available in long mode)
+- Hardware-enforced privilege separation via MSRs
+- CS selectors: Kernel 0x08, User 0x1B
+
+#### New Files (Phase 8)
+1. **[`kernel/include/syscall.h`](kernel/include/syscall.h:1)** - Syscall numbers and API
+2. **[`kernel/arch/syscall_asm.asm`](kernel/arch/syscall_asm.asm:1)** - Assembly syscall entry stub
+3. **[`kernel/syscall/syscall.c`](kernel/syscall/syscall.c:1)** - MSR setup and syscall handlers
+
+#### Modified Files (Phase 8)
+4. **[`kernel/arch/idt.c`](kernel/arch/idt.c:1)** - Removed int 0x80 gate
+5. **[`kernel/kernel.c`](kernel/kernel.c:1)** - Syscall init and tests
+6. **[`Makefile`](Makefile:1)** - Syscall build integration
+
+### Breaking Changes
+- Removed int 0x80 support (was non-functional in x86_64)
+- Now using proper x86_64 syscall/sysret mechanism
+
+---
+
 ### Previous Phases (Already Documented)
 
 #### Phase 5: PIC and Timer
