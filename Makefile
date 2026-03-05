@@ -27,7 +27,7 @@ LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
 ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c kernel/lib/string.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
