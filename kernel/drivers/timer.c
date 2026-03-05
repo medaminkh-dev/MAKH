@@ -1,6 +1,14 @@
 /**
- * MakhOS - timer.c
- * PIT (Programmable Interval Timer) driver implementation
+ * =============================================================================
+ * timer.c - PIT (Programmable Interval Timer) Driver for MakhOS
+ * =============================================================================
+ * Implements the timer interrupt driver that drives the system clock
+ * and provides the basis for preemptive multitasking.
+ *
+ * Phase 9 Changes:
+ *   - Added proc_yield() call in timer_handler for preemptive scheduling
+ *   - Added in_interrupt_context flag to prevent nested context switches
+ * =============================================================================
  */
 
 #include <drivers/timer.h>
@@ -8,7 +16,13 @@
 #include <kernel.h>
 #include <vga.h>
 
-// Tick counter
+/**
+ * PHASE 9 CHANGE: Added extern declaration for scheduler
+ * The timer interrupt will call the scheduler to implement preemptive multitasking
+ */
+extern void proc_yield(void);
+
+// Tick counter - incremented every timer interrupt
 static volatile uint64_t timer_ticks = 0;
 static volatile uint32_t timer_frequency = 0;
 
@@ -69,27 +83,44 @@ void timer_init(uint32_t frequency) {
  * timer_handler - Handle timer interrupt (IRQ0)
  * @regs: CPU register state
  * 
- * Called every timer tick. Increments tick counter and prints
- * statistics every second.
+ * PHASE 9 CHANGE: This function now implements preemptive scheduling!
+ * 
+ * On each timer tick:
+ *   1. Set in_interrupt_context = 1 (prevent nested context switches)
+ *   2. Increment timer_ticks (system clock)
+ *   3. Call proc_yield() to give CPU to another process
+ *   4. Set in_interrupt_context = 0
+ * 
+ * This enables round-robin preemptive multitasking by forcing
+ * the scheduler to run on every timer interrupt.
  */
 void timer_handler(registers_t* regs) {
     (void)regs;  // Unused parameter
     
+    /**
+     * PHASE 9 CHANGE: Mark interrupt context
+     * 
+     * Set flag before calling scheduler. This tells proc_yield()
+     * that we're in interrupt context so it should skip the actual
+     * context switch (to prevent nested interrupts from crashing).
+     */
+    extern volatile int in_interrupt_context;
+    in_interrupt_context = 1;
+    
+    // Increment system tick counter
     timer_ticks++;
     
-    // Print statistics every second
-    if (timer_frequency > 0 && timer_ticks % timer_frequency == 0) {
-        uint64_t seconds = timer_ticks / timer_frequency;
-        
-        // Only print for first few seconds, then every 10 seconds
-        if (seconds <= 5 || seconds % 10 == 0) {
-            char buf[32];
-            terminal_writestring("[TIMER] Tick: ");
-            uint64_to_string(seconds, buf);
-            terminal_writestring(buf);
-            terminal_writestring(" seconds\n");
-        }
-    }
+    /**
+     * PHASE 9 CHANGE: Call scheduler for preemptive multitasking
+     * 
+     * This is the heart of preemptive scheduling - on every timer
+     * tick, we give up the CPU so the scheduler can decide which
+     * process should run next.
+     */
+    proc_yield();
+    
+    // Clear interrupt context flag
+    in_interrupt_context = 0;
 }
 
 /**
