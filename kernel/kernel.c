@@ -6,6 +6,7 @@
 
 #include "include/kernel.h"
 #include "include/vga.h"
+#include "include/serial.h"
 #include "include/multiboot.h"
 #include "include/types.h"
 #include "include/mm/pmm.h"
@@ -719,6 +720,10 @@ void kernel_main(void) {
     
     /* Checkpoint - terminal init done */
     vga[82] = (0x0F << 8) | 'i';  /* 'i' for init done */
+    
+    /* Initialize serial port for QEMU output capture */
+    serial_init();
+    serial_writestring("\n[MakhOS] Serial port initialized\n");
     
     /* Position cursor after bootloader messages (line 3) */
     terminal_setcursor(3, 0);
