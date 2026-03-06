@@ -24,7 +24,8 @@ LDFLAGS = -T linker.ld -nostdlib
 # PHASE 9 CHANGE: Added context_switch.asm for process context switching
 ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm kernel/arch/context_switch.asm
 # PHASE 9 CHANGE: Added proc/proc.c for process management
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c kernel/proc/proc.c
+# SERIAL CHANGE: Added drivers/serial.c for serial port output
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/drivers/serial.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c kernel/proc/proc.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
