@@ -5,6 +5,7 @@
 
 #include "include/vga.h"
 #include "include/kernel.h"
+#include "include/serial.h"
 
 /* Static terminal state */
 static struct terminal_state terminal;
@@ -142,8 +143,13 @@ void terminal_newline(void) {
  *
  * Supports '\n' for newline, '\b' for simple backspace (no shift)
  * Insert mode: typing in middle of line shifts characters right
+ * Also outputs to serial port for QEMU capture
  */
 void terminal_putchar(char c) {
+    /* Also output to serial port for QEMU capture (if initialized) */
+    if (serial_is_initialized()) {
+        serial_write_char(c);
+    }
     /* Handle newline */
     if (c == '\n') {
         terminal_newline();
