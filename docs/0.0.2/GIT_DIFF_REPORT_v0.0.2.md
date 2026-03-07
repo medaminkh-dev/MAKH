@@ -270,9 +270,9 @@ All subsystems include built-in tests:
 
 ## Documentation
 
-- [`docs/CHANGELOG_v0.0.2.md`](docs/CHANGELOG_v0.0.2.md) - Detailed changelog
-- [`docs/GIT_DIFF_REPORT_v0.0.2.md`](docs/GIT_DIFF_REPORT_v0.0.2.md) - This file
-- [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) - Verification results
+- [`docs/0.0.2/CHANGELOG_v0.0.2.md`](docs/CHANGELOG_v0.0.2.md) - Detailed changelog
+- [`docs/0.0.2/GIT_DIFF_REPORT_v0.0.2.md`](docs/GIT_DIFF_REPORT_v0.0.2.md) - This file
+- [`docs/0.0.2/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) - Verification results
 
 ---
 
