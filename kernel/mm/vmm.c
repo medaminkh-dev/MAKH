@@ -19,9 +19,9 @@ static uint64_t current_pml4_phys = 0;
 static uint64_t next_virt_addr = KERNEL_HIGHER_HALF_BASE;
 
 /* Helper function prototypes */
-static uint64_t* get_or_create_pdpt(uint64_t virt_addr);
-static uint64_t* get_or_create_pd(uint64_t virt_addr);
-static uint64_t* get_or_create_pt(uint64_t virt_addr);
+static uint64_t* get_or_create_pdpt(uint64_t virt_addr, uint64_t flags);
+static uint64_t* get_or_create_pd(uint64_t virt_addr, uint64_t flags);
+static uint64_t* get_or_create_pt(uint64_t virt_addr, uint64_t flags);
 static void memset64(uint64_t* dest, uint64_t val, size_t count);
 
 /**
@@ -37,7 +37,7 @@ static void memset64(uint64_t* dest, uint64_t val, size_t count) {
  * get_or_create_pdpt - Get or create PDPT for virtual address
  * Returns: Pointer to PDPT table (virtual address), or NULL on failure
  */
-static uint64_t* get_or_create_pdpt(uint64_t virt_addr) {
+static uint64_t* get_or_create_pdpt(uint64_t virt_addr, uint64_t flags) {
     uint64_t pml4_idx = VMM_PML4_INDEX(virt_addr);
     
     /* Check if PML4 entry exists */
@@ -50,7 +50,14 @@ static uint64_t* get_or_create_pdpt(uint64_t virt_addr) {
         memset64((uint64_t*)new_pdpt, 0, PAGE_TABLE_ENTRIES);
         
         /* Set PML4 entry: physical address + flags */
-        kernel_pml4[pml4_idx] = (uint64_t)(uintptr_t)new_pdpt | PAGE_PRESENT | PAGE_WRITABLE;
+        uint64_t entry_flags = PAGE_PRESENT | PAGE_WRITABLE;
+        if (flags & PAGE_USER) {
+            entry_flags |= PAGE_USER;
+        }
+        kernel_pml4[pml4_idx] = (uint64_t)(uintptr_t)new_pdpt | entry_flags;
+    } else if (flags & PAGE_USER) {
+        /* Entry exists - ensure USER flag is set if requested */
+        kernel_pml4[pml4_idx] |= PAGE_USER;
     }
     
     /* Get physical address of PDPT, convert to virtual (identity mapped) */
@@ -62,9 +69,9 @@ static uint64_t* get_or_create_pdpt(uint64_t virt_addr) {
  * get_or_create_pd - Get or create Page Directory for virtual address
  * Returns: Pointer to PD table (virtual address), or NULL on failure
  */
-static uint64_t* get_or_create_pd(uint64_t virt_addr) {
+static uint64_t* get_or_create_pd(uint64_t virt_addr, uint64_t flags) {
     /* Get PDPT first */
-    uint64_t* pdpt = get_or_create_pdpt(virt_addr);
+    uint64_t* pdpt = get_or_create_pdpt(virt_addr, flags);
     if (pdpt == NULL) return NULL;
     
     uint64_t pdpt_idx = VMM_PDPT_INDEX(virt_addr);
@@ -79,7 +86,14 @@ static uint64_t* get_or_create_pd(uint64_t virt_addr) {
         memset64((uint64_t*)new_pd, 0, PAGE_TABLE_ENTRIES);
         
         /* Set PDPT entry: physical address + flags */
-        pdpt[pdpt_idx] = (uint64_t)(uintptr_t)new_pd | PAGE_PRESENT | PAGE_WRITABLE;
+        uint64_t entry_flags = PAGE_PRESENT | PAGE_WRITABLE;
+        if (flags & PAGE_USER) {
+            entry_flags |= PAGE_USER;
+        }
+        pdpt[pdpt_idx] = (uint64_t)(uintptr_t)new_pd | entry_flags;
+    } else if (flags & PAGE_USER) {
+        /* Entry exists - ensure USER flag is set if requested */
+        pdpt[pdpt_idx] |= PAGE_USER;
     }
     
     /* Get physical address of PD, convert to virtual (identity mapped) */
@@ -91,9 +105,9 @@ static uint64_t* get_or_create_pd(uint64_t virt_addr) {
  * get_or_create_pt - Get or create Page Table for virtual address
  * Returns: Pointer to PT table (virtual address), or NULL on failure
  */
-static uint64_t* get_or_create_pt(uint64_t virt_addr) {
+static uint64_t* get_or_create_pt(uint64_t virt_addr, uint64_t flags) {
     /* Get PD first */
-    uint64_t* pd = get_or_create_pd(virt_addr);
+    uint64_t* pd = get_or_create_pd(virt_addr, flags);
     if (pd == NULL) return NULL;
     
     uint64_t pd_idx = VMM_PD_INDEX(virt_addr);
@@ -108,10 +122,14 @@ static uint64_t* get_or_create_pt(uint64_t virt_addr) {
         memset64((uint64_t*)new_pt, 0, PAGE_TABLE_ENTRIES);
         
         /* Set PD entry: physical address + flags */
-        pd[pd_idx] = (uint64_t)(uintptr_t)new_pt | PAGE_PRESENT | PAGE_WRITABLE;
+        uint64_t entry_flags = PAGE_PRESENT | PAGE_WRITABLE;
+        if (flags & PAGE_USER) entry_flags |= PAGE_USER;
+        pd[pd_idx] = (uint64_t)(uintptr_t)new_pt | entry_flags;
+    } else if (flags & PAGE_USER) {
+        /* Entry exists - ensure USER flag is set if requested */
+        pd[pd_idx] |= PAGE_USER;
     }
     
-    /* Get physical address of PT, convert to virtual (identity mapped) */
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
     return (uint64_t*)(uintptr_t)pt_phys;
 }
@@ -285,7 +303,7 @@ int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     if (phys_addr & 0xFFF) return -1;
     
     /* Get or create the page table */
-    uint64_t* pt = get_or_create_pt(virt_addr);
+    uint64_t* pt = get_or_create_pt(virt_addr, flags);
     if (pt == NULL) return -1;
     
     /* Set the page table entry */
@@ -457,4 +475,108 @@ void vmm_free_page(void* virt_addr) {
     
     /* Free the physical page */
     pmm_free_page((void*)(uintptr_t)phys);
+}
+
+/**
+ * vmm_dump_page_tables - Debug function to dump page table entries for a virtual address
+ * @virt_addr: Virtual address to dump page table info for
+ * 
+ * This function helps verify that page table entries have the USER flag set correctly.
+ */
+void vmm_dump_page_tables(uint64_t virt_addr) {
+    char buf[32];
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    
+    terminal_writestring("\n[VMM DEBUG] Dumping for: ");
+    uint64_to_hex(virt_addr, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    terminal_writestring("[VMM DEBUG] CR3=");
+    uint64_to_hex(cr3, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // PML4
+    uint64_t pml4_idx = VMM_PML4_INDEX(virt_addr);
+    uint64_t* pml4 = (uint64_t*)cr3;
+    terminal_writestring("[VMM DEBUG] PML4[");
+    uint64_to_hex(pml4_idx, buf);
+    terminal_writestring(buf);
+    terminal_writestring("]=");
+    uint64_to_hex(pml4[pml4_idx], buf);
+    terminal_writestring("\n");
+    
+    if (!(pml4[pml4_idx] & PAGE_PRESENT)) {
+        terminal_writestring("[VMM DEBUG] NOT PRESENT\n");
+        return;
+    }
+    
+    // Check USER flag
+    if (pml4[pml4_idx] & PAGE_USER) {
+        terminal_writestring("[VMM DEBUG] USER flag set\n");
+    } else {
+        terminal_writestring("[VMM DEBUG] USER flag MISSING\n");
+    }
+    
+    // PDPT
+    uint64_t pdpt_phys = pml4[pml4_idx] & ~0xFFF;
+    uint64_t* pdpt = (uint64_t*)pdpt_phys;
+    uint64_t pdpt_idx = VMM_PDPT_INDEX(virt_addr);
+    
+    terminal_writestring("[VMM DEBUG] PDPT[");
+    uint64_to_hex(pdpt_idx, buf);
+    terminal_writestring(buf);
+    terminal_writestring("]=");
+    uint64_to_hex(pdpt[pdpt_idx], buf);
+    terminal_writestring("\n");
+    
+    if (pdpt[pdpt_idx] & PAGE_USER) {
+        terminal_writestring("[VMM DEBUG] USER flag set\n");
+    } else {
+        terminal_writestring("[VMM DEBUG] USER flag MISSING\n");
+    }
+    
+    // PD
+    uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
+    uint64_t* pd = (uint64_t*)pd_phys;
+    uint64_t pd_idx = VMM_PD_INDEX(virt_addr);
+    
+    terminal_writestring("[VMM DEBUG] PD[");
+    uint64_to_hex(pd_idx, buf);
+    terminal_writestring(buf);
+    terminal_writestring("]=");
+    uint64_to_hex(pd[pd_idx], buf);
+    terminal_writestring("\n");
+    
+    if (pd[pd_idx] & PAGE_USER) {
+        terminal_writestring("[VMM DEBUG] USER flag set\n");
+    } else {
+        terminal_writestring("[VMM DEBUG] USER flag MISSING\n");
+    }
+    
+    // PT
+    uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
+    uint64_t* pt = (uint64_t*)pt_phys;
+    uint64_t pt_idx = VMM_PT_INDEX(virt_addr);
+    
+    terminal_writestring("[VMM DEBUG] PT[");
+    uint64_to_hex(pt_idx, buf);
+    terminal_writestring(buf);
+    terminal_writestring("]=");
+    uint64_to_hex(pt[pt_idx], buf);
+    terminal_writestring("\n");
+    
+    if (pt[pt_idx] & PAGE_USER) {
+        terminal_writestring("[VMM DEBUG] USER flag set\n");
+    } else {
+        terminal_writestring("[VMM DEBUG] USER flag MISSING\n");
+    }
+    
+    uint64_t phys_page = pt[pt_idx] & ~0xFFF;
+    terminal_writestring("[VMM DEBUG] Phys page=");
+    uint64_to_hex(phys_page, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
 }

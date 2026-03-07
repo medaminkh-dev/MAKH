@@ -21,8 +21,9 @@ ASFLAGS = -f elf64
 LDFLAGS = -T linker.ld -nostdlib
 
 # Source files
-# PHASE 9 CHANGE: Added context_switch.asm for process context switching
-ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm kernel/arch/context_switch.asm
+# PHASE 10 CHANGE: Added usermode.asm for user mode transition
+# PHASE 10.2c CHANGE: Added user_program.asm for user program
+ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm kernel/arch/context_switch.asm kernel/arch/usermode.asm kernel/user/user_program.asm
 # PHASE 9 CHANGE: Added proc/proc.c for process management
 # SERIAL CHANGE: Added drivers/serial.c for serial port output
 C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/drivers/serial.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c kernel/proc/proc.c
@@ -45,8 +46,13 @@ $(KERNEL): $(OBJECTS)
 	@echo "LD" $@
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
-# Assemble assembly files
+# Assemble assembly files in root directory
 %.o: %.asm
+	@echo "AS" $<
+	$(AS) $(ASFLAGS) -o $@ $<
+
+# Assemble assembly files in kernel subdirectories
+kernel/%.o: kernel/%.asm
 	@echo "AS" $<
 	$(AS) $(ASFLAGS) -o $@ $<
 

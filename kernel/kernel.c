@@ -22,6 +22,7 @@
 #include "include/arch/tss.h"
 #include "include/syscall.h"
 #include "include/proc.h"
+#include "include/user.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -701,6 +702,128 @@ void test_syscalls(void) {
 }
 
 /**
+ * test_user_program - Load and execute user program from user_program.S
+ */
+void test_user_program(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] User Program Test\n");
+    terminal_writestring("[TEST] ========================\n");
+    
+    // External symbols from user_program.asm
+    extern char user_program_start[];
+    extern char user_program_end[];
+    
+    // Get user code size (includes both code and data now)
+    uint64_t user_code_size = user_program_end - user_program_start;
+    
+    terminal_writestring("[USER] User program size: ");
+    uint64_to_string(user_code_size, buf);
+    terminal_writestring(buf);
+    terminal_writestring(" bytes\n");
+    
+    terminal_writestring("[USER] user_program_start: ");
+    uint64_to_hex((uint64_t)user_program_start, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    terminal_writestring("[USER] user_program_end:   ");
+    uint64_to_hex((uint64_t)user_program_end, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Allocate physical page for user code
+    terminal_writestring("[USER] Allocating physical page for user code...\n");
+    void* user_code_phys = pmm_alloc_page();
+    if (!user_code_phys) {
+        terminal_writestring("[ERROR] Failed to allocate physical page for code\n");
+        return;
+    }
+    
+    terminal_writestring("[USER] Physical address: ");
+    uint64_to_hex((uint64_t)user_code_phys, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Copy user code to the physical page
+    // We need to copy from kernel space to the physical page
+    // Since the user_program is in kernel's address space, we can directly copy
+    terminal_writestring("[USER] Copying user code to physical page...\n");
+    {
+        uint8_t* src = (uint8_t*)user_program_start;
+        uint8_t* dst = (uint8_t*)user_code_phys;
+        for (uint64_t i = 0; i < user_code_size; i++) {
+            dst[i] = src[i];
+        }
+    }
+    
+    // Map user code at virtual address 0x60000000
+    uint64_t user_code_virt = 0x60000000;
+    terminal_writestring("[USER] Mapping user code at virtual address ");
+    uint64_to_hex(user_code_virt, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    if (vmm_map_page(user_code_virt, (uint64_t)user_code_phys,
+                     PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER) != 0) {
+        terminal_writestring("[ERROR] Failed to map user code page\n");
+        pmm_free_page(user_code_phys);
+        return;
+    }
+    
+    terminal_writestring("[OK] User code page mapped\n");
+    
+    // Allocate user stack (2 pages)
+    uint64_t user_stack_virt = 0x70000000;
+    uint64_t user_stack_pages = 2;
+    
+    terminal_writestring("[USER] Allocating user stack...\n");
+    
+    for (uint64_t i = 0; i < user_stack_pages; i++) {
+        void* phys = pmm_alloc_page();
+        if (!phys) {
+            terminal_writestring("[ERROR] Failed to allocate stack page\n");
+            return;
+        }
+        
+        if (vmm_map_page(user_stack_virt + i*4096, (uint64_t)phys,
+                         PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER) != 0) {
+            terminal_writestring("[ERROR] Failed to map stack page\n");
+            pmm_free_page(phys);
+            return;
+        }
+        
+        terminal_writestring("  Stack page ");
+        uint64_to_string(i, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" at virt ");
+        uint64_to_hex(user_stack_virt + i*4096, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+    }
+    
+    uint64_t user_stack_top = user_stack_virt + (user_stack_pages * 4096) - 16;
+    
+    terminal_writestring("[USER] Stack top at ");
+    uint64_to_hex(user_stack_top, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Add debug dumps
+    terminal_writestring("\n[DEBUG] Page table verification:\n");
+    vmm_dump_page_tables(user_code_virt);
+    vmm_dump_page_tables(user_stack_virt);
+    vmm_dump_page_tables(user_stack_virt + 4096);
+    
+    terminal_writestring("[USER] Entering user mode...\n\n");
+    
+    // This should never return
+    enter_usermode(user_code_virt, user_stack_top, 0);
+    
+    terminal_writestring("[ERROR] Returned from user mode!\n");
+}
+
+/**
  * kernel_main - Main kernel entry point
  * Called from boot.asm after switching to long mode
  * 
@@ -879,8 +1002,11 @@ void kernel_main(void) {
     
     idt_enable_interrupts();
     
-    /* Test keyboard */
-    test_keyboard();
+    /* Test user program */
+    test_user_program();
+    
+    /* Test keyboard (commented out for now) */
+    // test_keyboard();
     
     /* Success message */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));

@@ -31,6 +31,18 @@ SECTIONS
         *(.rodata.*)
     }
     
+    /* User program - text and data MUST be together for RIP-relative addressing */
+    /* Place both sections consecutively so offsets are correct */
+    .user_text : {
+        *(.user_text)
+        *(.user_text.*)
+    }
+    
+    .user_data : {
+        *(.user_data)
+        *(.user_data.*)
+    }
+    
     /* Initialized data */
     .data ALIGN(4K) :
     {

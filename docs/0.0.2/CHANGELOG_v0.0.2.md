@@ -1,10 +1,10 @@
 # MakhOS Changelog - Version 0.0.2
 
 ## Release Date
-March 4, 2026
+March 6, 2026
 
 ## Overview
-Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introducing comprehensive memory management capabilities and interrupt handling infrastructure. This release transforms MakhOS from a basic bootable kernel into a functional x86_64 operating system with proper memory management.
+Version 0.0.2 represents the completion of Phases 5-10 of MakhOS development, introducing comprehensive interrupt handling, device drivers, process management, and user mode execution. This release transforms MakhOS from a bootable kernel into a fully-functional x86_64 operating system with proper memory management, multitasking, and privilege isolation.
 
 ---
 
@@ -108,6 +108,116 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 
 ---
 
+## Phase 9: Process Management & Scheduling (Completed)
+**Status:** Complete  
+**New Files:** 3  
+**Modified Files:** 7
+
+### Added
+- Process Control Block (PCB) structure
+  - 200-byte context storage for all registers
+  - Process state tracking (EMBRYO, READY, RUNNING, BLOCKED, ZOMBIE)
+  - Stack management (kernel + user stacks)
+  - Linked list pointers for queue management
+- Context switching mechanism (assembly-level)
+  - Save/restore all x86_64 registers
+  - Memory-isolated contexts
+  - Support for nested processes
+- Round-robin preemptive scheduler
+  - Timer interrupt-driven scheduling
+  - Idle process (PID 0) for no-load condition
+  - Ready queue management
+- Process creation and lifecycle
+  - proc_create() for spawning processes
+  - proc_exit() for termination
+  - proc_yield() for voluntary CPU release
+
+### Technical Highlights
+- Context size: 200 bytes (25 registers + CR3)
+- Process states: 5 distinct states with transitions
+- Scheduler: O(1) Round-Robin with 10ms time slices
+- Interrupt safety: Prevents nested context switches during interrupts
+
+#### New Files (Phase 9)
+1. **[`kernel/include/proc.h`](kernel/include/proc.h:1)** - Process structures and API
+2. **[`kernel/arch/context_switch.asm`](kernel/arch/context_switch.asm:1)** - Context switching assembly
+3. **[`kernel/proc/proc.c`](kernel/proc/proc.c:1)** - Process management implementation
+
+#### Modified Files (Phase 9)
+4. **[`kernel/drivers/timer.c`](kernel/drivers/timer.c:1)** - Added proc_yield() call in interrupt handler
+5. **[`kernel/include/vga.h`](kernel/include/vga.h:1)** - Added in_interrupt flag
+6. **[`kernel/vga.c`](kernel/vga.c:1)** - Initialize in_interrupt state
+7. **[`kernel/kernel.c`](kernel/kernel.c:1)** - proc_init() and test functions
+8. **[`Makefile`](Makefile:1)** - Added proc management files
+
+### Key Features
+- **Idle Process:** Runs when no other processes ready
+- **Init Process:** First user process (PID 1)
+- **Context Preservation:** Full register/segment state saved
+- **Interrupt Safe:** Prevents context switch during interrupt handling
+
+---
+
+## Phase 10: User Mode Transition & Execution (Completed)
+**Status:** Complete  
+**New Files:** 3  
+**Modified Files:** 7
+
+### Added
+- Ring 0 → Ring 3 privilege level transition via iretq
+  - enter_usermode() function for controlled user entry
+  - iretq frame construction on kernel stack
+  - Segment register configuration for Ring 3
+- Memory isolation for user programs
+  - User code pages with PAGE_USER flag
+  - User stack with proper bounds
+  - Protected kernel memory (Ring 3 cannot access)
+- User mode program execution
+  - Sample user program with syscalls
+  - Syscall argument passing (6 registers)
+  - Syscall return to user mode via sysret
+- Security mechanisms
+  - Privilege level checks via GPT and page tables
+  - Restricted instruction set in Ring 3
+  - Controlled kernel access via syscall interface
+
+### Technical Highlights
+- Ring transition: iretq with 5-entry stack frame
+- User selectors: CS=0x1B, DS/SS=0x23 (Ring 3)
+- Kernel selectors: CS=0x08, DS/SS=0x10 (Ring 0)
+- Virtual memory layout: Code at 0x60000000, Stack at 0x70000000
+- Syscall convention: Linux x86_64 compatible (RAX=number, RDI-RDX, R8-R10 args)
+
+#### New Files (Phase 10)
+1. **[`kernel/include/user.h`](kernel/include/user.h:1)** - User mode definitions
+2. **[`kernel/arch/usermode.asm`](kernel/arch/usermode.asm:1)** - enter_usermode() implementation
+3. **[`kernel/user/user_program.asm`](kernel/user/user_program.asm:1)** - Sample user program
+
+#### Modified Files (Phase 10)
+4. **[`kernel/kernel.c`](kernel/kernel.c:1)** - test_user_program() function
+5. **[`kernel/arch/syscall_asm.asm`](kernel/arch/syscall_asm.asm:1)** - Updated syscall handling
+6. **[`kernel/syscall/syscall.c`](kernel/syscall/syscall.c:1)** - STAR MSR setup for Ring transitions
+7. **[`kernel/include/mm/vmm.h`](kernel/include/mm/vmm.h:1)** - Added vmm_dump_page_tables()
+8. **[`kernel/mm/vmm.c`](kernel/mm/vmm.c:1)** - Implemented page table debugging
+9. **[`linker.ld`](linker.ld:1)** - Added .user_text and .user_data sections
+10. **[`Makefile`](Makefile:1)** - Added user mode assembly files
+
+### Key Features
+- **Privilege Isolation:** User code runs with restricted CPU privileges
+- **Memory Protection:** User pages inaccessible from Ring 3
+- **Controlled Access:** Only via syscall interface
+- **RFLAGS Control:** IF bit set for interrupt handling
+- **Protection Faults:** #PF on privilege violations
+
+### Security Enhancements
+- Ring 3 cannot execute privileged instructions (cli, hlt, mov cr3, iretq)
+- Ring 3 cannot load kernel segments
+- Ring 3 cannot access kernel memory
+- Syscalls provide controlled kernel entry point
+- Full register state preserved across transitions
+
+---
+
 ### Previous Phases (Already Documented)
 
 #### Phase 5: PIC and Timer
@@ -126,9 +236,9 @@ Version 0.0.2 represents the completion of Phase 2 of MakhOS development, introd
 - Standard library (stdlib.h)
 
 ### Total Files in v0.0.2
-- **New:** 19 files
-- **Modified:** 8 files
-- **Total Lines of Code:** ~9,000+
+- **New:** 28 files
+- **Modified:** 21 files
+- **Total Lines of Code:** ~15,000+
 
 ---
 
@@ -453,20 +563,49 @@ No breaking changes. v0.0.2 is fully backward compatible with v0.0.1 boot proces
 
 ## Known Limitations
 
-1. **Physical Memory:** Limited to 4GB due to static bitmap sizing
-2. **Heap Size:** Initial heap limited to 16KB, grows dynamically
-3. **Interrupts:** Software interrupts tested, hardware interrupts pending
-4. **Processes:** No process management yet (Phase 3)
+1. **Single User Program:** One user task at a time (fork/exec planned for v0.0.3)
+2. **Limited Syscalls:** 5 basic syscalls (will expand in v0.0.3)
+3. **No Signals:** Signal delivery to user code not implemented
+4. **No IPC:** Inter-process communication limited
+5. **No Virtual Memory Features:** No demand paging or ASLR
 
 ---
 
-## Next Steps (Phase 3 Preview)
+## v0.0.2 Completion Status
 
-- Process management and scheduling
-- System calls infrastructure
-- Timer interrupt handling
-- Keyboard input driver
-- Basic shell/interpreter
+**Version 0.0.2 is now FINAL and COMPLETE**
+
+✓ Memory Management (PMM, VMM, Heap)  
+✓ Interrupt Handling (PIC, Timer, Exceptions)  
+✓ Device Drivers (Keyboard, Serial)  
+✓ Privilege Mechanisms (GDT, TSS, Ring 3)  
+✓ System Call Interface (syscall/sysret)  
+✓ Process Management (Round-robin scheduler)  
+✓ User Mode Execution (Ring 3 isolation)  
+
+---
+
+## Roadmap Preview: v0.0.3
+
+MakhOS v0.0.3 will introduce advanced process management and inter-process communication:
+
+```
+MakhOS v0.0.3
+├── Phase 11: Process Core Enhancement
+│   └─ Multi-process execution, process trees, parent-child relationships
+├── Phase 12: fork() System Call
+│   └─ Process duplication, Copy-on-Write (CoW) mechanism
+├── Phase 13: wait() and exit() Lifecycle
+│   └─ Process synchronization, zombie collection, exit codes
+├── Phase 14: Priority Scheduler
+│   └─ Weighted round-robin, nice levels, dynamic priorities
+├── Phase 15: Process Isolation (Copy-on-Write)
+│   └─ Memory sharing with write protection, page fault handling
+├── Phase 16: Signals
+│   └─ Signal delivery, handlers, kill/pause system calls
+└── Phase 17: IPC Foundation (Pipes)
+    └─ Unnamed pipes, pipe syscalls, data flow between processes
+```
 
 ---
 
