@@ -65,13 +65,19 @@ void syscall_init(void) {
     terminal_writestring("\n");
     
     // Set up STAR MSR:
-    // Bits 63:48 = Kernel CS (0x08) - loaded into CS on syscall
-    // Bits 47:32 = User CS (0x1B = 0x18 | 3) - target for sysret
-    // SS is calculated as CS + 8 automatically by CPU
-    uint64_t star_val = ((uint64_t)0x08 << 48) | ((uint64_t)0x1B << 32);
+    // For sysret to return to user mode with CS=0x1B:
+    //   sysret CS = STAR[63:48] + 16 | 3
+    //   So STAR[63:48] = 0x08 (so 0x08+16 = 0x18, then |3 = 0x1B)
+    // For syscall to enter kernel mode with CS=0x08:
+    //   STAR[47:32] = 0x08
+    uint64_t star_val = ((uint64_t)0x08 << 48) | ((uint64_t)0x08 << 32);
     wrmsr(IA32_STAR, star_val);
     terminal_writestring("[SYSCALL] STAR set to: 0x");
     uint64_to_hex(star_val, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    terminal_writestring("[SYSCALL] STAR read back: 0x");
+    uint64_to_hex(rdmsr(IA32_STAR), buf);
     terminal_writestring(buf);
     terminal_writestring("\n");
     
@@ -119,7 +125,8 @@ static uint64_t sys_exit(uint64_t code, uint64_t a2, uint64_t a3, uint64_t a4, u
     char buf[32];
     uint64_to_string(code, buf);
     terminal_writestring(buf);
-    terminal_writestring(") called\n");
+    terminal_writestring(") called - user program completed!\n");
+    terminal_writestring("\n=== USER MODE TEST SUCCESSFUL ===\n\n");
     terminal_writestring("System halted.\n");
     for(;;) {
         __asm__ volatile("hlt");
