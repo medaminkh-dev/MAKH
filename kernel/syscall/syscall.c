@@ -25,6 +25,7 @@ static uint64_t sys_getticks(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4,
 static uint64_t sys_getppid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 static uint64_t sys_getpriority(uint64_t pid, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 static uint64_t sys_setpriority(uint64_t pid, uint64_t priority, uint64_t a3, uint64_t a4, uint64_t a5);
+static uint64_t sys_fork(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 
 // MSR read/write helpers
 static inline uint64_t rdmsr(uint32_t msr) {
@@ -59,6 +60,7 @@ void syscall_init(void) {
     syscall_table[SYS_GETPPID] = sys_getppid;
     syscall_table[SYS_GETPRIORITY] = sys_getpriority;
     syscall_table[SYS_SETPRIORITY] = sys_setpriority;
+    syscall_table[SYS_FORK] = sys_fork;
     
     // Enable syscall instruction in EFER MSR
     uint64_t efer = rdmsr(IA32_EFER);
@@ -112,6 +114,7 @@ void syscall_init(void) {
     terminal_writestring("  [5] getpid\n");
     terminal_writestring("  [6] sleep\n");
     terminal_writestring("  [7] getticks\n");
+    terminal_writestring("  [57] fork\n");
     terminal_writestring("[SYSCALL] syscall/sysret enabled via MSRs\n");
 }
 
@@ -199,4 +202,10 @@ static uint64_t sys_setpriority(uint64_t pid, uint64_t priority, uint64_t a3, ui
     if (!proc) return (uint64_t)-1;
     proc->priority = priority;
     return 0;
+}
+
+// Fork syscall handler
+static uint64_t sys_fork(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    return (uint64_t)proc_fork();
 }
