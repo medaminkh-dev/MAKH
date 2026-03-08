@@ -260,4 +260,17 @@ process_t* proc_find(int32_t pid);
 int32_t proc_alloc_pid(void);
 void proc_free_pid(int32_t pid);
 
+// =============================================================================
+// FORK SUPPORT (Phase 12)
+// =============================================================================
+
+/**
+ * proc_fork - Fork current process
+ * 
+ * Creates a child process that is a copy of the parent.
+ * 
+ * @return: Child's PID to parent, 0 to child, -1 on failure
+ */
+int proc_fork(void);
+
 #endif
