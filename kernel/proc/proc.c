@@ -291,6 +291,164 @@ static void proc_reparent_orphans(process_t* dead_parent) {
     dead_parent->child_count = 0;
 }
 
+// =============================================================================
+// MEMORY COPY HELPER FUNCTIONS FOR FORK (Phase 12.2)
+// =============================================================================
+
+/**
+ * copy_kernel_stack - Copy parent kernel stack to child
+ * 
+ * Allocates a new kernel stack for the child process and copies
+ * the parent's stack contents. Adjusts the child's RSP to point
+ * to the corresponding location in the new stack.
+ *
+ * @parent: Parent process
+ * @child: Child process
+ * @return: 0 on success, -1 on failure
+ */
+static int copy_kernel_stack(process_t* parent, process_t* child) {
+    // Allocate new kernel stack for child
+    child->kernel_stack = (uint64_t)kmalloc(parent->kernel_stack_size);
+    if (!child->kernel_stack) return -1;
+    
+    child->kernel_stack_size = parent->kernel_stack_size;
+    
+    // Copy stack contents
+    uint8_t* src = (uint8_t*)parent->kernel_stack;
+    uint8_t* dst = (uint8_t*)child->kernel_stack;
+    for (uint64_t i = 0; i < parent->kernel_stack_size; i++) {
+        dst[i] = src[i];
+    }
+    
+    // Adjust RSP offset (stack grows down, so calculate offset from base)
+    uint64_t rsp_offset = parent->context.rsp - parent->kernel_stack;
+    child->context.rsp = child->kernel_stack + rsp_offset;
+    
+    return 0;
+}
+
+/**
+ * copy_user_memory - Copy user memory (simplified - full copy)
+ * 
+ * For simplified fork, the child will share parent's address space for now.
+ * Full COW (Copy on Write) will be implemented in Phase 15.
+ *
+ * @parent: Parent process
+ * @child: Child process
+ * @return: 0 on success
+ */
+static int copy_user_memory(process_t* parent, process_t* child) {
+    (void)parent; (void)child;
+    
+    // For simplified fork, we'll handle this differently
+    // The child will share parent's address space for now
+    // Full COW (Copy on Write) will be implemented in Phase 15
+    
+    // For now, just return success - child uses same page tables
+    // This is a simplified implementation
+    return 0;
+}
+
+// =============================================================================
+// FORK IMPLEMENTATION (Phase 12.3)
+// =============================================================================
+
+/**
+ * proc_fork - Fork current process - creates a copy of the current process
+ * 
+ * Creates a child process that is a copy of the parent. The child gets:
+ *   - A new PID
+ *   - A copy of the parent's kernel stack
+ *   - The same user memory (simplified - shares address space)
+ *   - A copy of the parent's context (with RAX=0 for child)
+ * 
+ * The parent receives the child's PID, the child receives 0.
+ * 
+ * @return: Child's PID to parent, 0 to child, -1 on failure
+ */
+int proc_fork(void) {
+    process_t* parent = proc_current();
+    if (!parent) return -1;
+    
+    char buf[32];
+    terminal_writestring("[FORK] Forking process PID ");
+    uint64_to_string(parent->pid, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Allocate new process table slot
+    process_t* child = proc_table_alloc();
+    if (!child) return -1;
+    
+    // Clear the PCB to ensure clean state
+    memset(child, 0, sizeof(process_t));
+    
+    // Allocate new PID
+    child->pid = proc_alloc_pid();
+    if (child->pid < 0) {
+        proc_table_free(child);
+        return -1;
+    }
+    
+    // Copy basic process info
+    child->state = PROC_READY;
+    child->priority = parent->priority;
+    child->creation_time = timer_get_ticks();
+    child->cpu_time_used = 0;
+    child->parent_pid = parent->pid;
+    child->child_count = 0;
+    child->children_head = NULL;
+    child->children_tail = NULL;
+    child->exit_code = 0;
+    
+    // Copy kernel stack size from parent
+    child->kernel_stack_size = parent->kernel_stack_size;
+    child->user_stack_size = parent->user_stack_size;
+    child->user_stack = parent->user_stack;
+    
+    // Copy name
+    for (int i = 0; i < 32; i++) {
+        child->name[i] = parent->name[i];
+        if (parent->name[i] == '\0') break;
+    }
+    
+    // Copy kernel stack
+    if (copy_kernel_stack(parent, child) != 0) {
+        proc_free_pid(child->pid);
+        proc_table_free(child);
+        return -1;
+    }
+    
+    // Copy user memory (simplified)
+    if (copy_user_memory(parent, child) != 0) {
+        kfree((void*)child->kernel_stack);
+        proc_free_pid(child->pid);
+        proc_table_free(child);
+        return -1;
+    }
+    
+    // Copy context but modify return value
+    child->context = parent->context;
+    
+    // IMPORTANT: In x86-64, syscall return value is in RAX
+    // Parent will get child's PID, child will get 0
+    // We need to set child's RAX to 0 when it starts running
+    child->context.rax = 0;  // Child gets 0
+    
+    // Add to scheduler
+    proc_add_to_ready(child);
+    
+    // Add to parent's children list
+    proc_add_child(parent, child);
+    
+    terminal_writestring("[FORK] Created child PID ");
+    uint64_to_string(child->pid, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    return child->pid;  // Parent returns child's PID
+}
+
 // Helper function to print hex number
 static void print_hex(uint64_t val) {
     char buf[32];
