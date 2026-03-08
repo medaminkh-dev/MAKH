@@ -2,6 +2,7 @@
 #include <kernel.h>
 #include <vga.h>
 #include <drivers/timer.h>
+#include <proc.h>
 
 // Syscall function table
 static syscall_fn_t syscall_table[MAX_SYSCALLS];
@@ -21,6 +22,9 @@ static uint64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count, uint64_t a4
 static uint64_t sys_getpid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 static uint64_t sys_sleep(uint64_t ms, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
 static uint64_t sys_getticks(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
+static uint64_t sys_getppid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
+static uint64_t sys_getpriority(uint64_t pid, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
+static uint64_t sys_setpriority(uint64_t pid, uint64_t priority, uint64_t a3, uint64_t a4, uint64_t a5);
 
 // MSR read/write helpers
 static inline uint64_t rdmsr(uint32_t msr) {
@@ -50,6 +54,11 @@ void syscall_init(void) {
     syscall_table[SYS_GETPID] = sys_getpid;
     syscall_table[SYS_SLEEP] = sys_sleep;
     syscall_table[SYS_GETTICKS] = sys_getticks;
+    
+    // Register new process statistics syscalls
+    syscall_table[SYS_GETPPID] = sys_getppid;
+    syscall_table[SYS_GETPRIORITY] = sys_getpriority;
+    syscall_table[SYS_SETPRIORITY] = sys_setpriority;
     
     // Enable syscall instruction in EFER MSR
     uint64_t efer = rdmsr(IA32_EFER);
@@ -164,4 +173,30 @@ static uint64_t sys_sleep(uint64_t ms, uint64_t a2, uint64_t a3, uint64_t a4, ui
 static uint64_t sys_getticks(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;  // Suppress unused warnings
     return timer_get_ticks();
+}
+
+// Get parent PID syscall
+static uint64_t sys_getppid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    process_t* current = proc_current();
+    if (!current) return 0;
+    return current->parent_pid;
+}
+
+// Get process priority syscall
+static uint64_t sys_getpriority(uint64_t pid, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    process_t* proc = proc_find(pid);
+    if (!proc) return (uint64_t)-1;
+    return proc->priority;
+}
+
+// Set process priority syscall
+static uint64_t sys_setpriority(uint64_t pid, uint64_t priority, uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    if (priority > 255) return (uint64_t)-1;
+    process_t* proc = proc_find(pid);
+    if (!proc) return (uint64_t)-1;
+    proc->priority = priority;
+    return 0;
 }
