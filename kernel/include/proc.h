@@ -21,6 +21,12 @@
 #include <types.h>
 
 // =============================================================================
+// PROCESS LIMITS AND CONSTANTS
+// =============================================================================
+#define MAX_PROCESSES 256
+#define PID_MAX 32768
+
+// =============================================================================
 // PROCESS STATES
 // =============================================================================
 /**
@@ -94,6 +100,20 @@ typedef struct process {
     
     uint64_t time_slice;        // Remaining time slice (in timer ticks)
     uint64_t total_ticks;       // Total CPU time used by this process
+    
+    /* NEW FIELDS FOR PHASE 11 */
+    uint32_t parent_pid;                 // Parent PID
+    uint32_t child_count;                // Number of children
+    struct process* children_head;       // List of children
+    struct process* children_tail;       // List of children
+    
+    uint64_t creation_time;              // In timer ticks
+    uint64_t cpu_time_used;              // Total CPU time used
+    uint8_t priority;                    // 0-255 (higher = more priority)
+    
+    char name[32];                       // Process name
+    
+    int exit_code;                       // Exit code
 } __attribute__((packed)) process_t;
 
 // =============================================================================
@@ -228,5 +248,16 @@ extern volatile int in_interrupt_context;
  *   - NEW FUNCTION: Low-level context switching
  */
 void context_switch(context_t* old, context_t* new);
+
+// =============================================================================
+// PROCESS TABLE FUNCTIONS (Phase 11)
+// =============================================================================
+
+// Process table access functions
+process_t* proc_table_alloc(void);
+void proc_table_free(process_t* proc);
+process_t* proc_find(int32_t pid);
+int32_t proc_alloc_pid(void);
+void proc_free_pid(int32_t pid);
 
 #endif
