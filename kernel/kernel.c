@@ -537,6 +537,7 @@ void test_keyboard(void) {
 void test_process_1(void);
 void test_process_2(void);
 void test_context_switch(void);
+void test_phase11(void);
 
 // Test function implementations
 void test_process_1(void) {
@@ -600,6 +601,53 @@ void test_context_switch(void) {
     } else {
         terminal_writestring("  Failed to create test processes\n");
     }
+}
+
+/**
+ * test_phase11 - Test Phase 11 Process Core Enhancement features
+ */
+void test_phase11(void) {
+    char buf[32];
+    
+    terminal_writestring("\n[TEST] Phase 11: Process Core Enhancement\n");
+    
+    // Test PID allocation
+    int32_t pid1 = proc_alloc_pid();
+    int32_t pid2 = proc_alloc_pid();
+    terminal_writestring("  PID1: ");
+    uint64_to_string(pid1, buf);
+    terminal_writestring(buf);
+    terminal_writestring(", PID2: ");
+    uint64_to_string(pid2, buf);
+    terminal_writestring(buf);
+    terminal_writestring("\n");
+    
+    // Test process creation
+    process_t* p1 = proc_create(NULL, 4096);
+    process_t* p2 = proc_create(NULL, 4096);
+    
+    if (p1 && p2) {
+        terminal_writestring("  Created processes: PID ");
+        uint64_to_string(p1->pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring(" and PID ");
+        uint64_to_string(p2->pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        
+        // Test proc_find
+        process_t* found = proc_find(p1->pid);
+        if (found == p1) {
+            terminal_writestring("  ✅ proc_find works\n");
+        }
+        
+        // Test parent-child relationship
+        if (found->parent_pid == proc_current()->pid) {
+            terminal_writestring("  ✅ Parent-child link works\n");
+        }
+    }
+    
+    terminal_writestring("[TEST] Phase 11 complete\n");
 }
 
 void test_gdt_tss(void) {
@@ -996,6 +1044,9 @@ void kernel_main(void) {
     
     // Initialize process manager
     proc_init();
+    
+    // Test Phase 11: Process Core Enhancement
+    test_phase11();
     
     // Test context switch
     test_context_switch();
