@@ -5,6 +5,7 @@
 #include <kernel.h>
 #include <vga.h>
 #include <lib/string.h>
+#include <drivers/timer.h>
 
 /**
  * =============================================================================
@@ -67,8 +68,228 @@ static process_list_t all_processes;
  */
 static uint32_t next_pid = 1;
 
+// =============================================================================
+// PROCESS TABLE AND PID MANAGEMENT (Phase 11.2)
+// =============================================================================
+
+/**
+ * process_table - Array of pointers to all processes
+ * Used for O(1) lookup by PID
+ */
+static process_t* process_table[MAX_PROCESSES];
+
+/**
+ * process_count - Number of active processes in the system
+ */
+static uint32_t process_count = 0;
+
+/**
+ * pid_bitmap - Bitmap for PID allocation
+ * Each bit represents a PID (0 = free, 1 = allocated)
+ * Size: PID_MAX / 8 = 4096 bytes
+ */
+static uint8_t pid_bitmap[PID_MAX / 8];
+
 // Forward declarations
 static void proc_idle(void);
+
+// =============================================================================
+// PID MANAGEMENT HELPER FUNCTIONS (Phase 11.2)
+// =============================================================================
+
+/**
+ * pid_bitmap_init - Initialize PID bitmap
+ * 
+ * Clears all bits and reserves PID 0 for idle process
+ */
+static void pid_bitmap_init(void) {
+    for (int i = 0; i < PID_MAX / 8; i++) {
+        pid_bitmap[i] = 0;
+    }
+    // Reserve PID 0 for idle
+    pid_bitmap[0] |= 1;
+}
+
+/**
+ * proc_alloc_pid - Allocate a new PID
+ * 
+ * Uses bitmap to find first free PID (starting from 1)
+ * 
+ * @return: Allocated PID, or -1 if no free PIDs
+ */
+int32_t proc_alloc_pid(void) {
+    for (int i = 1; i < PID_MAX; i++) {  // Start from 1 (PID 0 is idle)
+        int byte_idx = i / 8;
+        int bit_idx = i % 8;
+        if (!(pid_bitmap[byte_idx] & (1 << bit_idx))) {
+            pid_bitmap[byte_idx] |= (1 << bit_idx);
+            return i;
+        }
+    }
+    return -1;  // No free PIDs
+}
+
+/**
+ * proc_free_pid - Free a PID
+ * 
+ * Releases a PID back to the bitmap
+ * 
+ * @pid: PID to free
+ */
+void proc_free_pid(int32_t pid) {
+    if (pid < 0 || pid >= PID_MAX) return;
+    int byte_idx = pid / 8;
+    int bit_idx = pid % 8;
+    pid_bitmap[byte_idx] &= ~(1 << bit_idx);
+}
+
+/**
+ * proc_find - Find process by PID
+ * 
+ * Searches the process table for a process with matching PID
+ * 
+ * @pid: PID to search for
+ * @return: Pointer to process if found, NULL otherwise
+ */
+process_t* proc_find(int32_t pid) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i] && (int32_t)process_table[i]->pid == pid) {
+            return process_table[i];
+        }
+    }
+    return NULL;
+}
+
+/**
+ * proc_table_alloc - Allocate slot in process table
+ * 
+ * Finds first empty slot in process_table and allocates a new process
+ * 
+ * @return: Pointer to new process, or NULL if table is full
+ */
+process_t* proc_table_alloc(void) {
+    if (process_count >= MAX_PROCESSES) return NULL;
+    
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i] == NULL) {
+            process_table[i] = kmalloc(sizeof(process_t));
+            if (process_table[i]) {
+                process_count++;
+                return process_table[i];
+            }
+        }
+    }
+    return NULL;
+}
+
+/**
+ * proc_table_free - Free slot in process table
+ * 
+ * Removes process from table and frees memory
+ * 
+ * @proc: Process to free
+ */
+void proc_table_free(process_t* proc) {
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i] == proc) {
+            process_table[i] = NULL;
+            process_count--;
+            kfree(proc);
+            return;
+        }
+    }
+}
+
+// =============================================================================
+// PROCESS TREE MANAGEMENT (Phase 11.3)
+// =============================================================================
+
+/**
+ * proc_add_child - Add child to parent's children list
+ * 
+ * Links a child process to its parent's children list for process tree tracking
+ * 
+ * @parent: Parent process
+ * @child: Child process to add
+ */
+static void proc_add_child(process_t* parent, process_t* child) {
+    child->parent_pid = parent->pid;
+    child->next = NULL;
+    
+    if (parent->children_tail) {
+        parent->children_tail->next = child;
+        parent->children_tail = child;
+    } else {
+        parent->children_head = child;
+        parent->children_tail = child;
+    }
+    parent->child_count++;
+}
+
+/**
+ * proc_remove_child - Remove child from parent's children list
+ * 
+ * Unlinks a child process from its parent's children list
+ * 
+ * @child: Child process to remove
+ */
+static void proc_remove_child(process_t* child) {
+    process_t* parent = proc_find(child->parent_pid);
+    if (!parent) return;
+    
+    process_t* prev = NULL;
+    process_t* curr = parent->children_head;
+    
+    while (curr) {
+        if (curr == child) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                parent->children_head = curr->next;
+            }
+            if (curr == parent->children_tail) {
+                parent->children_tail = prev;
+            }
+            parent->child_count--;
+            break;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+}
+
+/**
+ * proc_reparent_orphans - Reparent orphans to init (PID 1)
+ * 
+ * When a parent process dies, reparent all its children to init (PID 1)
+ * This ensures no process becomes an orphan
+ * 
+ * @dead_parent: Parent process that has terminated
+ */
+static void proc_reparent_orphans(process_t* dead_parent) {
+    process_t* child = dead_parent->children_head;
+    process_t* init = proc_find(1);
+    
+    while (child) {
+        process_t* next = child->next;
+        child->parent_pid = 1;
+        child->next = NULL;
+        
+        if (init->children_tail) {
+            init->children_tail->next = child;
+            init->children_tail = child;
+        } else {
+            init->children_head = child;
+            init->children_tail = child;
+        }
+        init->child_count++;
+        
+        child = next;
+    }
+    dead_parent->children_head = NULL;
+    dead_parent->children_tail = NULL;
+    dead_parent->child_count = 0;
+}
 
 // Helper function to print hex number
 static void print_hex(uint64_t val) {
@@ -90,6 +311,9 @@ static void print_hex(uint64_t val) {
  */
 void proc_init(void) {
     terminal_writestring("[PROC] Initializing process manager...\n");
+    
+    // Initialize PID bitmap (Phase 11.2)
+    pid_bitmap_init();
     
     // Initialize process lists
     ready_queue.head = NULL;
@@ -135,6 +359,13 @@ void proc_init(void) {
  *   3. Set up initial context (registers, stack)
  *   4. Add to all_processes list
  * 
+ * PHASE 11.4 CHANGE (MODIFIED):
+ *   - Uses proc_table_alloc() instead of direct kmalloc
+ *   - Uses proc_alloc_pid() for PID allocation
+ *   - Initializes new fields: parent_pid, child_count, children_head,
+ *     children_tail, creation_time, cpu_time_used, priority, name
+ *   - Adds child to parent's children list
+ *
  * @entry: Function pointer to start executing
  * @stack_size: Size of kernel stack
  * @return: process_t* or NULL on failure
@@ -142,26 +373,49 @@ void proc_init(void) {
 process_t* proc_create(void (*entry)(void), uint64_t stack_size) {
     terminal_writestring("[PROC] Creating new process...\n");
     
-    // Allocate PCB
-    process_t* proc = (process_t*)kmalloc(sizeof(process_t));
+    // Allocate from process table instead of direct kmalloc
+    process_t* proc = proc_table_alloc();
     if (!proc) {
-        terminal_writestring("[PROC] Failed to allocate PCB\n");
+        terminal_writestring("[PROC] Failed to allocate process table slot\n");
         return NULL;
     }
     
     // Clear PCB
     memset(proc, 0, sizeof(process_t));
     
-    // Set basic info
-    proc->pid = next_pid++;
+    // Set basic info - use new PID allocator
+    proc->pid = proc_alloc_pid();  // Use new PID allocator
+    if (proc->pid < 0) {
+        terminal_writestring("[PROC] Failed to allocate PID\n");
+        proc_table_free(proc);
+        return NULL;
+    }
+    
+    // Initialize new fields (Phase 11.4)
     proc->state = PROC_EMBRYO;
+    proc->priority = 128;  // Default priority (middle)
+    proc->creation_time = timer_get_ticks();  // Get current time
+    proc->cpu_time_used = 0;
+    proc->parent_pid = 0;  // Will be set below
+    proc->child_count = 0;
+    proc->children_head = NULL;
+    proc->children_tail = NULL;
+    proc->exit_code = 0;
+    
+    // Set default name
+    const char* default_name = "kernel_thread";
+    for (int i = 0; i < 31 && default_name[i]; i++) {
+        proc->name[i] = default_name[i];
+    }
+    proc->name[31] = '\0';
     
     // Allocate kernel stack
     proc->kernel_stack_size = stack_size;
     proc->kernel_stack = (uint64_t)kmalloc(stack_size);
     if (!proc->kernel_stack) {
-        terminal_writestring("[PROC] Failed to allocate kernel stack\n");
-        kfree(proc);
+        terminal_writestring("[PROC] Failed to allocate stack\n");
+        proc_free_pid(proc->pid);
+        proc_table_free(proc);
         return NULL;
     }
     
@@ -215,10 +469,23 @@ process_t* proc_create(void (*entry)(void), uint64_t stack_size) {
     }
     all_processes.count++;
     
-    terminal_writestring("[PROC] Process created: PID ");
-    print_hex(proc->pid);
-    terminal_writestring(", stack at 0x");
-    print_hex(proc->kernel_stack);
+    // Add to ready queue
+    proc_add_to_ready(proc);
+    
+    // Add to process tree (parent is current process)
+    process_t* parent = proc_current();
+    if (parent) {
+        proc->parent_pid = parent->pid;
+        proc_add_child(parent, proc);
+    } else {
+        // No parent (shouldn't happen), set as own parent
+        proc->parent_pid = proc->pid;
+    }
+    
+    terminal_writestring("[PROC] Process created with PID ");
+    char buf[16];
+    uint64_to_string(proc->pid, buf);
+    terminal_writestring(buf);
     terminal_writestring("\n");
     
     return proc;
@@ -227,24 +494,44 @@ process_t* proc_create(void (*entry)(void), uint64_t stack_size) {
 /**
  * proc_exit - Exit current process
  * 
- * PHASE 9 CHANGE (NEW):
+ * PHASE 11.6 CHANGE (MODIFIED):
  * Handles process termination:
  *   1. Print exit message
- *   2. Set state to ZOMBIE
- *   3. Call proc_yield() to switch to next process
+ *   2. Store exit code in process structure
+ *   3. Set state to ZOMBIE
+ *   4. Reparent orphans to init (PID 1)
+ *   5. Remove from parent's children list
+ *   6. Free PID (but NOT process table slot - parent may need it)
+ *   7. Call proc_yield() to switch to next process
  * 
  * @code: Exit code for parent to collect
  */
 void proc_exit(int code) {
+    char buf[32];
     terminal_writestring("[PROC] Process ");
-    print_hex(current_process->pid);
+    uint64_to_hex(current_process->pid, buf);
+    terminal_writestring(buf);
     terminal_writestring(" exiting with code ");
-    print_hex(code);
+    uint64_to_string(code, buf);
+    terminal_writestring(buf);
     terminal_writestring("\n");
     
+    // Store exit code
+    current_process->exit_code = code;
+    
+    // Set state to zombie
     current_process->state = PROC_ZOMBIE;
     
-    // TODO: Clean up resources
+    // Reparent orphans to init (PID 1)
+    proc_reparent_orphans(current_process);
+    
+    // Remove from parent's children list
+    if (current_process->parent_pid != 0 && current_process->parent_pid != current_process->pid) {
+        proc_remove_child(current_process);
+    }
+    
+    // Free the PID (but NOT the process table slot - parent may need to read it)
+    proc_free_pid(current_process->pid);
     
     // Switch to next process
     proc_yield();
