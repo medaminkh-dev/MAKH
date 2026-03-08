@@ -538,6 +538,7 @@ void test_process_1(void);
 void test_process_2(void);
 void test_context_switch(void);
 void test_phase11(void);
+void test_fork(void);
 
 // Test function implementations
 void test_process_1(void) {
@@ -648,6 +649,43 @@ void test_phase11(void) {
     }
     
     terminal_writestring("[TEST] Phase 11 complete\n");
+}
+
+/**
+ * test_fork - Test Phase 12 fork() System Call
+ */
+void test_fork(void) {
+    terminal_writestring("\n[TEST] Phase 12: fork() System Call\n");
+    
+    // Test fork
+    int32_t child_pid = proc_fork();
+    
+    if (child_pid > 0) {
+        // Parent process
+        char buf[32];
+        terminal_writestring("  Parent: created child PID ");
+        uint64_to_string(child_pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        
+        // Give child time to run
+        timer_sleep(50);
+        
+        terminal_writestring("[TEST] Phase 12 complete\n");
+    } else if (child_pid == 0) {
+        // Child process
+        char buf[32];
+        terminal_writestring("  Child: I'm running! (PID=");
+        uint64_to_string(proc_current()->pid, buf);
+        terminal_writestring(buf);
+        terminal_writestring(")\n");
+        
+        // Child exits with code 42
+        proc_exit(42);
+    } else {
+        terminal_writestring("  Fork failed!\n");
+        terminal_writestring("[TEST] Phase 12 complete\n");
+    }
 }
 
 void test_gdt_tss(void) {
@@ -1047,6 +1085,9 @@ void kernel_main(void) {
     
     // Test Phase 11: Process Core Enhancement
     test_phase11();
+    
+    // Test Phase 12: fork() System Call
+    test_fork();
     
     // Test context switch
     test_context_switch();
