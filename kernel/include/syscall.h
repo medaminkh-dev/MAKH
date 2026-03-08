@@ -12,6 +12,9 @@
 #define SYS_GETPID      5
 #define SYS_SLEEP       6
 #define SYS_GETTICKS    7
+#define SYS_GETPPID     8
+#define SYS_GETPRIORITY 9
+#define SYS_SETPRIORITY 10
 
 // Maximum number of syscalls
 #define MAX_SYSCALLS    64
