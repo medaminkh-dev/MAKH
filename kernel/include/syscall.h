@@ -16,6 +16,9 @@
 #define SYS_GETPRIORITY 9
 #define SYS_SETPRIORITY 10
 
+// Process management
+#define SYS_FORK       57   // Standard Linux fork syscall number
+
 // Maximum number of syscalls
 #define MAX_SYSCALLS    64
 
