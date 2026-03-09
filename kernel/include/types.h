@@ -37,4 +37,7 @@ typedef enum { false = 0, true = 1 } bool;
 typedef uint64_t paddr_t;   /* Physical address */
 typedef uint64_t vaddr_t;   /* Virtual address */
 
+/* Process ID type */
+typedef int32_t pid_t;
+
 #endif /* TYPES_H */
