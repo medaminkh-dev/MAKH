@@ -24,9 +24,9 @@ LDFLAGS = -T linker.ld -nostdlib
 # PHASE 10 CHANGE: Added usermode.asm for user mode transition
 # PHASE 10.2c CHANGE: Added user_program.asm for user program
 ASM_SOURCES = boot/boot.asm kernel/mm/paging_asm.asm kernel/arch/idt_asm.asm kernel/arch/syscall_asm.asm kernel/arch/context_switch.asm kernel/arch/usermode.asm kernel/user/user_program.asm
-# PHASE 9 CHANGE: Added proc/proc.c for process management
-# SERIAL CHANGE: Added drivers/serial.c for serial port output
-C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/drivers/serial.c kernel/input_line.c kernel/lib/string.c kernel/syscall/syscall.c kernel/proc/proc.c
+# PHASE 11-12 RESTRUCTURE: Modular process management
+# Now split across core/, pcb/, fork/ subdirectories and syscall/core/
+C_SOURCES = kernel/kernel.c kernel/vga.c kernel/multiboot.c kernel/mm/pmm.c kernel/mm/vmm.c kernel/mm/kheap.c kernel/arch/idt.c kernel/arch/pic.c kernel/arch/gdt.c kernel/arch/tss.c kernel/drivers/timer.c kernel/drivers/keyboard.c kernel/drivers/serial.c kernel/input_line.c kernel/lib/string.c kernel/syscall/core/syscall.c kernel/proc/core/sched.c kernel/proc/pcb/lifecycle.c kernel/proc/pcb/table.c kernel/proc/pcb/tree.c kernel/proc/fork/fork.c kernel/proc/fork/memory.c kernel/tests/comprehensive_tests.c
 
 # Object files
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
