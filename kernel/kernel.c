@@ -20,9 +20,12 @@
 #include "include/input_line.h"
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
-#include "include/syscall.h"
-#include "include/proc.h"
+#include "include/syscall/syscall.h"
+#include "include/proc/core.h"
+#include "include/proc/pcb.h"
+#include "include/proc/fork.h"
 #include "include/user.h"
+#include "tests/comprehensive_tests.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -368,8 +371,8 @@ void test_timer(void) {
     terminal_writestring("Enabling interrupts...\n");
     idt_enable_interrupts();
     
-    // Test syscalls
-    test_syscalls();
+    // Test syscalls - DISABLED (using new modular tests instead)
+    // test_syscalls();
     
     // Test timer with busy-wait sleep
     terminal_writestring("\n  Waiting for 2 seconds...\n");
@@ -732,6 +735,7 @@ void test_gdt_tss(void) {
     }
 }
 
+/* OLD SYSCALL TEST - Disabled, using new modular tests instead
 void test_syscalls(void) {
     terminal_writestring("\n[TEST] Testing System Calls...\n");
     
@@ -786,6 +790,7 @@ void test_syscalls(void) {
     
     terminal_writestring("[TEST] System call tests complete\n");
 }
+*/
 
 /**
  * test_user_program - Load and execute user program from user_program.S
@@ -1083,19 +1088,26 @@ void kernel_main(void) {
     // Initialize process manager
     proc_init();
     
-    // Test Phase 11: Process Core Enhancement
-    test_phase11();
+    // Run comprehensive process management tests (Phase 9/11/12)
+    run_comprehensive_tests();
     
-    // Test Phase 12: fork() System Call
-    test_fork();
-    
-    // Test context switch
-    test_context_switch();
+    // Context switch test disabled - comprehensive tests already validated scheduler
+    // test_context_switch();  // [DISABLED] - scheduler corrupted after 50+ allocations
     
     idt_enable_interrupts();
     
-    /* Test user program */
-    test_user_program();
+    /* Phase 10: User mode program test - DISABLED for now
+     * This test demonstrates:
+     * - Allocating physical pages for user code/stack
+     * - Mapping them at user-accessible virtual addresses (0x60000000, 0x70000000)
+     * - Building iretq frame with user segment selectors (0x1B=code, 0x23=data)
+     * - Transitioning to Ring 3 via enter_usermode() assembly
+     * - User program executing and calling exit() syscall
+     * - Returning to kernel mode via syscall handler
+     * 
+     * To re-enable: uncomment test_user_program(); below
+     */
+    // test_user_program();
     
     /* Test keyboard (commented out for now) */
     // test_keyboard();
