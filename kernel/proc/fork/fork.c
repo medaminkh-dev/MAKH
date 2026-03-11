@@ -27,6 +27,26 @@ extern void proc_yield(void);
 int proc_fork(void) {
     process_t* parent = proc_current();
     if (!parent) return -1;
+
+    // FIX BUG#2 (partial): Capture current kernel RSP into parent context
+    // so copy_kernel_stack() gets a valid RSP within the kernel stack.
+    // We use inline asm to get current RSP and store it in parent->context.rsp.
+    // This is only valid if called from kernel context (not from syscall where
+    // the stack switch in syscall_asm.asm has already happened).
+    {
+        uint64_t current_rsp;
+        __asm__ volatile("mov %%rsp, %0" : "=r"(current_rsp));
+        // Only update if current RSP looks like it's in kernel stack range
+        if (parent->kernel_stack != 0 &&
+            current_rsp >= parent->kernel_stack &&
+            current_rsp < parent->kernel_stack + parent->kernel_stack_size) {
+            parent->context.rsp = current_rsp;
+        } else {
+            // RSP is outside kernel stack - set to top of kernel stack
+            // Child will start fresh from kernel stack top
+            parent->context.rsp = parent->kernel_stack + parent->kernel_stack_size;
+        }
+    }
     
     terminal_writestring("[FORK] Forking process PID ");
     char buf[32];

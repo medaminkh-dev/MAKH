@@ -44,6 +44,13 @@ int32_t proc_alloc_pid(void) {
     return -1;
 }
 
+void proc_reserve_pid(int32_t pid) {
+    if (pid < 0 || pid >= PID_MAX) return;
+    int byte_idx = pid / 8;
+    int bit_idx = pid % 8;
+    pid_bitmap[byte_idx] |= (1 << bit_idx);
+}
+
 void proc_free_pid(int32_t pid) {
     if (pid < 0 || pid >= PID_MAX) return;
     int byte_idx = pid / 8;

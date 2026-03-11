@@ -126,3 +126,18 @@ int32_t proc_alloc_pid(void);
 void proc_free_pid(int32_t pid);
 
 #endif // MAKHOS_PROC_PCB_H
+
+/**
+ * proc_reap - Reap a zombie process (NEW - FIX BUG#6)
+ * Must be called by parent after waitpid to free process resources.
+ * @zombie: Zombie process to reap
+ * @return: Exit code
+ */
+int proc_reap(process_t* zombie);
+
+/**
+ * proc_reserve_pid - Reserve a specific PID in the bitmap (NEW - FIX PID-LEAK)
+ * Used by proc_init() to reserve PIDs 0 and 1 directly.
+ * @pid: PID to reserve
+ */
+void proc_reserve_pid(int32_t pid);

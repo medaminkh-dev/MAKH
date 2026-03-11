@@ -209,6 +209,8 @@ void test_scheduler_state(void) {
     
     // Create a test process
     process_t* test_proc = proc_create(test_dummy, 2048);
+    // FIX TEST4: proc_create returns EMBRYO; must call proc_add_to_ready to get READY state
+    if (test_proc) proc_add_to_ready(test_proc);
     if (!test_proc || test_proc->state != PROC_READY) {
         terminal_writestring("[ERROR] Test process creation failed\n");
         return;

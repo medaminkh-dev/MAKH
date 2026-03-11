@@ -1,0 +1,329 @@
+c[?7l[2J[0mSeaBIOS (version 1.16.3-debian-1.16.3-2)
+
+
+iPXE (https://ipxe.org) 00:03.0 CA00 PCI2.10 PnP PMM+06FC6F60+06F06F60 CA00
+Press Ctrl-B to configure iPXE (PCI 00:03.0)...                                                                               
+
+
+Booting from Hard Disk...
+Boot failed: could not read the boot disk
+
+Booting from Floppy...
+Boot failed: could not read the boot disk
+
+Booting from DVD/CD...
+[0;30;47mWelcome to GRUB!
+
+[01;01H[0m[2J  Booting `MakhOS v0.0.1 - Phase 1'[01;35H
+
+
+[MakhOS] Serial port initialized
+
+    __  ___       __ _____ ____   _____
+   /  |/  /______/ // / _ / __ \/ ___/
+  / /|_/ / __/ __/ _  / __ / / / /__  
+ /_/  /_/_/  \__/_//_/_/ |_/_/ /_/___/
+
+  MakhOS v0.0.2 - Phase 2 Complete Complete
+
+[OK] Long mode active (64-bit)
+[OK] CPU initialized
+[OK] VGA driver initialized
+[OK] Multiboot2 info structure received
+[CHECK] Initializing Physical Memory Manager...
+[PMM] Initialized - Total: 127 MB, Pages: 32736
+[OK] PMM initialized, running tests...
+  Test 1: Allocating 2 pages...
+    Page 1: 0x400000
+    Page 2: 0x401000
+  Test 2: Freeing page 1...
+  Memory Statistics:
+    Total pages: 32736
+    Used pages: 928
+    Free memory: 124 MB
+[CHECK] Initializing Virtual Memory Manager...
+[VMM] Starting initialization...
+[VMM] Boot PML4 at: 0x1000
+[VMM] Kernel PML4 cleared
+[VMM] Copying boot page table mappings...
+[VMM] Boot mappings copied
+[VMM] Extending identity mapping to 16MB...
+[VMM] Identity mapping extended to 16MB
+[VMM] Recursive mapping set (PML4[511])
+[VMM] Switching to kernel PML4 at: 0x13F000
+[VMM] CR3 loaded successfully
+[VMM] Initialized with 4-level paging
+
+[TEST] Testing Virtual Memory Manager...
+  Allocated virtual page at: 0xFFFF800000000000
+  Wrote 0xDEADBEEF to virtual address
+  Physical address: 0x400000
+  [OK] Virtual != Physical (paging works)
+  Value at physical address: 0x0xDEADBEEF
+  [OK] Physical memory contains correct value
+  Mapped fixed virt 0xFFFF800000100000 -> phys 0x405000
+  [OK] Fixed mapping works
+[TEST] VMM tests complete
+[CHECK] Initializing Kernel Heap...
+[KHEAP] Initializing kernel heap...
+[KHEAP] Heap initialized at 0x0xFFFF900000000000 size=16384 bytes
+
+[TEST] Testing Kernel Heap...
+  Test 1: Basic allocation...
+    Allocated string: Hello Heap!
+    [OK] Basic allocation works
+  Test 2: Multiple allocations...
+    [OK] Multiple allocations work
+  Test 3: Variable sizes and alignment...
+  Test 4: kcalloc (zeroed memory)...
+    [OK] kcalloc returns zeroed memory
+  Test 5: krealloc...
+    [OK] krealloc preserves data
+  Test 6: Heap statistics...
+    Total heap: 16384 bytes
+    Used: 0 bytes
+    Free: 16340 bytes
+  Test 7: stdlib malloc/free macros...
+    [OK] stdlib macros work
+[TEST] Kernel heap tests complete
+[CHECK] Initializing Interrupt Descriptor Table...
+[IDT] Initializing Interrupt Descriptor Table...
+[IDT] Loaded 32 exception gates + 16 IRQ gates
+[TSS] Initializing Task State Segment...
+[TSS] Initialized at 0x0x1410A0, size 104 bytes
+[TSS] Kernel stack set to 0x0xFFFF90000000801C
+[TSS] IST1 set to 0x0xFFFF90000000201C
+[GDT] Initializing Global Descriptor Table...
+[GDT] Loaded successfully
+  [0] NULL descriptor
+  [1] Kernel Code (ring 0) selector=0x08
+  [2] Kernel Data (ring 0) selector=0x10
+  [3] User Code   (ring 3) selector=0x1B (0x18|RPL3)
+  [4] User Data   (ring 3) selector=0x23 (0x20|RPL3)
+  [5,6] TSS 128-bit descriptor at selector=0x28
+[GDT] Segment registers reloaded
+[GDT] TSS loaded at 0x0x1410A0 (128-bit descriptor)
+
+[TEST] Testing GDT and TSS...
+  Current CS: 0x0x8 (should be 0x08)
+  [OK] CS is kernel code segment
+  Current DS: 0x0x10 (should be 0x10)
+  [OK] DS is kernel data segment
+  Task Register: 0x0x28 (should be 0x28)
+  [OK] TSS loaded in TR
+
+[TEST] Testing Timer Interrupts...
+[CHECK] Initializing Programmable Interrupt Controller...
+[PIC] Initializing 8259A...
+[PIC] Remapped to vectors 0x20-0x2F
+[CHECK] Initializing Timer...
+[TIMER] Initializing PIT with 100 Hz...
+[PIC] Unmasked IRQ 0
+[TIMER] Initialized at 100 Hz (divisor: 11931)
+[CHECK] Initializing system calls...
+[SYSCALL] Initializing system call interface...
+[SYSCALL] Registered 11 system calls (including wait/waitpid)
+[SYSCALL] syscall/iretq enabled
+[CHECK] Enabling interrupts...
+[IDT] Interrupts enabled
+
+  Waiting for 2 seconds...
+  [OK] Timer counted 200 ticks in 2 seconds (expected ~200)
+
+[TIMER] Statistics:
+  Total ticks: 210
+  Uptime: 2.110 seconds
+  Frequency: 100 Hz
+[PROC] Initializing process manager...
+[PROC] Idle process created (PID 0)
+[PROC] Init process created (PID 1)
+[PROC] Process manager initialized
+
+========================================
+ MAKHOS v0.0.3 COMPREHENSIVE TEST SUITE
+========================================
+
+=== TEST 1: Process Table Stress ===
+[PROC] Creating new process...
+[PROC] Process created with PID 2
+[PROC] Creating new process...
+[PROC] Process created with PID 3
+[PROC] Creating new process...
+[PROC] Process created with PID 4
+[PROC] Creating new process...
+[PROC] Process created with PID 5
+[PROC] Creating new process...
+[PROC] Process created with PID 6
+[PROC] Creating new process...
+[PROC] Process created with PID 7
+[PROC] Creating new process...
+[PROC] Process created with PID 8
+[PROC] Creating new process...
+[PROC] Process created with PID 9
+[PROC] Creating new process...
+[PROC] Process created with PID 10
+[PROC] Creating new process...
+[PROC] Process created with PID 11
+[PROC] Creating new process...
+[PROC] Process created with PID 12
+[PROC] Creating new process...
+[PROC] Process created with PID 13
+[PROC] Creating new process...
+[PROC] Process created with PID 14
+[PROC] Creating new process...
+[PROC] Process created with PID 15
+[PROC] Creating new process...
+[PROC] Process created with PID 16
+[PROC] Creating new process...
+[PROC] Process created with PID 17
+[PROC] Creating new process...
+[PROC] Process created with PID 18
+[PROC] Creating new process...
+[PROC] Process created with PID 19
+[PROC] Creating new process...
+[PROC] Process created with PID 20
+[PROC] Creating new process...
+[PROC] Process created with PID 21
+Created 20 processes
+[PASS] Process table stress test
+
+=== TEST 2: Fork Bomb with Memory ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 22
+[PARENT] Forked child PID 22
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 23
+[PARENT] Forked child PID 23
+[PASS] Fork bomb with memory isolation
+
+=== TEST 3: Process Tree ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 24
+[PARENT] Child relationship valid
+[PASS] Process tree relationships
+
+=== TEST 4: Scheduler State Validation ===
+[PROC] Creating new process...
+[PROC] Process created with PID 25
+[PASS] Scheduler state always consistent
+
+=== TEST 5: Idle Process Guarantee ===
+[PASS] Idle process always available
+
+=== TEST 6: Multiple Forks ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 26
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 27
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 28
+[PASS] Multiple forks executed
+
+=== TEST 7: Process Find by PID ===
+[PASS] Process lookup works correctly
+
+=== TEST 8: Process Exit ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 29
+[WARN] Child state or exit code mismatch
+[PASS] Process exit handling works
+
+=== TEST 9: Parent-Child Relationships ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 30
+[OK] Child relationships verified
+[PASS] Parent-child relationships valid
+
+=== TEST 10: Full System Integration ===
+
+=== TEST 1: Process Table Stress ===
+[PROC] Creating new process...
+[PROC] Process created with PID 31
+[PROC] Creating new process...
+[PROC] Process created with PID 32
+[PROC] Creating new process...
+[PROC] Process created with PID 33
+[PROC] Creating new process...
+[PROC] Process created with PID 34
+[PROC] Creating new process...
+[PROC] Process created with PID 35
+[PROC] Creating new process...
+[PROC] Process created with PID 36
+[PROC] Creating new process...
+[PROC] Process created with PID 37
+[PROC] Creating new process...
+[PROC] Process created with PID 38
+[PROC] Creating new process...
+[PROC] Process created with PID 39
+[PROC] Creating new process...
+[PROC] Process created with PID 40
+[PROC] Creating new process...
+[PROC] Process created with PID 41
+[PROC] Creating new process...
+[PROC] Process created with PID 42
+[PROC] Creating new process...
+[PROC] Process created with PID 43
+[PROC] Creating new process...
+[PROC] Process created with PID 44
+[PROC] Creating new process...
+[PROC] Process created with PID 45
+[PROC] Creating new process...
+[PROC] Process created with PID 46
+[PROC] Creating new process...
+[PROC] Process created with PID 47
+[PROC] Creating new process...
+[PROC] Process created with PID 48
+[PROC] Creating new process...
+[PROC] Process created with PID 49
+[PROC] Creating new process...
+[PROC] Process created with PID 50
+Created 20 processes
+[PASS] Process table stress test
+
+=== TEST 4: Scheduler State Validation ===
+[PROC] Creating new process...
+[PROC] Process created with PID 51
+[PASS] Scheduler state always consistent
+
+=== TEST 5: Idle Process Guarantee ===
+[PASS] Idle process always available
+
+=== TEST 7: Process Find by PID ===
+[PASS] Process lookup works correctly
+
+=== TEST 2: Fork Bomb with Memory ===
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 52
+[PARENT] Forked child PID 52
+[FORK] Forking process PID 0
+[FORK] WARNING: parent RSP outside kernel stack, using stack top
+[FORK] Created child PID 53
+[PARENT] Forked child PID 53
+[PASS] Fork bomb with memory isolation
+
+*** ALL TESTS PASSED - SYSTEM STABLE ***
+
+========================================
+  ALL TESTS COMPLETED SUCCESSFULLY
+========================================
+
+[IDT] Interrupts enabled
+
+  ====================================
+  MakhOS v0.0.2 - Phase 2 Complete [OK]
+  ====================================
+
+[MAIN] System fully functional.
+Type anything - it will appear on screen.
+Press Ctrl+Alt+G to exit QEMU.
+
+MakhOS> 
