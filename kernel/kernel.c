@@ -6,6 +6,7 @@
 
 #include "include/kernel.h"
 #include "include/vga.h"
+#include "include/serial.h"
 #include "include/multiboot.h"
 #include "include/types.h"
 #include "include/mm/pmm.h"
@@ -532,39 +533,45 @@ void test_keyboard(void) {
 }
 
 // Test functions for processes
-void test_process_1(void);
-void test_process_2(void);
+void test_process_1_limited(void);
+void test_process_2_limited(void);
 void test_context_switch(void);
 
-// Test function implementations
-void test_process_1(void) {
+// Limited test processes - exit after fixed number of iterations
+void test_process_1_limited(void) {
     int counter = 0;
     char buf[32];
-    while (1) {
+    while (counter < 5) {  // 5 iterations only, then process exits
         terminal_writestring("[PID 1] Running... count: ");
         uint64_to_hex(counter++, buf);
         terminal_writestring(buf);
         terminal_writestring("\n");
-        for (int i = 0; i < 10000000; i++) {
+        // Small delay
+        for (volatile int i = 0; i < 5000000; i++) {
             __asm__ volatile("pause");
         }
         proc_yield();
     }
+    terminal_writestring("[PID 1] Task completed, exiting\n");
+    proc_exit(0);  // Terminate process
 }
 
-void test_process_2(void) {
+void test_process_2_limited(void) {
     int counter = 0;
     char buf[32];
-    while (1) {
+    while (counter < 5) {  // 5 iterations only, then process exits
         terminal_writestring("[PID 2] Running... count: ");
         uint64_to_hex(counter++, buf);
         terminal_writestring(buf);
         terminal_writestring("\n");
-        for (int i = 0; i < 10000000; i++) {
+        // Small delay
+        for (volatile int i = 0; i < 5000000; i++) {
             __asm__ volatile("pause");
         }
         proc_yield();
     }
+    terminal_writestring("[PID 2] Task completed, exiting\n");
+    proc_exit(0);  // Terminate process
 }
 
 void test_context_switch(void) {
@@ -572,9 +579,9 @@ void test_context_switch(void) {
     
     terminal_writestring("\n[TEST] Testing Context Switch...\n");
     
-    // Create two test processes
-    process_t* p1 = proc_create(test_process_1, 8192);
-    process_t* p2 = proc_create(test_process_2, 8192);
+    // Create two test processes with limited loops
+    process_t* p1 = proc_create(test_process_1_limited, 8192, "test1");
+    process_t* p2 = proc_create(test_process_2_limited, 8192, "test2");
     
     if (p1 && p2) {
         terminal_writestring("  Created test processes: PID ");
@@ -585,19 +592,41 @@ void test_context_switch(void) {
         terminal_writestring(buf);
         terminal_writestring("\n");
         
-        // Add them to ready queue using the API
+        // Add them to ready queue
         proc_add_to_ready(p1);
         proc_add_to_ready(p2);
         
         terminal_writestring("  Processes added to ready queue\n");
+        terminal_writestring("  Running context switch test...\n");
         
-        terminal_writestring("  Starting scheduler...\n");
+        // Run scheduler until processes complete
+        // We will do 20 scheduling cycles (enough to complete both processes)
+        for (int i = 0; i < 20; i++) {
+            terminal_writestring("  Scheduling cycle ");
+            uint64_to_string(i + 1, buf);
+            terminal_writestring(buf);
+            terminal_writestring("/20\n");
+            
+            proc_yield();
+            
+            // Small delay
+            for (volatile int j = 0; j < 1000000; j++);
+        }
         
-        // This will switch between processes
-        proc_yield();
+        terminal_writestring("  Context switch test complete\n");
+        
+        // Ensure we returned to kernel
+        terminal_writestring("  Back to kernel main\n");
     } else {
         terminal_writestring("  Failed to create test processes\n");
     }
+}
+
+// Simple test that returns immediately to kernel
+void test_simple_yield(void) {
+    terminal_writestring("[TEST] Simple yield test\n");
+    proc_yield();
+    terminal_writestring("[TEST] Returned from yield\n");
 }
 
 void test_gdt_tss(void) {
@@ -716,6 +745,9 @@ void kernel_main(void) {
     /* Initialize VGA terminal without clearing screen
      * (preserve bootloader checkmarks for debugging) */
     terminal_initialize_noclear();
+    
+    /* Initialize serial port for log output */
+    serial_init();
     
     /* Checkpoint - terminal init done */
     vga[82] = (0x0F << 8) | 'i';  /* 'i' for init done */
@@ -868,9 +900,16 @@ void kernel_main(void) {
     
     // Initialize process manager
     proc_init();
+    proc_become_current();
+    /* Small delay before context switch test */
+    terminal_writestring("\n[MAIN] Waiting before context switch test...\n");
+    for (volatile int i = 0; i < 5000000; i++);
     
     // Test context switch
     test_context_switch();
+    
+    /* Confirm return from context switch test */
+    terminal_writestring("\n[MAIN] Returned from context switch test\n");
     
     idt_enable_interrupts();
     
@@ -914,6 +953,9 @@ void kernel_main(void) {
             terminal_writestring("\n");
             if (current_line.length > 0) {
                 input_history_push(&history, current_line.buffer);
+                terminal_writestring("  Command: ");
+                terminal_writestring(current_line.buffer);
+                terminal_writestring("\n");
             }
             // Here you would process the command
             // For now just show a new prompt
