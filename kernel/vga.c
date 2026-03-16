@@ -5,6 +5,7 @@
 
 #include "include/vga.h"
 #include "include/kernel.h"
+#include "include/serial.h"
 
 /* Static terminal state */
 static struct terminal_state terminal;
@@ -228,6 +229,8 @@ void terminal_writestring(const char* str) {
         terminal_putchar(str[i]);
         i++;
     }
+    // Also write to serial port for log capture
+    serial_writestring(str);
 }
 
 /**
