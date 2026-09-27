@@ -1,0 +1,49 @@
+name: CI
+
+# Build MakhOS and run its in-kernel self-test suite (the same thing
+# `make test` does locally): boot a headless QEMU that runs every KTEST -
+# including the KFUZZ campaigns - and powers off with a pass/fail exit code.
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential nasm grub-pc-bin grub-common xorriso mtools \
+            qemu-system-x86
+
+      - name: Build kernel + ISOs
+        run: make all makhos-test.iso
+
+      - name: Run in-kernel test suite
+        run: python3 tools/run_tests.py makhos-test.iso --timeout 240
+
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential nasm grub-pc-bin grub-common xorriso mtools \
+            qemu-system-x86
+
+      - name: Build test ISO
+        run: make makhos-test.iso
+
+      - name: Stress the suite (12 runs, 4 in parallel)
+        run: bash tools/stress_tests.sh 12 4 makhos-test.iso
