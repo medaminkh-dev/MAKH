@@ -12,6 +12,7 @@
 #include <kernel.h>
 #include <mm/kheap.h>
 #include <drivers/timer.h>
+#include <klog.h>
 
 /* -------- shared state for worker threads -------- */
 
@@ -171,8 +172,11 @@ static void worker_noop(void* arg) {
 
 KTEST(sched, create_join_churn_no_leak) {
     /* Repeatedly create and join far more threads than the table holds. If
-     * PIDs, PCBs or stacks leaked, this would exhaust the table or the heap. */
+     * PIDs, PCBs or stacks leaked, this would exhaust the table or the heap.
+     * (This test is what exposed the Makefile header-dependency bug: a stale
+     * object allocated undersized PCBs and every free was rejected.) */
     size_t heap_before = kheap_get_used();
+    size_t bad_before  = kheap_get_bad_frees();
 
     for (int i = 0; i < 1000; i++) {
         process_t* t = thread_create(worker_noop, (void*)(long)i, "churn", PRIO_DEFAULT);
@@ -182,9 +186,10 @@ KTEST(sched, create_join_churn_no_leak) {
         KEXPECT_EQ(code, i & 0x7FFFFFFF);
     }
 
-    size_t heap_after = kheap_get_used();
-    /* Heap use must return to baseline (every stack + PCB was reclaimed). */
-    KEXPECT_EQ((int64_t)heap_after, (int64_t)heap_before);
+    /* Heap use must return to baseline (every stack + PCB was reclaimed)... */
+    KEXPECT_EQ((int64_t)kheap_get_used(), (int64_t)heap_before);
+    /* ...and no free may have been rejected as corrupt. */
+    KEXPECT_EQ((int64_t)kheap_get_bad_frees(), (int64_t)bad_before);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -211,10 +216,16 @@ KTEST(sched, higher_priority_runs_first) {
     KASSERT_TEST(lo && mid && hi);
     preempt_enable();
 
-    KEXPECT_EQ(thread_join(hi,  (void*)0), 0);
-    KEXPECT_EQ(thread_join(mid, (void*)0), 0);
-    KEXPECT_EQ(thread_join(lo,  (void*)0), 0);
+    int jh = thread_join(hi,  (void*)0);
+    int jm = thread_join(mid, (void*)0);
+    int jl = thread_join(lo,  (void*)0);
+    KEXPECT_EQ(jh, 0);
+    KEXPECT_EQ(jm, 0);
+    KEXPECT_EQ(jl, 0);
 
     /* First to run was the highest priority (id 1). */
+    if (prio_order[0] != 1)
+        kprintf("    [diag] order=%d,%d,%d idx=%d joins=%d,%d,%d\n",
+                prio_order[0], prio_order[1], prio_order[2], prio_idx, jh, jm, jl);
     KEXPECT_EQ(prio_order[0], 1);
 }

@@ -69,4 +69,7 @@ size_t kheap_get_used(void);
 size_t kheap_get_free(void);
 size_t kheap_get_total(void);
 
+/* kfree() calls rejected as corrupt / double-free (any increase = bug). */
+size_t kheap_get_bad_frees(void);
+
 #endif /* MAKHOS_KHEAP_H */

@@ -50,7 +50,9 @@ static process_t* sleep_list = NULL;
 static process_t* reap_list = NULL;
 
 static volatile int need_resched = 0;
-static volatile int preempt_count = 0;
+/* preempt_count is per-thread (process_t.preempt_count), as in Linux: a
+ * global counter would leak to whichever thread runs next if a holder
+ * ever blocked. */
 
 /* -------------------------------------------------------------------------- */
 /* Run queue helpers (callers hold IRQs disabled)                             */
@@ -87,13 +89,16 @@ static process_t* runq_pop_highest(void) {
 
 void preempt_disable(void) {
     irqflags_t f = local_irq_save();
-    preempt_count++;
+    if (current_process) current_process->preempt_count++;
     local_irq_restore(f);
 }
 
 void preempt_enable(void) {
     irqflags_t f = local_irq_save();
-    int resched = (--preempt_count == 0) && need_resched;
+    int resched = 0;
+    if (current_process) {
+        resched = (--current_process->preempt_count == 0) && need_resched;
+    }
     local_irq_restore(f);
     if (resched) thread_yield();
 }
@@ -113,23 +118,21 @@ void schedule(void) {
     irqflags_t flags = local_irq_save();
 
     process_t* prev = current_process;
-    process_t* next = runq_pop_highest();
 
-    if (!next) {
-        /* Nothing else ready. If the caller is still runnable, keep running
-         * it; otherwise fall back to the idle thread. */
-        if (prev && prev->state == PROC_RUNNING) {
-            local_irq_restore(flags);
-            return;
-        }
-        next = idle_thread;
-    }
-
-    /* Re-queue the outgoing thread if it is still runnable (never the idle
-     * thread - idle lives outside the run queues). */
+    /* Re-queue the outgoing thread FIRST if it is still runnable (never the
+     * idle thread - idle lives outside the run queues). It goes to the tail of
+     * its own priority level, so equal-priority peers get their turn, but it
+     * still competes: a lower-priority thread can never take the CPU from a
+     * runnable higher-priority one just because a quantum expired. */
     if (prev && prev != idle_thread && prev->state == PROC_RUNNING) {
         prev->state = PROC_READY;
         runq_push(prev);
+    }
+
+    process_t* next = runq_pop_highest();
+    if (!next) {
+        /* Nothing runnable at all (prev blocked or exited): run idle. */
+        next = idle_thread;
     }
 
     next->state = PROC_RUNNING;
@@ -149,14 +152,30 @@ void schedule(void) {
 /* Timer integration                                                          */
 /* -------------------------------------------------------------------------- */
 
-/* Wake any sleepers whose deadline has passed. Caller holds IRQs disabled. */
+/* Unlink t from the global sleep list if present. Caller holds IRQs off. */
+static void sleep_remove(process_t* t) {
+    process_t** link = &sleep_list;
+    while (*link) {
+        if (*link == t) { *link = t->sleep_next; t->sleep_next = NULL; return; }
+        link = &(*link)->sleep_next;
+    }
+}
+
+/* Wake any sleepers whose deadline has passed. Caller holds IRQs disabled.
+ * A node made READY by another waker (e.g. wq_wake) is just unlinked. */
 static void wake_expired_sleepers(uint64_t now) {
     process_t** link = &sleep_list;
     while (*link) {
         process_t* t = *link;
+        if (t->state != PROC_BLOCKED) {
+            *link = t->sleep_next;      /* stale: already woken elsewhere */
+            t->sleep_next = NULL;
+            continue;
+        }
         if ((int64_t)(now - t->wake_tick) >= 0) {
             *link = t->sleep_next;      /* unlink */
             t->sleep_next = NULL;
+            t->timed_out = 1;
             t->state = PROC_READY;
             runq_push(t);
             need_resched = 1;
@@ -184,7 +203,8 @@ void sched_tick(void) {
 }
 
 void sched_preempt_if_needed(void) {
-    if (preempt_count == 0 && need_resched) {
+    process_t* cur = current_process;
+    if (need_resched && (!cur || cur->preempt_count == 0)) {
         need_resched = 0;
         schedule();
     }
@@ -241,19 +261,8 @@ void wq_init(wait_queue_t* wq) {
     wq->head = wq->tail = NULL;
 }
 
-void wq_block(wait_queue_t* wq, irqflags_t flags) {
-    /* Called with IRQs already disabled (flags captured by the caller). */
-    process_t* cur = current_process;
-    cur->state = PROC_BLOCKED;
-    cur->wq_next = NULL;
-    if (wq->tail) { wq->tail->wq_next = cur; wq->tail = cur; }
-    else          { wq->head = wq->tail = cur; }
-
-    schedule();                 /* sleeps here until woken */
-    local_irq_restore(flags);
-}
-
-static process_t* wq_dequeue(wait_queue_t* wq) {
+/* Raw pop of the head node (no state check). Caller holds IRQs off. */
+static process_t* wq_pop(wait_queue_t* wq) {
     process_t* t = wq->head;
     if (t) {
         wq->head = t->wq_next;
@@ -263,13 +272,70 @@ static process_t* wq_dequeue(wait_queue_t* wq) {
     return t;
 }
 
+/* Unlink t from wq if present. Caller holds IRQs off. */
+static void wq_remove(wait_queue_t* wq, process_t* t) {
+    process_t** link = &wq->head;
+    process_t* prev = NULL;
+    while (*link) {
+        if (*link == t) {
+            *link = t->wq_next;
+            if (wq->tail == t) wq->tail = prev;
+            t->wq_next = NULL;
+            return;
+        }
+        prev = *link;
+        link = &(*link)->wq_next;
+    }
+}
+
+/*
+ * Block the current thread on wq, optionally with a timeout (in ticks; 0 = no
+ * timeout). Returns 0 if woken by wq_wake*, or 1 if the timeout expired. The
+ * caller must hold IRQs disabled (flags from local_irq_save); IRQs are restored
+ * to that state on return. The node is placed on wq and, if a timeout is set,
+ * also on the sleep list; whichever waker fires first sets the state to READY,
+ * and this routine unlinks the node from both lists on wake.
+ */
+int sched_wait_event(wait_queue_t* wq, uint64_t timeout_ticks, irqflags_t flags) {
+    process_t* cur = current_process;
+    cur->state = PROC_BLOCKED;
+    cur->timed_out = 0;
+
+    cur->wq_next = NULL;
+    if (wq->tail) { wq->tail->wq_next = cur; wq->tail = cur; }
+    else          { wq->head = wq->tail = cur; }
+
+    if (timeout_ticks) {
+        cur->wake_tick = timer_get_ticks() + timeout_ticks;
+        cur->sleep_next = sleep_list;
+        sleep_list = cur;
+    }
+
+    schedule();                 /* sleeps here until woken by wq or timer */
+
+    /* Woken. Ensure we are off both lists (the waker unlinked one of them). */
+    local_irq_save();
+    wq_remove(wq, cur);
+    sleep_remove(cur);
+    int timed = cur->timed_out;
+    local_irq_restore(flags);
+    return timed;
+}
+
+void wq_block(wait_queue_t* wq, irqflags_t flags) {
+    (void)sched_wait_event(wq, 0, flags);
+}
+
 void wq_wake_one(wait_queue_t* wq) {
     irqflags_t f = local_irq_save();
-    process_t* t = wq_dequeue(wq);
-    if (t) {
+    process_t* t;
+    while ((t = wq_pop(wq)) != NULL) {
+        if (t->state != PROC_BLOCKED) continue;   /* stale (timed out); drop */
+        t->timed_out = 0;
         t->state = PROC_READY;
         runq_push(t);
         need_resched = 1;
+        break;
     }
     local_irq_restore(f);
 }
@@ -277,7 +343,9 @@ void wq_wake_one(wait_queue_t* wq) {
 void wq_wake_all(wait_queue_t* wq) {
     irqflags_t f = local_irq_save();
     process_t* t;
-    while ((t = wq_dequeue(wq)) != NULL) {
+    while ((t = wq_pop(wq)) != NULL) {
+        if (t->state != PROC_BLOCKED) continue;
+        t->timed_out = 0;
         t->state = PROC_READY;
         runq_push(t);
         need_resched = 1;
@@ -373,6 +441,10 @@ void proc_add_to_ready(process_t* t) { sched_wake(t); }
 static void reap(process_t* t) {
     /* Caller holds IRQs disabled. Frees everything owned by a dead thread. */
     all_list_remove(t);
+    if (t->tls) {
+        kfree(t->tls);
+        t->tls = NULL;
+    }
     if (t->kernel_stack) {
         kfree((void*)t->kernel_stack);
         t->kernel_stack = 0;
@@ -395,7 +467,13 @@ void sched_reap_detached(void) {
     }
 }
 
+/* Defined in kernel/pthread/pthread.c; runs per-thread key destructors. */
+extern void pthread_tls_cleanup(process_t* t);
+
 void thread_exit(int code) {
+    /* Run TLS destructors in thread context (IRQs on) before we tear down. */
+    pthread_tls_cleanup(current_process);
+
     irqflags_t f = local_irq_save();
     process_t* cur = current_process;
 
@@ -426,7 +504,7 @@ void thread_exit(int code) {
     for (;;) __asm__ volatile("hlt");
 }
 
-int thread_join(process_t* t, int* code) {
+int sched_join(process_t* t, int* code, void** retval) {
     if (!t) return -1;
     irqflags_t f = local_irq_save();
     if (t->reaped || t->detached) { local_irq_restore(f); return -1; }
@@ -436,8 +514,26 @@ int thread_join(process_t* t, int* code) {
         f = local_irq_save();
     }
 
-    if (code) *code = t->exit_code;
+    if (code)   *code = t->exit_code;
+    if (retval) *retval = t->retval;
     reap(t);
+    local_irq_restore(f);
+    return 0;
+}
+
+int thread_join(process_t* t, int* code) {
+    return sched_join(t, code, NULL);
+}
+
+int sched_detach(process_t* t) {
+    if (!t) return -1;
+    irqflags_t f = local_irq_save();
+    if (t->reaped) { local_irq_restore(f); return -1; }
+    t->detached = 1;
+    if (t->state == PROC_ZOMBIE) {
+        /* Already exited with no joiner: reap it now. */
+        reap(t);
+    }
     local_irq_restore(f);
     return 0;
 }
@@ -462,5 +558,4 @@ void sched_init(void) {
     sleep_list = NULL;
     reap_list = NULL;
     need_resched = 0;
-    preempt_count = 0;
 }

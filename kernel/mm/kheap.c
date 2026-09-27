@@ -20,6 +20,7 @@ static uint64_t heap_start = HEAP_START_VIRTUAL; /* Current heap start */
 static uint64_t heap_end = HEAP_START_VIRTUAL;   /* Current heap end (next unallocated address) */
 static uint64_t heap_max = HEAP_START_VIRTUAL;   /* Maximum heap address mapped */
 static size_t heap_used = 0;                     /* Total used memory */
+static size_t bad_frees = 0;                     /* kfree() calls rejected as corrupt/double */
 
 /* Helper function prototypes */
 static void* kheap_expand(size_t pages);
@@ -353,11 +354,16 @@ static void* kmalloc_locked(size_t size) {
     /* Mark block as used */
     block->magic = KHEAP_MAGIC_USED;
     block->allocated = 1;
-    
-    /* Update footer */
+
+    /* Write the FULL footer. If split_block() did not split (remainder too
+     * small), the block keeps its original size but its footer still carries a
+     * stale header/size from a previous life, which would make kfree() reject
+     * it as corrupt. Set all three fields to match this block. */
     block_footer_t* footer = get_footer(block);
     footer->magic = KHEAP_MAGIC_TAIL;
-    
+    footer->size = block->size;
+    footer->header = block;
+
     /* Update heap statistics */
     heap_used += block->size;
     
@@ -490,16 +496,18 @@ static void kfree_locked(void* ptr) {
     /* Validate magic */
     if (header->magic != KHEAP_MAGIC_USED) {
         /* Invalid block - could be double free or corruption */
+        bad_frees++;
         return;
     }
-    
+
     /* Validate footer */
     block_footer_t* footer = get_footer(header);
     if (footer->magic != KHEAP_MAGIC_TAIL || footer->header != header) {
-        /* Footer corruption */
+        /* Footer corruption (e.g. a buffer overrun into the footer) */
+        bad_frees++;
         return;
     }
-    
+
     /* Update heap statistics */
     heap_used -= header->size;
     
@@ -567,4 +575,13 @@ void kfree(void* ptr) {
     irqflags_t f = local_irq_save();
     kfree_locked(ptr);
     local_irq_restore(f);
+}
+
+/**
+ * kheap_get_bad_frees - Number of kfree() calls rejected by header/footer
+ * validation (double free, wild pointer, or a buffer overrun that clobbered a
+ * footer). Tests and the self-fuzzer treat any increase as a kernel bug.
+ */
+size_t kheap_get_bad_frees(void) {
+    return bad_frees;
 }

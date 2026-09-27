@@ -19,7 +19,9 @@
  */
 
 #define DEFAULT_STACK_SIZE  8192
-#define DEFAULT_PRIORITY    128
+/* Phase 12: priorities are 0 (highest) .. PRIO_IDLE; the old value 128 was
+ * clamped to the idle level and starved these threads. */
+#define DEFAULT_PRIORITY    PRIO_DEFAULT
 #define DEFAULT_RFLAGS      0x202
 
 process_t *proc_create(void (*entry)(void), uint64_t stack_size, const char* name) {

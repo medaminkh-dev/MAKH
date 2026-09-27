@@ -63,6 +63,10 @@ void thread_exit(int code) __attribute__((noreturn));
 /* Wait for `t` to exit; stores its exit code in *code (if non-NULL) and reaps
  * it. Returns 0 on success, -1 if t is invalid or already reaped. */
 int  thread_join(process_t* t, int* code);
+/* Same, also returning the thread's void* return value (for pthread_join). */
+int  sched_join(process_t* t, int* code, void** retval);
+/* Mark a thread detached; reap immediately if it has already exited. */
+int  sched_detach(process_t* t);
 
 /* Sleep the current thread for at least the given time. */
 void sched_sleep_ticks(uint64_t ticks);
@@ -81,6 +85,9 @@ void wq_init(wait_queue_t* wq);
 /* Block current thread on wq. Must be called with IRQs about to be released;
  * pass the flags from local_irq_save() so the enqueue+switch is atomic. */
 void wq_block(wait_queue_t* wq, irqflags_t flags);
+/* Block on wq with an optional timeout (ticks; 0 = forever). Returns 0 if woken
+ * by wq_wake*, 1 if the timeout expired. Caller holds IRQs off (flags). */
+int  sched_wait_event(wait_queue_t* wq, uint64_t timeout_ticks, irqflags_t flags);
 void wq_wake_one(wait_queue_t* wq);
 void wq_wake_all(wait_queue_t* wq);
 

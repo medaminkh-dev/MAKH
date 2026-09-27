@@ -102,6 +102,12 @@ typedef struct process {
     void* entry_arg;              // argument passed to entry
     uint8_t detached;             // 1 => auto-reaped on exit, no join needed
     uint8_t reaped;               // 1 => resources already freed
+    uint8_t timed_out;            // 1 => last blocking wait ended via timeout
+    int32_t preempt_count;        // >0 => this thread must not be preempted
+
+    void** tls;                   // per-thread storage for pthread keys (lazy)
+    void* (*pth_start)(void*);    // pthread start routine (real typed pointer)
+    void*   retval;               // pthread return / exit value
 
     struct process* run_next;     // link within a per-priority run queue
     struct process* sleep_next;   // link within the global sleep list
