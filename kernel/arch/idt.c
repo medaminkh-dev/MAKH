@@ -9,6 +9,7 @@
 #include <drivers/keyboard.h>
 #include <kernel.h>
 #include <vga.h>
+#include <sched.h>
 
 static idt_entry_t idt[256];
 static idt_ptr_t idt_ptr;
@@ -223,6 +224,13 @@ void irq_handler(registers_t* regs) {
             break;
     }
     
-    // Send End of Interrupt to PIC
+    // Send End of Interrupt to PIC before any reschedule, so the PIC can
+    // deliver the next IRQ to whichever thread we switch to.
     pic_send_eoi(irq);
+
+    // IRQ tail: if the timer (or a wakeup) marked the current thread for
+    // preemption, switch now. Runs on the interrupted thread's kernel stack;
+    // when this thread is scheduled again the switch unwinds back here and
+    // isr_common's iretq resumes the interrupted code.
+    sched_preempt_if_needed();
 }

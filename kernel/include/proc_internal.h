@@ -16,9 +16,7 @@
 // GLOBAL VARIABLES (declared as extern)
 // -----------------------------------------------------------------------------
 
-extern volatile int in_interrupt_context;
 extern process_t *current_process;
-extern process_list_t ready_queue;
 extern process_list_t all_processes;
 
 // -----------------------------------------------------------------------------
@@ -34,14 +32,6 @@ extern uint8_t init_stack[INIT_STACK_SIZE];
 
 void all_list_add(process_t *proc);
 void all_list_remove(process_t *proc);
-
-// -----------------------------------------------------------------------------
-// FUNCTION DECLARATIONS - Ready Queue
-// -----------------------------------------------------------------------------
-
-void ready_enqueue(process_t *proc);
-void ready_remove(process_t *proc);
-process_t *ready_dequeue(void);
 
 // -----------------------------------------------------------------------------
 // FUNCTION DECLARATIONS - PID Management

@@ -1,8 +1,10 @@
 #include <proc_internal.h>
+#include <sched.h>
 #include <mm/kheap.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <kernel.h>
+#include <klog.h>
 #include <vga.h>
 #include <lib/string.h>
 #include <drivers/timer.h>
@@ -98,26 +100,22 @@ process_t *proc_create(void (*entry)(void), uint64_t stack_size, const char* nam
     proc->creation_time = timer_get_ticks();
     proc->cpu_time_used = 0;
 
-    // Parent-child relationship
+    proc->time_slice = SCHED_QUANTUM;
+    proc->ticks_left = SCHED_QUANTUM;
+
+    /* Link into the shared process/tree lists with preemption held off. */
+    irqflags_t f = local_irq_save();
     if (current_process) {
         proc->parent_pid = current_process->pid;
         proc_add_child(current_process, proc);
     } else {
         proc->parent_pid = 0;  // No parent (should only happen for idle/init)
     }
-
-    // Add to all processes list
     all_list_add(proc);
+    local_irq_restore(f);
 
-    terminal_writestring("[PROC] Process created: PID 0x");
-    phex(proc->pid);
-    terminal_writestring(" (");
-    terminal_writestring(proc->name);
-    terminal_writestring("), stack at 0x");
-    phex(proc->kernel_stack);
-    terminal_writestring(", parent=");
-    phex(proc->parent_pid);
-    terminal_writestring("\n");
+    KLOG_D("PROC", "created PID %u (%s) stack=%p parent=%u\n",
+           proc->pid, proc->name, (void*)proc->kernel_stack, proc->parent_pid);
 
     return proc;
 }

@@ -85,14 +85,14 @@ C_SOURCES_PROC = \
     kernel/proc/sched/sched.c \
     kernel/proc/exit/exit.c \
     kernel/proc/table/table.c \
-    kernel/proc/tree/tree.c \
-    kernel/proc/ready_api/ready_api.c
+    kernel/proc/tree/tree.c
 
 # C source files - In-kernel tests (registered via the .ktests section)
 C_SOURCES_TESTS = \
     kernel/tests/test_lib.c \
     kernel/tests/test_mm.c \
-    kernel/tests/test_klog.c
+    kernel/tests/test_klog.c \
+    kernel/tests/test_sched.c
 
 # Combine all C sources
 C_SOURCES = \

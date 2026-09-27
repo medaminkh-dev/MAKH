@@ -6,6 +6,7 @@
 
 #include "mm/pmm.h"
 #include "vga.h"
+#include "irq.h"
 
 /* Static bitmap for page tracking - each bit represents one 4KB page */
 static uint8_t bitmap[MAX_BITMAP_SIZE];
@@ -192,19 +193,18 @@ void pmm_init(struct multiboot_tag_mmap *mmap_tag) {
  * Returns: Physical address of allocated page, or NULL if out of memory
  */
 void* pmm_alloc_page(void) {
-    /* Search for first free page */
-    uint64_t page;
-    for (page = 0; page < max_page_num; page++) {
+    /* The bitmap is shared with any preemptible caller, so guard it. */
+    irqflags_t f = local_irq_save();
+    for (uint64_t page = 0; page < max_page_num; page++) {
         if (!bitmap_test(page)) {
-            /* Found a free page */
             bitmap_set(page);
             used_pages++;
+            local_irq_restore(f);
             return page_to_addr(page);
         }
     }
-    
-    /* Out of memory */
-    return NULL;
+    local_irq_restore(f);
+    return NULL;  /* Out of memory */
 }
 
 /**
@@ -221,12 +221,13 @@ void pmm_free_page(void* phys_addr) {
     }
     
     uint64_t page = addr_to_page(phys_addr);
-    
-    if (page >= max_page_num) return;
-    if (!bitmap_test(page)) return; /* Already free */
-    
-    bitmap_clear(page);
-    used_pages--;
+
+    irqflags_t f = local_irq_save();
+    if (page < max_page_num && bitmap_test(page)) {
+        bitmap_clear(page);
+        used_pages--;
+    }
+    local_irq_restore(f);
 }
 
 /**

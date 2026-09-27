@@ -5,9 +5,7 @@
  * Implements the timer interrupt driver that drives the system clock
  * and provides the basis for preemptive multitasking.
  *
- * Phase 9 Changes:
- *   - Added proc_yield() call in timer_handler for preemptive scheduling
- *   - Added in_interrupt_context flag to prevent nested context switches
+ * Phase 12: the timer tick drives the preemptive scheduler via sched_tick().
  * =============================================================================
  */
 
@@ -17,10 +15,12 @@
 #include <vga.h>
 
 /**
- * PHASE 9 CHANGE: Added extern declaration for scheduler
- * The timer interrupt will call the scheduler to implement preemptive multitasking
+ * Phase 12: the timer drives preemptive scheduling. On each tick it advances
+ * the clock and calls sched_tick(), which does quantum accounting and wakes
+ * sleepers. The actual context switch happens at the IRQ tail
+ * (sched_preempt_if_needed in idt.c), not here.
  */
-extern void proc_yield(void);
+#include <sched.h>
 
 // Tick counter - incremented every timer interrupt
 static volatile uint64_t timer_ticks = 0;
@@ -82,45 +82,19 @@ void timer_init(uint32_t frequency) {
 /**
  * timer_handler - Handle timer interrupt (IRQ0)
  * @regs: CPU register state
- * 
- * PHASE 9 CHANGE: This function now implements preemptive scheduling!
- * 
- * On each timer tick:
- *   1. Set in_interrupt_context = 1 (prevent nested context switches)
- *   2. Increment timer_ticks (system clock)
- *   3. Call proc_yield() to give CPU to another process
- *   4. Set in_interrupt_context = 0
- * 
- * This enables round-robin preemptive multitasking by forcing
- * the scheduler to run on every timer interrupt.
+ *
+ * Phase 12: advance the clock and run scheduler accounting. This must stay
+ * short - it runs with interrupts disabled. The reschedule itself is deferred
+ * to the IRQ tail (idt.c) so the PIC is acked before any context switch.
  */
 void timer_handler(registers_t* regs) {
     (void)regs;  // Unused parameter
-    
-    /**
-     * PHASE 9 CHANGE: Mark interrupt context
-     * 
-     * Set flag before calling scheduler. This tells proc_yield()
-     * that we're in interrupt context so it should skip the actual
-     * context switch (to prevent nested interrupts from crashing).
-     */
-    extern volatile int in_interrupt_context;
-    in_interrupt_context = 1;
-    
-    // Increment system tick counter
+
+    // Advance the system clock, then let the scheduler do quantum accounting
+    // and wake any sleepers. The context switch (if need_resched gets set)
+    // happens at the IRQ tail once the PIC has been acked - see idt.c.
     timer_ticks++;
-    
-    /**
-     * PHASE 9 CHANGE: Call scheduler for preemptive multitasking
-     * 
-     * This is the heart of preemptive scheduling - on every timer
-     * tick, we give up the CPU so the scheduler can decide which
-     * process should run next.
-     */
-    proc_yield();
-    
-    // Clear interrupt context flag
-    in_interrupt_context = 0;
+    sched_tick();
 }
 
 /**

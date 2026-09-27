@@ -9,6 +9,7 @@
 #include "mm/pmm.h"
 #include "vga.h"
 #include "kernel.h"
+#include "irq.h"
 
 /* External helper from kernel.c for number conversion */
 extern void uint64_to_string(uint64_t value, char* buf);
@@ -299,7 +300,7 @@ void kheap_init(void) {
  * @size: Number of bytes to allocate
  * Returns: Pointer to allocated memory, or NULL on failure
  */
-void* kmalloc(size_t size) {
+static void* kmalloc_locked(size_t size) {
     if (size == 0) return NULL;
     
     /* Calculate total size needed (header + data + footer) */
@@ -480,9 +481,9 @@ void* krealloc(void* ptr, size_t new_size) {
  * kfree - Free allocated memory
  * @ptr: Pointer to memory to free
  */
-void kfree(void* ptr) {
+static void kfree_locked(void* ptr) {
     if (ptr == NULL) return;
-    
+
     /* Get block header */
     block_header_t* header = (block_header_t*)((uint8_t*)ptr - sizeof(block_header_t));
     
@@ -545,4 +546,25 @@ size_t kheap_get_free(void) {
  */
 size_t kheap_get_total(void) {
     return heap_end - heap_start;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Public, preemption-safe wrappers                                           */
+/* -------------------------------------------------------------------------- */
+/*
+ * Phase 12: threads can be preempted mid-allocation, so the free list must be
+ * touched with interrupts disabled. kcalloc/krealloc/kmalloc_aligned build on
+ * these and only touch caller-owned memory outside the lock.
+ */
+void* kmalloc(size_t size) {
+    irqflags_t f = local_irq_save();
+    void* p = kmalloc_locked(size);
+    local_irq_restore(f);
+    return p;
+}
+
+void kfree(void* ptr) {
+    irqflags_t f = local_irq_save();
+    kfree_locked(ptr);
+    local_irq_restore(f);
 }
