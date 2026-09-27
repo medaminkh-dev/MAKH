@@ -30,7 +30,15 @@ SECTIONS
         *(.rodata)
         *(.rodata.*)
     }
-    
+
+    /* In-kernel test registry (see ktest.h). Runner walks start..end. */
+    .ktests ALIGN(8) :
+    {
+        __ktests_start = .;
+        KEEP(*(.ktests))
+        __ktests_end = .;
+    }
+
     /* Initialized data */
     .data ALIGN(4K) :
     {

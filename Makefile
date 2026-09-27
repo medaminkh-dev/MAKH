@@ -22,12 +22,15 @@ AS = nasm
 LD = ld
 
 # Flags
-CFLAGS = -ffreestanding -fno-pie -O2 -Wall -Wextra
+# NOTE: a kernel must not use the SysV red zone or SSE/MMX (no FPU state saved
+# across interrupts), and needs frame pointers for reliable backtraces.
+CFLAGS  = -ffreestanding -fno-pie -O2 -Wall -Wextra
 CFLAGS += -std=gnu99 -fno-stack-protector -nostdinc
-CFlAGS += -mno-red-zone
+CFLAGS += -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mgeneral-regs-only
+CFLAGS += -fno-omit-frame-pointer
 CFLAGS += -I kernel/include
 ASFLAGS = -f elf64
-LDFLAGS = -T linker.ld -nostdlib
+LDFLAGS = -T linker.ld -nostdlib -z noexecstack --no-warn-execstack
 
 # =============================================================================
 # SOURCE FILES
@@ -48,6 +51,10 @@ C_SOURCES_ORIG = \
     kernel/multiboot.c \
     kernel/input_line.c \
     kernel/lib/string.c \
+    kernel/klog.c \
+    kernel/cmdline.c \
+    kernel/ktest.c \
+    kernel/panic.c \
     kernel/syscall/syscall.c
 
 # C source files - Architecture
@@ -81,13 +88,20 @@ C_SOURCES_PROC = \
     kernel/proc/tree/tree.c \
     kernel/proc/ready_api/ready_api.c
 
+# C source files - In-kernel tests (registered via the .ktests section)
+C_SOURCES_TESTS = \
+    kernel/tests/test_lib.c \
+    kernel/tests/test_mm.c \
+    kernel/tests/test_klog.c
+
 # Combine all C sources
 C_SOURCES = \
     $(C_SOURCES_ORIG) \
     $(C_SOURCES_ARCH) \
     $(C_SOURCES_MM) \
     $(C_SOURCES_DRIVERS) \
-    $(C_SOURCES_PROC)
+    $(C_SOURCES_PROC) \
+    $(C_SOURCES_TESTS)
 
 # =============================================================================
 # OBJECT FILES
@@ -108,7 +122,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug list-sources list-objects check-files size map clean-deps
+.PHONY: all clean run run-debug debug test list-sources list-objects check-files size map clean-deps
 
 all: $(KERNEL) $(ISO)
 
@@ -158,8 +172,8 @@ list-objects:
 
 clean:
 	@echo "Cleaning..."
-	@rm -f $(OBJECTS) $(KERNEL) $(ISO)
-	@rm -rf isodir
+	@rm -f $(OBJECTS) $(KERNEL) $(ISO) $(TEST_ISO)
+	@rm -rf isodir isodir-test
 	@echo "Clean complete."
 
 # =============================================================================
@@ -170,6 +184,28 @@ run: $(ISO)
 	@echo "Running MakhOS in QEMU..."
 	@rm -f serial.log
 	qemu-system-x86_64 -cdrom $(ISO) -vga std -m 128M -no-reboot -serial file:serial.log
+
+# -----------------------------------------------------------------------------
+# TEST TARGETS
+# -----------------------------------------------------------------------------
+# Build a bootable ISO whose GRUB command line contains "makh.test", so the
+# kernel runs its self-test suite headless and powers off with a pass/fail
+# exit code. tools/run_tests.py builds this ISO, runs QEMU, and interprets
+# the result. Used locally (`make test`) and in CI.
+
+TEST_ISO = makhos-test.iso
+
+$(TEST_ISO): $(KERNEL) grub-test.cfg
+	@echo "Creating test ISO..."
+	@mkdir -p isodir-test/boot/grub
+	@cp grub-test.cfg isodir-test/boot/grub/grub.cfg
+	@cp $(KERNEL) isodir-test/boot/
+	@grub-mkrescue -o $(TEST_ISO) isodir-test 2>/dev/null
+	@rm -rf isodir-test
+	@echo "Test ISO created: $(TEST_ISO)"
+
+test: $(TEST_ISO)
+	@python3 tools/run_tests.py $(TEST_ISO)
 
 run-debug: $(ISO)
 	@echo "Running MakhOS in QEMU with debug output..."

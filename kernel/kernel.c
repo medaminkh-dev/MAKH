@@ -22,6 +22,9 @@
 #include "include/arch/tss.h"
 #include "include/syscall.h"
 #include "include/proc.h"
+#include "include/klog.h"
+#include "include/cmdline.h"
+#include "include/ktest.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -748,7 +751,12 @@ void kernel_main(void) {
     
     /* Initialize serial port for log output */
     serial_init();
-    
+
+    /* Parse the boot command line (selects test mode, log verbosity). */
+    cmdline_init(multiboot_info_ptr);
+    if (cmdline_has("makh.debug"))      klog_set_level(KLOG_DEBUG);
+    else if (cmdline_has("makh.test"))  klog_set_level(KLOG_WARN);
+
     /* Checkpoint - terminal init done */
     vga[82] = (0x0F << 8) | 'i';  /* 'i' for init done */
     
@@ -901,21 +909,34 @@ void kernel_main(void) {
     // Initialize process manager
     proc_init();
     proc_become_current();
+
+    /* -------------------------------------------------------------------
+     * Automated self-test mode ("makh.test" on the kernel command line):
+     * run the in-kernel test suite and power off with a pass/fail code.
+     * This is what `make test` and CI drive.
+     * ------------------------------------------------------------------- */
+    if (cmdline_has("makh.test")) {
+        int fails = ktest_run_all();
+        kprintf("\n[TEST] finished: %d failing test(s)\n", fails);
+        qemu_debug_exit(fails == 0 ? 0 : 1);
+        kernel_halt();  /* unreached if isa-debug-exit is present */
+    }
+
     /* Small delay before context switch test */
     terminal_writestring("\n[MAIN] Waiting before context switch test...\n");
     for (volatile int i = 0; i < 5000000; i++);
-    
+
     // Test context switch
     test_context_switch();
-    
+
     /* Confirm return from context switch test */
     terminal_writestring("\n[MAIN] Returned from context switch test\n");
-    
+
     idt_enable_interrupts();
-    
+
     /* Test keyboard */
     test_keyboard();
-    
+
     /* Success message */
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
     terminal_writestring("\n");
@@ -1040,26 +1061,5 @@ void kernel_main(void) {
     }
 }
 
-/**
- * kernel_halt - Halt the system
- * Disables interrupts and enters an infinite halt loop
- */
-void kernel_halt(void) {
-    cli();
-    for (;;) {
-        hlt();
-    }
-}
-
-/**
- * kernel_panic - Kernel panic handler
- * @message: Error message to display
- */
-void kernel_panic(const char* message) {
-    terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_RED));
-    terminal_writestring("\n\n*** KERNEL PANIC ***\n");
-    terminal_writestring(message);
-    terminal_writestring("\n********************\n");
-    
-    kernel_halt();
-}
+/* kernel_halt(), kernel_panic() and panic() now live in kernel/panic.c so they
+ * can share the frame-pointer backtrace and test-harness exit path. */

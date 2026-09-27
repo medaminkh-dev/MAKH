@@ -8,6 +8,7 @@
 #include "mm/pmm.h"
 #include "vga.h"
 #include "kernel.h"
+#include "klog.h"
 
 /* Static kernel PML4 table - must be 4KB aligned */
 static uint64_t kernel_pml4[PAGE_TABLE_ENTRIES] __attribute__((aligned(4096)));
@@ -194,22 +195,32 @@ void vmm_init(void) {
      *
      * We need to set up page tables for 4MB-16MB before switching CR3.
      */
-    terminal_writestring("[VMM] Extending identity mapping to 16MB...\n");
-    
-    /* Create PDPT for identity mapping (PML4[0]) */
+    /*
+     * Identity-map all of physical RAM with 2MB huge pages.
+     *
+     * The boot page tables only map the first 4MB, but the PMM hands out
+     * frames from anywhere in RAM. Any kernel access to such a frame (e.g.
+     * zeroing a freshly allocated page table, or the direct pointers the heap
+     * uses) must be backed by a mapping. The boot PD at pdpt[0] holds 512
+     * entries = 1GB of coverage, so we fill it up to the RAM size, capped at
+     * 1GB (enough for our QEMU configs; a higher-half direct map comes later).
+     */
     uint64_t* pdpt = (uint64_t*)(uintptr_t)(kernel_pml4[0] & ~0xFFF);
-    
-    /* Check if we need to extend the PD */
-    uint64_t* pd = (uint64_t*)(uintptr_t)(pdpt[0] & ~0xFFF);
-    
-    /* Map additional 2MB pages: 0x400000, 0x600000, 0x800000, 0xA00000, 0xC00000, 0xE00000 */
-    for (int i = 2; i < 8; i++) {
+    uint64_t* pd   = (uint64_t*)(uintptr_t)(pdpt[0] & ~0xFFF);
+
+    uint64_t ram = pmm_get_total_memory();
+    uint64_t map_limit = 1024ULL * 1024 * 1024;   /* cap at 1GB (512 * 2MB) */
+    if (ram > map_limit) ram = map_limit;
+
+    uint64_t entries = (ram + 0x1FFFFF) / 0x200000;  /* round up to 2MB */
+    if (entries > PAGE_TABLE_ENTRIES) entries = PAGE_TABLE_ENTRIES;
+
+    for (uint64_t i = 2; i < entries; i++) {
         if (!(pd[i] & PAGE_PRESENT)) {
-            /* Use 2MB huge pages for simplicity */
-            pd[i] = ((uint64_t)i * 0x200000) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
+            pd[i] = (i * 0x200000) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
         }
     }
-    terminal_writestring("[VMM] Identity mapping extended to 16MB\n");
+    KLOG_I("VMM", "identity-mapped %lu MB of RAM\n", (entries * 2));
     
     /* 
      * Set up recursive mapping: PML4[511] = &PML4 | flags
