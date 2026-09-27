@@ -13,6 +13,7 @@
 #include <klog.h>
 #include <cmdline.h>
 #include <proc.h>
+#include <kfuzz.h>
 
 static void exception_report(registers_t* regs) __attribute__((noreturn));
 
@@ -127,6 +128,11 @@ void exception_handler(registers_t* regs) {
         return;
     }
     
+    /* Phase 15: if a KFUZZ target is running, a CPU fault (vectors 0-31) is a
+     * finding, not a fatal event: hand it to the sandbox, which records the
+     * reproducing seed and longjmps back to the fuzz harness (never returns). */
+    if (vector < 32 && kfuzz_in_sandbox()) kfuzz_report_fault(regs);
+
     exception_report(regs);
 }
 

@@ -28,6 +28,8 @@ SCRIPT = [
     ("mem", "integrity ok"),
     ("ps", "netd"),
     ("netstat", "ip rx"),
+    ("fuzz string 300", "0 crashes"),
+    ("fuzz netrx 300", "0 crashes"),
     ("nosuchcmd", "command not found"),
 ]
 

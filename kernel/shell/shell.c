@@ -26,6 +26,7 @@
 #include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <net/net.h>
+#include <kfuzz.h>
 #include <drivers/timer.h>
 
 /* -------------------------------------------------------------------------- */
@@ -202,6 +203,61 @@ static int cmd_reboot(int argc, char** argv) {
     return SHELL_ERR;   /* still here: reset didn't happen */
 }
 
+static uint32_t fuzz_target_bit(const char* name) {
+    int n; const kfuzz_target_t* t = kfuzz_targets(&n);
+    for (int i = 0; i < n; i++) if (strcmp(name, t[i].name) == 0) return t[i].bit;
+    return 0;
+}
+
+static int cmd_fuzz(int argc, char** argv) {
+    /* fuzz [iters]                 - campaign over all targets
+     * fuzz <target> [iters]        - campaign over one target
+     * fuzz replay <seed> <target>  - reproduce one crashing seed          */
+    if (argc >= 2 && strcmp(argv[1], "replay") == 0) {
+        if (argc < 4) return SHELL_USAGE;
+        uint32_t seed = 0;
+        for (const char* p = argv[2]; *p; p++) {          /* hex or dec */
+            if (p == argv[2] && p[0] == '0' && (p[1]=='x'||p[1]=='X')) { p++; continue; }
+            char c = *p; uint32_t d;
+            if (c >= '0' && c <= '9') d = c - '0';
+            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+            else return SHELL_USAGE;
+            seed = seed * 16 + d;
+        }
+        uint32_t bit = fuzz_target_bit(argv[3]);
+        if (!bit) { kprintf("unknown target '%s'\n", argv[3]); return SHELL_USAGE; }
+        int rc = kfuzz_replay(bit, seed, 64);
+        kprintf("replay seed=0x%x target=%s -> %s\n", seed, argv[3],
+                rc == 0 ? "clean" : rc == 1 ? "CRASH" : "ORACLE FAIL");
+        return rc ? SHELL_ERR : SHELL_OK;
+    }
+
+    uint32_t mask = KFUZZ_T_ALL;
+    uint64_t iters = 2000;
+    int ai = 1;
+    if (argc > ai) {
+        uint32_t bit = fuzz_target_bit(argv[ai]);
+        if (bit) { mask = bit; ai++; }
+    }
+    if (argc > ai) {
+        uint32_t v;
+        if (parse_uint(argv[ai], &v) != 0) return SHELL_USAGE;
+        iters = v;
+    }
+
+    kfuzz_result_t res;
+    kprintf("fuzzing %lu iterations...\n", (unsigned long)iters);
+    int fails = kfuzz_run(mask, iters, 0, &res);
+    kprintf("done: %lu iters, %lu crashes, %lu oracle-fails, coverage %lu edges, "
+            "corpus %lu\n", (unsigned long)res.iterations, (unsigned long)res.crashes,
+            (unsigned long)res.oracle_fails, (unsigned long)res.coverage,
+            (unsigned long)res.corpus);
+    if (fails) kprintf("last crash seed 0x%lx (vector %d)\n",
+                       (unsigned long)res.last_crash_seed, res.last_crash_vector);
+    return fails ? SHELL_ERR : SHELL_OK;
+}
+
 static const shell_cmd_t commands[] = {
     { "help",      "help",               "list commands",                     cmd_help },
     { "echo",      "echo [words...]",    "print the arguments",               cmd_echo },
@@ -215,6 +271,7 @@ static const shell_cmd_t commands[] = {
     { "netstat",   "netstat",            "TCP connections + protocol stats",  cmd_netstat },
     { "ping",      "ping <ip> [count]",  "ICMP echo",                         cmd_ping },
     { "selftest",  "selftest [suite]",   "run the in-kernel test suite",      cmd_selftest },
+    { "fuzz",      "fuzz [target] [n] | fuzz replay <seed> <target>", "self-fuzz the kernel", cmd_fuzz },
     { "reboot",    "reboot",             "reset the machine",                 cmd_reboot },
 };
 #define NCOMMANDS (sizeof(commands) / sizeof(commands[0]))

@@ -42,7 +42,8 @@ ASM_SOURCES = \
     kernel/mm/paging_asm.asm \
     kernel/arch/idt_asm.asm \
     kernel/arch/syscall_asm.asm \
-    kernel/arch/context_switch.asm
+    kernel/arch/context_switch.asm \
+    kernel/kfuzz/jmp.asm
 
 # C source files - Original kernel files
 C_SOURCES_ORIG = \
@@ -59,7 +60,9 @@ C_SOURCES_ORIG = \
     kernel/pthread/pthread.c \
     kernel/pthread/sem.c \
     kernel/syscall/syscall.c \
-    kernel/shell/shell.c
+    kernel/shell/shell.c \
+    kernel/kfuzz/kfuzz.c \
+    kernel/kfuzz/kfuzz_targets.c
 
 # C source files - Architecture
 C_SOURCES_ARCH = \
@@ -113,7 +116,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_sched.c \
     kernel/tests/test_pthread.c \
     kernel/tests/test_net.c \
-    kernel/tests/test_shell.c
+    kernel/tests/test_shell.c \
+    kernel/tests/test_kfuzz.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -128,6 +132,23 @@ C_SOURCES = \
 # =============================================================================
 # OBJECT FILES
 # =============================================================================
+
+# KFUZZ coverage: instrument only the subsystems the fuzzer attacks, so the
+# coverage map measures the code under test (not the harness, arch or sched).
+COV_SOURCES = \
+    kernel/mm/kheap.c \
+    kernel/mm/pmm.c \
+    kernel/lib/string.c \
+    kernel/shell/shell.c \
+    kernel/net/eth.c \
+    kernel/net/arp.c \
+    kernel/net/ipv4.c \
+    kernel/net/icmp.c \
+    kernel/net/udp.c \
+    kernel/net/tcp.c \
+    kernel/net/socket.c
+COV_OBJECTS = $(COV_SOURCES:.c=.o)
+$(COV_OBJECTS): CFLAGS += -fsanitize-coverage=trace-pc
 
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
 C_OBJECTS   = $(C_SOURCES:.c=.o)
