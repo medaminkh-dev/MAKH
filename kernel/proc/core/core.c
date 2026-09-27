@@ -76,11 +76,13 @@ void proc_init(void) {
     idle_pcb.context.rsp = itop;
     idle_pcb.context.rip = (uint64_t)(uintptr_t)sched_idle_loop;
     all_list_add(&idle_pcb);
+    proc_table_insert(&idle_pcb);
     sched_set_idle(&idle_pcb);
 
     /* ---- Init (PID 1) = the thread kernel_main runs on ---- */
     init_common(&init_pcb, 1, "init", PRIO_DEFAULT, init_stack, INIT_STACK_SIZE);
     all_list_add(&init_pcb);
+    proc_table_insert(&init_pcb);   /* proc_find(1) must work: see table.c */
 
     KLOG_I("PROC", "idle (PID 0) and init (PID 1) created\n");
 }

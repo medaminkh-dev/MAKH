@@ -58,14 +58,16 @@ C_SOURCES_ORIG = \
     kernel/ktime.c \
     kernel/pthread/pthread.c \
     kernel/pthread/sem.c \
-    kernel/syscall/syscall.c
+    kernel/syscall/syscall.c \
+    kernel/shell/shell.c
 
 # C source files - Architecture
 C_SOURCES_ARCH = \
     kernel/arch/idt.c \
     kernel/arch/pic.c \
     kernel/arch/gdt.c \
-    kernel/arch/tss.c
+    kernel/arch/tss.c \
+    kernel/arch/debugreg.c
 
 # C source files - Memory Management
 C_SOURCES_MM = \
@@ -77,7 +79,20 @@ C_SOURCES_MM = \
 C_SOURCES_DRIVERS = \
     kernel/drivers/timer.c \
     kernel/drivers/serial.c \
-    kernel/drivers/keyboard.c
+    kernel/drivers/keyboard.c \
+    kernel/drivers/pci.c \
+    kernel/drivers/e1000.c
+
+# C source files - Network stack (Phase 14)
+C_SOURCES_NET = \
+    kernel/net/netdev.c \
+    kernel/net/eth.c \
+    kernel/net/arp.c \
+    kernel/net/ipv4.c \
+    kernel/net/icmp.c \
+    kernel/net/udp.c \
+    kernel/net/tcp.c \
+    kernel/net/socket.c
 
 # C source files - Process Management (Split into modules)
 C_SOURCES_PROC = \
@@ -96,7 +111,9 @@ C_SOURCES_TESTS = \
     kernel/tests/test_mm.c \
     kernel/tests/test_klog.c \
     kernel/tests/test_sched.c \
-    kernel/tests/test_pthread.c
+    kernel/tests/test_pthread.c \
+    kernel/tests/test_net.c \
+    kernel/tests/test_shell.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -105,6 +122,7 @@ C_SOURCES = \
     $(C_SOURCES_MM) \
     $(C_SOURCES_DRIVERS) \
     $(C_SOURCES_PROC) \
+    $(C_SOURCES_NET) \
     $(C_SOURCES_TESTS)
 
 # =============================================================================
@@ -126,7 +144,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test list-sources list-objects check-files size map clean-deps
+.PHONY: all clean run run-debug debug test smoke stress list-sources list-objects check-files size map clean-deps
 
 all: $(KERNEL) $(ISO)
 
@@ -210,6 +228,15 @@ $(TEST_ISO): $(KERNEL) grub-test.cfg
 
 test: $(TEST_ISO)
 	@python3 tools/run_tests.py $(TEST_ISO)
+
+# Boot the normal image, type commands through the emulated PS/2 keyboard and
+# check what the shell prints (ping over the real e1000, arp, mem, ...).
+smoke: $(ISO)
+	@python3 tools/shell_smoke.py $(ISO)
+
+# Run the whole suite many times in parallel to flush out timing bugs.
+stress: $(TEST_ISO)
+	@bash tools/stress_tests.sh 24 4 $(TEST_ISO)
 
 run-debug: $(ISO)
 	@echo "Running MakhOS in QEMU with debug output..."

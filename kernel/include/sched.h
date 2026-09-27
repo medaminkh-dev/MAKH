@@ -91,4 +91,6 @@ int  sched_wait_event(wait_queue_t* wq, uint64_t timeout_ticks, irqflags_t flags
 void wq_wake_one(wait_queue_t* wq);
 void wq_wake_all(wait_queue_t* wq);
 
+void sched_debug_dump(void);   /* print every thread (for `ps`) */
+
 #endif /* MAKHOS_SCHED_H */

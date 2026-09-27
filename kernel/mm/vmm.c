@@ -469,3 +469,27 @@ void vmm_free_page(void* virt_addr) {
     /* Free the physical page */
     pmm_free_page((void*)(uintptr_t)phys);
 }
+
+/**
+ * vmm_map_mmio - Identity-map a device MMIO region, uncached.
+ * @phys: physical base (need not be page aligned)
+ * @size: length in bytes
+ * Returns: 0 on success, -1 on failure.
+ *
+ * Phase 14: PCI BARs usually live above RAM (e.g. ~0xFEB80000 in QEMU), outside
+ * the RAM identity map, and device registers must never be cached, so each page
+ * is mapped virt == phys with PCD|PWT. Pages already mapped (e.g. inside the RAM
+ * identity map) are left alone.
+ */
+int vmm_map_mmio(uint64_t phys, uint64_t size) {
+    uint64_t start = phys & ~0xFFFULL;
+    uint64_t end = (phys + size + 0xFFF) & ~0xFFFULL;
+    for (uint64_t p = start; p < end; p += 0x1000) {
+        if (vmm_get_physical(p) == p) continue;   /* already identity-mapped */
+        if (vmm_map_page(p, p, PAGE_PRESENT | PAGE_WRITABLE |
+                               PAGE_CACHE_DISABLE | PAGE_WRITETHROUGH) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}

@@ -135,6 +135,18 @@ void schedule(void) {
         next = idle_thread;
     }
 
+    /* Idle is never queued; just mark it READY when something else runs. */
+    if (prev == idle_thread && next != idle_thread) prev->state = PROC_READY;
+
+    /* Stack canary: every heap-allocated thread stack has a magic pattern at
+     * its lowest bytes. If a thread overflowed its stack, catch it here, at the
+     * first switch after the damage, instead of as random heap corruption. */
+    if (prev && prev->stack_canary &&
+        *(volatile uint64_t*)prev->kernel_stack != STACK_CANARY_MAGIC) {
+        panic("stack overflow in thread '%s' (pid %u): canary smashed",
+              prev->name, prev->pid);
+    }
+
     next->state = PROC_RUNNING;
     next->ticks_left = (int64_t)(next->time_slice ? next->time_slice : SCHED_QUANTUM);
     current_process = next;
@@ -375,6 +387,9 @@ process_t* thread_create(thread_entry_t entry, void* arg,
     void* stack = kmalloc(DEFAULT_THREAD_STACK);
     if (!stack) { proc_table_free(t); return NULL; }
     memset(stack, 0, DEFAULT_THREAD_STACK);
+    /* Stack grows down: the lowest qword is the last thing an overflow hits
+     * before it tramples a neighbouring heap block. schedule() checks it. */
+    *(volatile uint64_t*)stack = STACK_CANARY_MAGIC;
 
     uint32_t pid = pid_alloc();
     if (pid == 0) { kfree(stack); proc_table_free(t); return NULL; }
@@ -384,6 +399,7 @@ process_t* thread_create(thread_entry_t entry, void* arg,
     t->priority = priority < PRIO_LEVELS ? priority : PRIO_DEFAULT;
     t->kernel_stack = (uint64_t)stack;
     t->kernel_stack_size = DEFAULT_THREAD_STACK;
+    t->stack_canary = 1;
     t->time_slice = SCHED_QUANTUM;
     t->ticks_left = SCHED_QUANTUM;
     t->entry = entry;
@@ -458,12 +474,18 @@ static void reap(process_t* t) {
  * has its own (static) stack and so can safely free theirs. */
 void sched_reap_detached(void) {
     for (;;) {
+        /* reap() edits the global process list, PID bitmap and process table,
+         * so it must run with IRQs off: the idle thread is preemptible, and a
+         * preemption mid-unlink (e.g. into a thread calling thread_create)
+         * used to corrupt all_processes - found by the net stress tests. */
         irqflags_t f = local_irq_save();
         process_t* t = reap_list;
-        if (t) reap_list = t->run_next;
+        if (t) {
+            reap_list = t->run_next;
+            reap(t);
+        }
         local_irq_restore(f);
         if (!t) break;
-        reap(t);
     }
 }
 
@@ -558,4 +580,18 @@ void sched_init(void) {
     sleep_list = NULL;
     reap_list = NULL;
     need_resched = 0;
+}
+
+/* Debug: print every thread (used by tests / the shell). */
+void sched_debug_dump(void) {
+    static const char* st[] = { "EMBRYO", "READY", "RUNNING", "BLOCKED", "ZOMBIE" };
+    uint64_t now = timer_get_ticks();
+    kprintf("  PID  PPID PRIO STATE    AGE(ticks) NAME\n");
+    irqflags_t f = local_irq_save();
+    for (process_t* p = all_processes.head; p; p = p->all_next) {
+        kprintf("%5u %5u %4u %-8s %10lu %s%s\n", p->pid, p->parent_pid, p->priority,
+                st[p->state], (unsigned long)(now - p->creation_time), p->name,
+                p == current_process ? " *" : "");
+    }
+    local_irq_restore(f);
 }

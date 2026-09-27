@@ -10,6 +10,11 @@
 #include <kernel.h>
 #include <vga.h>
 #include <sched.h>
+#include <klog.h>
+#include <cmdline.h>
+#include <proc.h>
+
+static void exception_report(registers_t* regs) __attribute__((noreturn));
 
 static idt_entry_t idt[256];
 static idt_ptr_t idt_ptr;
@@ -115,7 +120,6 @@ void idt_disable_interrupts(void) {
 // Common exception handler called from assembly
 void exception_handler(registers_t* regs) {
     uint8_t vector = regs->int_no;
-    char buf[32];
     
     // Handle IRQs (vectors 32-47) separately
     if (vector >= 32 && vector < 48) {
@@ -123,61 +127,93 @@ void exception_handler(registers_t* regs) {
         return;
     }
     
-    terminal_writestring("\n!!! EXCEPTION CAUGHT !!!\n");
-    
-    // Print exception name for vectors 0-31
-    if (vector < 32) {
-        terminal_writestring("Exception: ");
-        terminal_writestring(exception_messages[vector]);
-        terminal_writestring(" (vector ");
-        uint64_to_string(vector, buf);
-        terminal_writestring(buf);
-        terminal_writestring(")\n");
-    } else {
-        terminal_writestring("Interrupt: vector ");
-        uint64_to_string(vector, buf);
-        terminal_writestring(buf);
-        terminal_writestring("\n");
-    }
-    
-    // Print error code if present (use 0xDEADBEEF as sentinel for no error code)
-    if (regs->err_code != 0xDEADBEEF) {
-        terminal_writestring("Error code: 0x");
-        uint64_to_hex(regs->err_code, buf);
-        terminal_writestring(buf);
-        terminal_writestring("\n");
-    }
-    
-    // Print CPU state
-    terminal_writestring("RIP: 0x");
-    uint64_to_hex(regs->rip, buf);
-    terminal_writestring(buf);
-    terminal_writestring("  CS: 0x");
-    uint64_to_hex(regs->cs, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    // For page fault (vector 14), get CR2
+    exception_report(regs);
+}
+
+/*
+ * exception_report - dump everything we know about a fatal CPU exception and
+ * stop. Under the test harness (makh.test) we power QEMU off with status 3 so
+ * a fault fails the run immediately instead of hanging until the timeout.
+ */
+static void exception_report(registers_t* regs) {
+    uint8_t vector = (uint8_t)regs->int_no;
+    __asm__ volatile("cli");
+
+    kprintf("\n!!! EXCEPTION CAUGHT !!!\n");
+    kprintf("Exception: %s (vector %u)\n",
+            vector < 32 ? exception_messages[vector] : "Interrupt", vector);
+    if (regs->err_code != 0xDEADBEEF)
+        kprintf("Error code: 0x%llx\n", (unsigned long long)regs->err_code);
+    kprintf("RIP=%p RSP=%p RBP=%p RFLAGS=%llx\n", (void*)regs->rip, (void*)regs->rsp,
+            (void*)regs->rbp, (unsigned long long)regs->rflags);
+    kprintf("RAX=%p RBX=%p RCX=%p RDX=%p\n", (void*)regs->rax, (void*)regs->rbx,
+            (void*)regs->rcx, (void*)regs->rdx);
+    kprintf("RSI=%p RDI=%p R8=%p  R9=%p\n", (void*)regs->rsi, (void*)regs->rdi,
+            (void*)regs->r8, (void*)regs->r9);
+
     if (vector == 14) {
         uint64_t cr2;
         __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
-        terminal_writestring("Page fault address: 0x");
-        uint64_to_hex(cr2, buf);
-        terminal_writestring(buf);
-        terminal_writestring("\n");
+        kprintf("Page fault address: %p\n", (void*)cr2);
+    } else if (vector == 1) {
+        uint64_t dr6;
+        __asm__ volatile("mov %%dr6, %0" : "=r"(dr6));
+        kprintf("DR6=%llx (watchpoint hit; RIP is the instruction AFTER the write)\n",
+                (unsigned long long)dr6);
     }
-    
-    // Halt the system
-    terminal_writestring("\nSystem halted.\n");
-    for(;;) {
-        __asm__ volatile("hlt");
-    }
+
+    process_t* cur = proc_current();
+    if (cur) kprintf("Thread: '%s' pid %u\n", cur->name, cur->pid);
+
+    kprintf("  #-  %p  (faulting RIP)\n", (void*)regs->rip);
+    kernel_backtrace_from(regs->rbp);
+
+    if (cmdline_has("makh.test")) qemu_debug_exit(3);
+    kprintf("\nSystem halted.\n");
+    kernel_halt();
+}
+
+/* -------------------------------------------------------------------------- */
+/* Phase 14: registered IRQ handlers                                          */
+/* -------------------------------------------------------------------------- */
+
+static struct {
+    irq_fn_t fn;
+    void*    ctx;
+    uint64_t count;
+} irq_table[16];
+
+int irq_register(uint8_t irq, irq_fn_t fn, void* ctx) {
+    if (irq >= 16 || !fn) return -1;
+    if (irq == IRQ_TIMER || irq == IRQ_KEYBOARD) return -1;  /* built-in */
+
+    irqflags_t f = local_irq_save();
+    irq_table[irq].fn = fn;
+    irq_table[irq].ctx = ctx;
+    irq_table[irq].count = 0;
+    local_irq_restore(f);
+
+    /* Slave-PIC lines (8-15) only reach the CPU through the cascade (IRQ2). */
+    if (irq >= 8) pic_unmask_irq(IRQ_CASCADE);
+    pic_unmask_irq(irq);
+    return 0;
+}
+
+void irq_unregister(uint8_t irq) {
+    if (irq >= 16) return;
+    pic_mask_irq(irq);
+    irq_table[irq].fn = NULL;
+    irq_table[irq].ctx = NULL;
+}
+
+uint64_t irq_get_count(uint8_t irq) {
+    return irq < 16 ? irq_table[irq].count : 0;
 }
 
 /**
  * irq_handler - Handle hardware interrupts (IRQs)
  * @regs: CPU register state (including interrupt number)
- * 
+ *
  * Called from assembly ISR stubs for vectors 32-47 (IRQ0-IRQ15).
  * Dispatches to appropriate device handler and sends EOI to PIC.
  */
@@ -218,9 +254,15 @@ void irq_handler(registers_t* regs) {
             // Keyboard interrupt (IRQ1)
             keyboard_handler(regs);
             break;
-            
+
         default:
-            // Other IRQs - just acknowledge for now
+            // Phase 14: dispatch to a registered driver handler (e.g. NIC).
+            // It must acknowledge the device *before* the EOI below, since
+            // PCI INTx lines are level-triggered.
+            if (irq < 16 && irq_table[irq].fn) {
+                irq_table[irq].count++;
+                irq_table[irq].fn(irq_table[irq].ctx);
+            }
             break;
     }
     

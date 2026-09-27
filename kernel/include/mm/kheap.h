@@ -72,4 +72,10 @@ size_t kheap_get_total(void);
 /* kfree() calls rejected as corrupt / double-free (any increase = bug). */
 size_t kheap_get_bad_frees(void);
 
+/* Walk every block and the free list; returns the number of broken
+ * invariants (0 = heap is consistent). kheap_check_bad_block() returns the
+ * address of the first offending block after a failed check. */
+int kheap_check(void);
+uint64_t kheap_check_bad_block(void);
+
 #endif /* MAKHOS_KHEAP_H */

@@ -12,6 +12,7 @@
 #define IDLE_STACK_SIZE     16384
 #define INIT_STACK_SIZE     8192
 #define DEFAULT_THREAD_STACK 8192
+#define STACK_CANARY_MAGIC   0x5AFEC0DE5AFEC0DEULL   /* bottom-of-stack guard */
 #define PID_MAX             32768
 #define MAX_PROCESSES       256
 
@@ -104,6 +105,8 @@ typedef struct process {
     uint8_t reaped;               // 1 => resources already freed
     uint8_t timed_out;            // 1 => last blocking wait ended via timeout
     int32_t preempt_count;        // >0 => this thread must not be preempted
+    int     errno_val;            // per-thread errno (see errno.h)
+    uint8_t stack_canary;         // 1 => kernel_stack[0..7] holds STACK_CANARY_MAGIC
 
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)

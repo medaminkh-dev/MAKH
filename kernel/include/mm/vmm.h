@@ -66,6 +66,9 @@ void* vmm_alloc_page(uint64_t flags);
 /* Free virtual page */
 void vmm_free_page(void* virt_addr);
 
+/* Identity-map a device MMIO region, uncached (Phase 14). */
+int vmm_map_mmio(uint64_t phys, uint64_t size);
+
 /* Assembly functions (from paging_asm.asm) */
 extern void vmm_load_pml4(uint64_t pml4_phys);
 extern void vmm_enable_paging(void);

@@ -22,10 +22,7 @@ static int looks_like_code(uint64_t addr) {
     return addr >= KERNEL_TEXT_BASE && addr < (uint64_t)(uintptr_t)KERNEL_END;
 }
 
-void kernel_backtrace(void) {
-    uint64_t rbp;
-    __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
-
+void kernel_backtrace_from(uint64_t rbp) {
     kprintf("Backtrace:\n");
     for (int depth = 0; depth < 24 && rbp; depth++) {
         uint64_t* frame = (uint64_t*)(uintptr_t)rbp;
@@ -38,6 +35,12 @@ void kernel_backtrace(void) {
         if (next <= rbp) break;  /* frame pointers must ascend */
         rbp = next;
     }
+}
+
+void kernel_backtrace(void) {
+    uint64_t rbp;
+    __asm__ volatile("mov %%rbp, %0" : "=r"(rbp));
+    kernel_backtrace_from(rbp);
 }
 
 void kernel_halt(void) {

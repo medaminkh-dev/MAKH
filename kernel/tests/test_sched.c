@@ -229,3 +229,71 @@ KTEST(sched, higher_priority_runs_first) {
                 prio_order[0], prio_order[1], prio_order[2], prio_idx, jh, jm, jl);
     KEXPECT_EQ(prio_order[0], 1);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Process tree integrity (regression: init's children use-after-free)        */
+/* -------------------------------------------------------------------------- */
+/*
+ * init was never in the process table, so proc_find(1) failed and every child
+ * of init stayed linked in init's children list after being freed. The next
+ * proc_add_child() wrote through the dangling children_tail into whatever had
+ * reused that memory (found as a TCP control block whose rb pointer turned
+ * into a PCB address). These tests pin the invariants down.
+ */
+
+#include <proc_internal.h>
+
+static process_t* volatile g_grandkids[8];
+
+static void grandkid_fn(void* arg) {
+    (void)arg;
+    sched_sleep_ms(20);            /* outlive our parent => reparented to init */
+}
+
+static void middle_fn(void* arg) {
+    long i = (long)arg;
+    g_grandkids[i] = thread_create(grandkid_fn, NULL, "grandkid", PRIO_DEFAULT);
+    /* exit immediately, orphaning the grandchild */
+}
+
+KTEST(sched, init_is_findable_and_tree_consistent) {
+    KEXPECT(proc_find(1) == proc_current());      /* init is a table entry */
+    KEXPECT(proc_find(0) != NULL);                /* so is idle */
+    KEXPECT_EQ(proc_tree_check(), 0);
+}
+
+KTEST(sched, exiting_children_are_unlinked_and_orphans_reparented) {
+    process_t* me = proc_current();
+    uint32_t base = me->child_count;
+
+    process_t* mids[8];
+    for (long i = 0; i < 8; i++) {
+        g_grandkids[i] = NULL;
+        mids[i] = thread_create(middle_fn, (void*)i, "middle", PRIO_DEFAULT);
+        KASSERT_TEST(mids[i] != NULL);
+    }
+    for (int i = 0; i < 8; i++) KEXPECT_EQ(thread_join(mids[i], NULL), 0);
+
+    /* The middles are gone; each grandchild must now be init's child. */
+    for (int i = 0; i < 8; i++) {
+        KASSERT_TEST(g_grandkids[i] != NULL);
+        KEXPECT_EQ(g_grandkids[i]->parent_pid, 1u);
+    }
+    KEXPECT_EQ(proc_tree_check(), 0);
+
+    for (int i = 0; i < 8; i++) KEXPECT_EQ(thread_join(g_grandkids[i], NULL), 0);
+
+    KEXPECT_EQ(me->child_count, base);            /* nothing left dangling */
+    KEXPECT_EQ(proc_tree_check(), 0);
+    KEXPECT_EQ(kheap_check(), 0);
+}
+
+static void idle_fn(void* arg) { (void)arg; }
+
+KTEST(sched, new_threads_have_armed_stack_canary) {
+    process_t* t = thread_create(idle_fn, NULL, "canary", PRIO_DEFAULT);
+    KASSERT_TEST(t != NULL);
+    KEXPECT_EQ(t->stack_canary, 1);
+    KEXPECT(*(volatile uint64_t*)t->kernel_stack == STACK_CANARY_MAGIC);
+    KEXPECT_EQ(thread_join(t, NULL), 0);
+}

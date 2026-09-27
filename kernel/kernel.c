@@ -18,6 +18,7 @@
 #include "include/drivers/timer.h"
 #include "include/drivers/keyboard.h"
 #include "include/input_line.h"
+#include <shell.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
 #include "include/syscall.h"
@@ -25,6 +26,9 @@
 #include "include/klog.h"
 #include "include/cmdline.h"
 #include "include/ktest.h"
+#include "include/drivers/pci.h"
+#include "include/drivers/e1000.h"
+#include "include/net/net.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
 extern uint64_t multiboot_info_ptr;
@@ -910,6 +914,15 @@ void kernel_main(void) {
     proc_init();
     proc_become_current();
 
+    /* Phase 14: PCI bus, network stack (netd + loopback), and the NIC.
+     * QEMU's user-mode network ("slirp") uses 10.0.2.0/24 with the gateway
+     * at 10.0.2.2, so we configure the conventional guest address. */
+    pci_init();
+    net_init();
+    if (e1000_init(IPV4(10, 0, 2, 15), IPV4(255, 255, 255, 0), IPV4(10, 0, 2, 2)) != 0) {
+        KLOG_W("NET", "no e1000 NIC found; loopback only\n");
+    }
+
     /* -------------------------------------------------------------------
      * Automated self-test mode ("makh.test" on the kernel command line):
      * run the in-kernel test suite and power off with a pass/fail code.
@@ -952,7 +965,7 @@ void kernel_main(void) {
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
     
     terminal_writestring("\n[MAIN] System fully functional.\n");
-    terminal_writestring("Type anything - it will appear on screen.\n");
+    terminal_writestring("Type 'help' for commands.\n");
     terminal_writestring("Press Ctrl+Alt+G to exit QEMU.\n\n");
     
     /* Main loop - input line editing with history */
@@ -974,12 +987,8 @@ void kernel_main(void) {
             terminal_writestring("\n");
             if (current_line.length > 0) {
                 input_history_push(&history, current_line.buffer);
-                terminal_writestring("  Command: ");
-                terminal_writestring(current_line.buffer);
-                terminal_writestring("\n");
+                shell_exec(current_line.buffer);
             }
-            // Here you would process the command
-            // For now just show a new prompt
             terminal_writestring("MakhOS> ");
             terminal_getcursor(&prompt_row, NULL);
             input_line_init(&current_line);

@@ -585,3 +585,67 @@ void kfree(void* ptr) {
 size_t kheap_get_bad_frees(void) {
     return bad_frees;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Integrity walker (Phase 14 - the self-fuzzer's heap oracle)                */
+/* -------------------------------------------------------------------------- */
+/*
+ * Blocks tile the heap back to back: header at `b`, footer at b+size-16, next
+ * block at b+size. A single stray write anywhere in heap metadata breaks one
+ * of the invariants below, so walking the whole chain after an operation
+ * localises corruption to the first bad block instead of a crash much later.
+ *
+ * NOTE: kheap_expand() always grows contiguously from heap_end, so the chain
+ * has no holes - every byte in [heap_start, heap_end) belongs to exactly one
+ * block.
+ */
+static uint64_t check_bad_addr;          /* first bad block (0 = none) */
+
+int kheap_check(void) {
+    irqflags_t f = local_irq_save();
+    int errors = 0;
+    size_t used = 0;
+    uint64_t addr = heap_start;
+    check_bad_addr = 0;
+
+    while (addr < heap_end) {
+        block_header_t* b = (block_header_t*)addr;
+        int ok = (b->magic == KHEAP_MAGIC_USED || b->magic == KHEAP_MAGIC_FREE)
+              && b->size >= HEAP_MIN_BLOCK
+              && (b->size & (HEAP_ALIGNMENT - 1)) == 0
+              && addr + b->size <= heap_end
+              && b->allocated == (b->magic == KHEAP_MAGIC_USED);
+        if (ok) {
+            block_footer_t* ft = get_footer(b);
+            ok = ft->magic == KHEAP_MAGIC_TAIL && ft->size == b->size && ft->header == b;
+        }
+        if (!ok) {
+            errors++;
+            check_bad_addr = addr;
+            break;                        /* can't trust b->size to continue */
+        }
+        if (b->magic == KHEAP_MAGIC_USED) used += b->size;
+        addr += b->size;
+    }
+
+    /* The free list may only point at FREE blocks inside the heap. */
+    if (!errors) {
+        size_t guard = 0;
+        for (block_header_t* c = free_list_head; c; c = c->next) {
+            if ((uint64_t)c < heap_start || (uint64_t)c >= heap_end ||
+                c->magic != KHEAP_MAGIC_FREE || ++guard > (1u << 20)) {
+                errors++;
+                check_bad_addr = (uint64_t)c;
+                break;
+            }
+        }
+    }
+    if (!errors && used != heap_used) errors++;   /* accounting drift */
+
+    local_irq_restore(f);
+    return errors;
+}
+
+uint64_t kheap_check_bad_block(void) {
+    return check_bad_addr;
+}

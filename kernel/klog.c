@@ -52,8 +52,16 @@ static int format_uint(uint64_t value, unsigned base, int upper, char* buf) {
     return n;
 }
 
+/* Emit a string left-justified in a field of `width`. */
+static void emit_left(const char* str, int width) {
+    int len = 0;
+    while (str[len]) len++;
+    emit_str(str);
+    for (int i = len; i < width; i++) emit_char(' ');
+}
+
 /* Emit a numeric string with optional width and zero/space padding. */
-static void emit_padded(const char* num, int negative, int width, int zero_pad) {
+static void emit_padded_impl(const char* num, int negative, int width, int zero_pad) {
     int len = 0;
     while (num[len]) len++;
     int total = len + (negative ? 1 : 0);
@@ -67,6 +75,21 @@ static void emit_padded(const char* num, int negative, int width, int zero_pad) 
         if (negative) emit_char('-');
         emit_str(num);
     }
+}
+
+static int g_left;   /* set per-conversion by kvprintf */
+
+static void emit_padded(const char* num, int negative, int width, int zero_pad) {
+    if (g_left) {
+        char tmp[40];
+        int i = 0;
+        if (negative) tmp[i++] = '-';
+        for (int k = 0; num[k] && i < 39; k++) tmp[i++] = num[k];
+        tmp[i] = '\0';
+        emit_left(tmp, width);
+        return;
+    }
+    emit_padded_impl(num, negative, width, zero_pad);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -84,9 +107,14 @@ void kvprintf(const char* fmt, va_list args) {
 
         p++;  /* skip '%' */
 
-        /* Flags: only zero-pad is supported. */
-        int zero_pad = 0;
-        while (*p == '0') { zero_pad = 1; p++; }
+        /* Flags: '0' (zero pad) and '-' (left justify). */
+        int zero_pad = 0, left = 0;
+        while (*p == '0' || *p == '-') {
+            if (*p == '0') zero_pad = 1; else left = 1;
+            p++;
+        }
+        if (left) zero_pad = 0;
+        g_left = left;
 
         /* Field width (decimal). */
         int width = 0;
@@ -101,9 +129,19 @@ void kvprintf(const char* fmt, va_list args) {
         if (*p == 'z') { longness = 2; p++; }  /* size_t */
 
         switch (*p) {
-            case 's':
-                emit_str(va_arg(args, const char*));
+            case 's': {
+                const char* str = va_arg(args, const char*);
+                if (!str) str = "(null)";
+                if (left) {
+                    emit_left(str, width);
+                } else {
+                    int len = 0;
+                    while (str[len]) len++;
+                    for (int i = len; i < width; i++) emit_char(' ');
+                    emit_str(str);
+                }
                 break;
+            }
             case 'c':
                 emit_char((char)va_arg(args, int));
                 break;

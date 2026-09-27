@@ -531,3 +531,14 @@ int pthread_spin_unlock(pthread_spinlock_t* s) {
     preempt_enable();
     return 0;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Per-thread errno                                                           */
+/* -------------------------------------------------------------------------- */
+
+static int boot_errno;   /* used before the process manager is up */
+
+int* __errno_location(void) {
+    process_t* self = proc_current();
+    return self ? &self->errno_val : &boot_errno;
+}

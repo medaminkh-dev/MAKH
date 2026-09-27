@@ -7,6 +7,7 @@
 #include <mm/pmm.h>
 #include <mm/kheap.h>
 #include <lib/string.h>
+#include <irq.h>
 
 /* -------------------------------------------------------------------------- */
 /* Physical memory manager                                                    */
@@ -103,4 +104,39 @@ KTEST(kheap, krealloc_preserves_prefix) {
     KASSERT_TEST(g != (void*)0);
     for (int i = 0; i < 16; i++) KEXPECT_EQ(g[i], (char)('A' + (i % 26)));
     kfree(g);
+}
+
+/* kheap_check() is the heap oracle used by the self-fuzzer: it must pass on
+ * a healthy heap after heavy churn, and must notice a smashed footer. */
+KTEST(kheap, integrity_walker_passes_after_churn) {
+    void* p[64];
+    uint32_t x = 0x1234567u;
+    for (int i = 0; i < 64; i++) {
+        x = x * 1103515245u + 12345u;
+        p[i] = kmalloc(16 + (x >> 20) % 3000);
+        KASSERT_TEST(p[i] != NULL);
+    }
+    for (int i = 0; i < 64; i += 2) kfree(p[i]);
+    KEXPECT_EQ(kheap_check(), 0);
+    for (int i = 1; i < 64; i += 2) kfree(p[i]);
+    KEXPECT_EQ(kheap_check(), 0);
+}
+
+KTEST(kheap, integrity_walker_detects_smashed_footer) {
+    uint8_t* p = kmalloc(40);
+    KASSERT_TEST(p != NULL);
+    /* The block is 32 (hdr) + 48 (payload) + 16 (footer): the footer magic
+     * starts right after the 48-byte aligned payload. */
+    volatile uint32_t* footer_magic = (volatile uint32_t*)(p + 48);
+    irqflags_t f = local_irq_save();            /* nobody else may see it */
+    uint32_t saved = *footer_magic;
+    *footer_magic = 0x41414141;                 /* simulated overrun */
+    int smashed = kheap_check();
+    uint64_t bad = kheap_check_bad_block();
+    *footer_magic = saved;
+    local_irq_restore(f);
+    KEXPECT(smashed != 0);
+    KEXPECT(bad == (uint64_t)(uintptr_t)(p - 32));
+    KEXPECT_EQ(kheap_check(), 0);
+    kfree(p);
 }

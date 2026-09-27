@@ -21,10 +21,11 @@ void uint64_to_string(uint64_t value, char* buf);
 void uint64_to_hex(uint64_t value, char* buf);
 
 /* System halt functions (kernel/panic.c) */
-void kernel_halt(void);
+void kernel_halt(void) __attribute__((noreturn));
 void kernel_panic(const char* message);
 void panic(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 void kernel_backtrace(void);
+void kernel_backtrace_from(uint64_t rbp);   /* walk frames starting at rbp */
 
 /* Port I/O functions */
 static inline void outb(uint16_t port, uint8_t value) {

@@ -66,6 +66,14 @@ void exception_handler(registers_t* regs);
 // IRQ handler (called from exception_handler for vectors 32-47)
 void irq_handler(registers_t* regs);
 
+// Phase 14: drivers register handlers for legacy PIC IRQs (0-15). The handler
+// runs in interrupt context (IRQs off) and must not block. The PIC line is
+// unmasked on registration (and the cascade line for slave IRQs 8-15).
+typedef void (*irq_fn_t)(void* ctx);
+int  irq_register(uint8_t irq, irq_fn_t fn, void* ctx);
+void irq_unregister(uint8_t irq);
+uint64_t irq_get_count(uint8_t irq);   /* times a registered handler ran */
+
 // Assembly ISR stub table
 extern uint64_t isr_stub_table[256];
 

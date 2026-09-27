@@ -33,7 +33,12 @@ void proc_remove_child(process_t *child) {
     if (!child) return;
 
     process_t *parent = proc_find(child->parent_pid);
-    if (!parent) return;
+    if (!parent) {
+        /* A child whose parent can't be found would stay linked after it is
+         * freed. Never skip that silently. */
+        panic("proc_remove_child: pid %u has unknown parent %u",
+              child->pid, child->parent_pid);
+    }
 
     process_t *prev = NULL;
     process_t *cur = parent->children_head;
@@ -85,3 +90,4 @@ void proc_reparent_orphans(process_t *dead_parent) {
     dead_parent->children_tail = NULL;
     dead_parent->child_count = 0;
 }
+

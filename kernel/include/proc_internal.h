@@ -48,6 +48,7 @@ void pid_init(void);
 
 process_t *proc_table_alloc(void);
 void proc_table_free(process_t *proc);
+int proc_table_insert(process_t *proc);   /* register a static PCB (idle/init) */
 process_t *proc_find(int32_t pid);
 void proc_table_init(void);
 uint32_t proc_get_count(void);
@@ -59,11 +60,14 @@ uint32_t proc_get_count(void);
 void proc_add_child(process_t *parent, process_t *child);
 void proc_remove_child(process_t *child);
 void proc_reparent_orphans(process_t *dead_parent);
+int  proc_tree_check(void);   /* 0 = parent/child lists consistent */
 
 // -----------------------------------------------------------------------------
 // HELPER FUNCTIONS
 // -----------------------------------------------------------------------------
 
 void phex(uint64_t v);
+
+void proc_table_dump(void);   /* print the process table (debug) */
 
 #endif // MAKHOS_PROC_INTERNAL_H
