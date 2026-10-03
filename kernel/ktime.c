@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - ktime.c
  * Monotonic time from the PIT tick counter.

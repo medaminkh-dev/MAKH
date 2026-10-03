@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 #include <lib/string.h>
 
 void* memset(void* s, int c, size_t n) {

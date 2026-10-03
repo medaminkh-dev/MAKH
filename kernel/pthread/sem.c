@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - sem.c
  * POSIX counting semaphores on scheduler wait queues.

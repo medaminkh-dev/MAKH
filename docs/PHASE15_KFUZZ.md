@@ -1,6 +1,7 @@
 # MakhOS Phase 15: KFUZZ — a ring-0, coverage-guided self-fuzzer
 
 **Version:** 0.1.0-dev
+**License:** AGPL-3.0-only (or commercial, see LICENSING.md)
 **Status:** COMPLETE — the kernel fuzzes itself; 11 KFUZZ tests, sandbox proven to recover from a real ring-0 fault, 20/20 stress runs clean
 **Depends on:** Phases 12–14 (scheduler, pthreads, networking) and their invariant oracles
 
@@ -36,9 +37,9 @@ makes faults **survivable and reproducible**: every crash is caught, tagged
 with the exact seed that produced it, and the campaign continues.
 
 ```
-MakhOS> fuzz 5000
-fuzzing 5000 iterations...
-done: 5000 iters, 0 crashes, 0 oracle-fails, coverage 2731 edges, corpus 38
+MakhOS> fuzz netrx 300
+fuzzing 300 iterations...
+done: 300 iters, 0 crashes, 0 oracle-fails, coverage 184 edges, corpus 2
 ```
 
 ---

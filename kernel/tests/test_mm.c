@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - test_mm.c
  * Tests for the physical memory manager and kernel heap.

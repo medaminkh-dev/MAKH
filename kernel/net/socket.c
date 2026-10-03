@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - net/socket.c
  * BSD socket layer: descriptor table, address/port management, and the POSIX

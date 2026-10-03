@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - net/ipv4.c
  * IPv4: header validation, routing, ARP gleaning and protocol dispatch.

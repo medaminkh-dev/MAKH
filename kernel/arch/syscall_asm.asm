@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+; Copyright (C) 2026 Amine Khemissi
 ; syscall_asm.asm - x86_64 syscall entry/exit using syscall/sysret
 bits 64
 section .text

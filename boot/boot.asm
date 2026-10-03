@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+; Copyright (C) 2026 Amine Khemissi
 ; MakhOS Bootloader - Version 0.0.2
 ; boot.asm - Multiboot2 compliant bootloader with 32→64 bit transition
 ; Target: x86_64 (amd64)

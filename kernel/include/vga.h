@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * =============================================================================
  * vga.h - VGA Text Mode Driver Header for MakhOS

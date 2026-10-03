@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Amine Khemissi
 # =============================================================================
 # MakhOS Makefile
 # =============================================================================
@@ -165,7 +167,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test smoke stress list-sources list-objects check-files size map clean-deps
+.PHONY: all clean run run-debug debug test smoke stress check-license list-sources list-objects check-files size map clean-deps
 
 all: $(KERNEL) $(ISO)
 
@@ -254,6 +256,10 @@ test: $(TEST_ISO)
 # check what the shell prints (ping over the real e1000, arp, mem, ...).
 smoke: $(ISO)
 	@python3 tools/shell_smoke.py $(ISO)
+
+# Every source file must carry the AGPL-3.0-only SPDX header.
+check-license:
+	@bash tools/check_license.sh
 
 # Run the whole suite many times in parallel to flush out timing bugs.
 stress: $(TEST_ISO)

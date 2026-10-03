@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kfuzz.h
  * KFUZZ: an in-kernel, ring-0 coverage-guided fuzzer that attacks the kernel's

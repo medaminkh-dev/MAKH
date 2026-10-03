@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+; Copyright (C) 2026 Amine Khemissi
 ; MakhOS - paging_asm.asm
 ; Assembly helpers for Virtual Memory Manager
 ; Implements x86_64 paging operations

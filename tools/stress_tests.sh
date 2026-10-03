@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Amine Khemissi
 # stress_tests.sh - boot the test ISO many times (in parallel) to shake out
 # timing-dependent races in the concurrency tests. A flaky test is a bug.
 #

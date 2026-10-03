@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Amine Khemissi
 name: CI
 
 # Build MakhOS and run its in-kernel self-test suite (the same thing
@@ -15,6 +17,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      - name: License headers
+        run: bash tools/check_license.sh
 
       - name: Install toolchain
         run: |

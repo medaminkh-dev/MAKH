@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * =============================================================================
  * e1000.c - Intel 8254x Gigabit Ethernet driver

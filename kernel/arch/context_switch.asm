@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+; Copyright (C) 2026 Amine Khemissi
 ; =============================================================================
 ; context_switch.asm - Low-level context switching for MakhOS
 ; =============================================================================

@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - debugreg.h
  * x86 hardware watchpoints (DR0-DR3 / DR7).

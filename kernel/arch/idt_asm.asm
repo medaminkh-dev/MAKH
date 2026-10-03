@@ -1,3 +1,5 @@
+; SPDX-License-Identifier: AGPL-3.0-only
+; Copyright (C) 2026 Amine Khemissi
 ; idt_asm.asm - Interrupt stubs for x86_64
 ; NASM syntax
 
