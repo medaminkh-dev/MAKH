@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - test_kfuzz.c
  * CI smoke tests for the Phase 15 self-fuzzer. Each target runs a bounded,
@@ -78,6 +80,7 @@ static void run_target(uint32_t bit, const char* name) {
     kfuzz_result_t res;
     int fails = kfuzz_run(bit, 400, 0xF00D5EED, &res);
     KEXPECT_EQ(fails, 0);
+    KEXPECT_EQ(res.iterations, 400ull);          /* the campaign ran to the end */
     KEXPECT_EQ(res.crashes, 0ull);
     KEXPECT_EQ(res.oracle_fails, 0ull);
     KEXPECT_EQ(kheap_check(), 0);

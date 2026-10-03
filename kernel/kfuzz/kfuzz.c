@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kfuzz.c
  * KFUZZ core: PRNG, coverage map, the ring-0 sandbox harness, and the
@@ -254,6 +256,15 @@ int kfuzz_run(uint32_t mask, uint64_t iters, uint64_t base_seed, kfuzz_result_t*
     kfuzz_rng_t meta;
     kfuzz_rng_seed(&meta, base_seed);
 
+    const kfuzz_target_t* eligible[16];
+    int neligible = 0;
+    for (int i = 0; i < ntargets && neligible < 16; i++)
+        if (mask & targets[i].bit) eligible[neligible++] = &targets[i];
+    if (neligible == 0) {
+        if (out) *out = res;
+        return 0;
+    }
+
     cov_enabled = 1;
     sb.running = 1;
     sb.heartbeat = 0;
@@ -267,13 +278,11 @@ int kfuzz_run(uint32_t mask, uint64_t iters, uint64_t base_seed, kfuzz_result_t*
     for (uint64_t i = 0; i < iters; i++) {
         sb.heartbeat = i + 1;
 
-        /* Pick a target from the mask. */
-        const kfuzz_target_t* t = NULL;
-        for (int tries = 0; tries < ntargets * 4 && !t; tries++) {
-            const kfuzz_target_t* c = &targets[kfuzz_rand_below(&meta, (uint32_t)ntargets)];
-            if (mask & c->bit) t = c;
-        }
-        if (!t) break;
+        /* Pick uniformly among the targets in the mask. (Rejection sampling
+         * with a retry cap used to give up early on a single-target mask,
+         * silently ending campaigns after a few dozen iterations.) */
+        const kfuzz_target_t* t =
+            eligible[kfuzz_rand_below(&meta, (uint32_t)neligible)];
 
         /* Seed: mutate a corpus entry, or draw fresh. */
         uint64_t seed;
