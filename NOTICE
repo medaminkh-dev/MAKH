@@ -1,0 +1,34 @@
+MakhOS (MAKH) - an x86-64 operating system kernel
+Copyright (C) 2026 Amine Khemissi
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 of the License only
+(SPDX-License-Identifier: AGPL-3.0-only).
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public
+License for more details. You should have received a copy of the license
+in the file LICENSE; if not, see <https://www.gnu.org/licenses/>.
+
+DUAL LICENSING
+--------------
+MakhOS is also available under a separate commercial license for those who
+cannot or do not wish to comply with the AGPL (for example: shipping MakhOS
+inside a proprietary product or appliance, or offering a modified MakhOS
+over a network without publishing the source). See LICENSING.md.
+
+LICENSE HISTORY
+---------------
+Earlier revisions of this repository were published under the BSD 3-Clause
+License. Copies obtained under those terms remain under those terms. Every
+revision published after the AGPL-3.0 change, including all new work, is
+licensed under AGPL-3.0-only or, by separate agreement, the commercial
+license.
+
+TRADEMARKS
+----------
+"MakhOS", "MAKH" and "KFUZZ" are names of the MakhOS project. The AGPL grants
+rights in the code only; it does not grant any right to use these names or
+any associated logos to identify a modified version or a different product.
