@@ -16,6 +16,7 @@
 #include <cmdline.h>
 #include <proc.h>
 #include <kfuzz.h>
+#include <arch/usermode.h>
 
 static void exception_report(registers_t* regs) __attribute__((noreturn));
 
@@ -130,6 +131,16 @@ void exception_handler(registers_t* regs) {
         return;
     }
     
+    /* Phase 16: a fault inside copy_from/to_user resumes at the uaccess fixup
+     * label, which aborts the copy cleanly and returns -EFAULT to the caller. */
+    uint64_t fixup = uaccess_fixup(regs->rip);
+    if (fixup) { regs->rip = fixup; return; }
+
+    /* Phase 16: a fault taken in ring 3 kills the user program, never the
+     * kernel. (regs->cs carries the privilege level of the faulting code.) */
+    if (vector < 32 && (regs->cs & 3) == 3 && usermode_active())
+        usermode_fault(vector);
+
     /* Phase 15: if a KFUZZ target is running, a CPU fault (vectors 0-31) is a
      * finding, not a fatal event: hand it to the sandbox, which records the
      * reproducing seed and longjmps back to the fuzz harness (never returns). */

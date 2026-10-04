@@ -20,6 +20,7 @@
 #include "include/drivers/timer.h"
 #include "include/drivers/keyboard.h"
 #include "include/input_line.h"
+#include <arch/usermode.h>
 #include <shell.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
@@ -683,58 +684,14 @@ void test_gdt_tss(void) {
 }
 
 void test_syscalls(void) {
-    terminal_writestring("\n[TEST] Testing System Calls...\n");
-    
-    // Test 1: sys_getpid
-    uint64_t pid = syscall0(SYS_GETPID);
-    terminal_writestring("  sys_getpid() = ");
+    terminal_writestring("\n[TEST] Testing System Calls (in-kernel path)...\n");
+    const char* msg = "  Hello from syscall_handler!\n";
+    syscall_handler(SYS_WRITE, 1, (uint64_t)msg, 30);
     char buf[32];
-    uint64_to_string(pid, buf);
-    terminal_writestring(buf);
-    terminal_writestring(" (should be 1)\n");
-    
-    // Test 2: sys_write
-    const char* msg1 = "  Hello from syscall!\n";
-    uint64_t written = syscall3(SYS_WRITE, 1, (uint64_t)msg1, 23);
-    terminal_writestring("  sys_write wrote ");
-    uint64_to_string(written, buf);
-    terminal_writestring(buf);
-    terminal_writestring(" bytes\n");
-    
-    // Test 3: sys_getticks
-    uint64_t ticks1 = syscall0(SYS_GETTICKS);
-    terminal_writestring("  sys_getticks() = ");
-    uint64_to_string(ticks1, buf);
+    uint64_to_string((uint64_t)syscall_handler(SYS_GETPID, 0, 0, 0), buf);
+    terminal_writestring("  getpid = ");
     terminal_writestring(buf);
     terminal_writestring("\n");
-    
-    // Test 4: sys_sleep
-    terminal_writestring("  Sleeping for 1 second...\n");
-    syscall1(SYS_SLEEP, 1000);
-    
-    uint64_t ticks2 = syscall0(SYS_GETTICKS);
-    terminal_writestring("  After sleep, ticks = ");
-    uint64_to_string(ticks2, buf);
-    terminal_writestring(buf);
-    terminal_writestring(" (delta: ");
-    uint64_to_string(ticks2 - ticks1, buf);
-    terminal_writestring(buf);
-    terminal_writestring(")\n");
-    
-    // Test 5: Invalid syscall
-    uint64_t bad = syscall1(999, 0);
-    terminal_writestring("  Invalid syscall returned ");
-    int64_t bad_signed = (int64_t)bad;
-    if (bad_signed < 0) {
-        terminal_writestring("-");
-        uint64_to_string(-bad_signed, buf);
-    } else {
-        uint64_to_string(bad, buf);
-    }
-    terminal_writestring(buf);
-    terminal_writestring(" (should be -1)\n");
-    
-    terminal_writestring("[TEST] System call tests complete\n");
 }
 
 /**
@@ -905,6 +862,9 @@ void kernel_main(void) {
     // Initialize GDT with TSS
     gdt_init();
     gdt_load_tss();
+
+    /* Phase 16: per-CPU block + GS base, needed before any ring-3 entry. */
+    usermode_init();
     
     // Test GDT and TSS
     test_gdt_tss();

@@ -43,7 +43,7 @@ ASM_SOURCES = \
     boot/boot.asm \
     kernel/mm/paging_asm.asm \
     kernel/arch/idt_asm.asm \
-    kernel/arch/syscall_asm.asm \
+    kernel/arch/usermode_asm.asm \
     kernel/arch/context_switch.asm \
     kernel/kfuzz/jmp.asm
 
@@ -72,7 +72,9 @@ C_SOURCES_ARCH = \
     kernel/arch/pic.c \
     kernel/arch/gdt.c \
     kernel/arch/tss.c \
-    kernel/arch/debugreg.c
+    kernel/arch/debugreg.c \
+    kernel/arch/usermode.c \
+    kernel/arch/uaccess.c
 
 # C source files - Memory Management
 C_SOURCES_MM = \
@@ -119,7 +121,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_pthread.c \
     kernel/tests/test_net.c \
     kernel/tests/test_shell.c \
-    kernel/tests/test_kfuzz.c
+    kernel/tests/test_kfuzz.c \
+    kernel/tests/test_user.c
 
 # Combine all C sources
 C_SOURCES = \

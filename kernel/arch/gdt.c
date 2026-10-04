@@ -45,10 +45,10 @@ void gdt_init(void) {
     terminal_writestring("[GDT] Initializing Global Descriptor Table...\n");
     
     gdt_set_entry(0, 0, 0, 0, 0);
-    gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xA0);
-    gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xA0);
-    gdt_set_entry(3, 0, 0xFFFFF, 0xFA, 0xA0);
-    gdt_set_entry(4, 0, 0xFFFFF, 0xF2, 0xA0);
+    gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xA0);   /* 0x08 kernel code */
+    gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xA0);   /* 0x10 kernel data */
+    gdt_set_entry(3, 0, 0xFFFFF, 0xF2, 0xA0);   /* 0x18 user data   */
+    gdt_set_entry(4, 0, 0xFFFFF, 0xFA, 0xA0);   /* 0x20 user code   */
     
     // TSS entry (128-bit descriptor uses entries 5 and 6)
     uint64_t tss_addr = tss_get();
@@ -63,8 +63,8 @@ void gdt_init(void) {
     terminal_writestring("  [0] NULL\n");
     terminal_writestring("  [1] Kernel Code (ring 0) at 0x08\n");
     terminal_writestring("  [2] Kernel Data (ring 0) at 0x10\n");
-    terminal_writestring("  [3] User Code (ring 3) at 0x18\n");
-    terminal_writestring("  [4] User Data (ring 3) at 0x20\n");
+    terminal_writestring("  [3] User Data (ring 3) at 0x18\n");
+    terminal_writestring("  [4] User Code (ring 3) at 0x20\n");
     terminal_writestring("  [5,6] TSS (128-bit) at 0x28\n");
     
     gdt_reload_segments();

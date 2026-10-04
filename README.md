@@ -185,6 +185,7 @@ CI runs the suite and a stress job on every push.
 | 13 | POSIX threads API | ✅ |
 | 14 | Networking: PCI, e1000, TCP/IP, sockets, shell | ✅ [docs](docs/PHASE14_NETWORK.md) |
 | 15 | KFUZZ ring-0 self-fuzzer | ✅ [docs](docs/PHASE15_KFUZZ.md) |
+| 16 | Ring-3 userspace: syscall/sysret ABI, uaccess, fault containment | ✅ [docs](docs/PHASE16_USERSPACE.md) |
 
 ## 📚 Documentation
 

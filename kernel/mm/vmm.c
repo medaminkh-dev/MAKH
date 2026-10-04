@@ -292,6 +292,35 @@ void vmm_switch_address_space(uint64_t pml4_phys) {
  * @flags: Page flags (PAGE_PRESENT, PAGE_WRITABLE, etc.)
  * Returns: 0 on success, -1 on failure
  */
+/**
+ * vmm_map_user_page - map a ring-3-accessible page.
+ *
+ * A page is only reachable from ring 3 if the USER bit is set on EVERY level
+ * of the walk, not just the leaf. The generic get_or_create_* helpers create
+ * intermediate tables with PRESENT|WRITABLE only, so we OR in PAGE_USER at each
+ * level here. (W^X/NX is a Phase 17 item: the leaf flag mask below drops bit
+ * 63, and EFER.NXE is not yet enabled.)
+ */
+int vmm_map_user_page(uint64_t va, uint64_t phys, uint64_t flags) {
+    if ((va & 0xFFF) || (phys & 0xFFF)) return -1;
+
+    uint64_t* pdpt = get_or_create_pdpt(va);
+    if (!pdpt) return -1;
+    kernel_pml4[VMM_PML4_INDEX(va)] |= PAGE_USER;
+
+    uint64_t* pd = get_or_create_pd(va);
+    if (!pd) return -1;
+    pdpt[VMM_PDPT_INDEX(va)] |= PAGE_USER;
+
+    uint64_t* pt = get_or_create_pt(va);
+    if (!pt) return -1;
+    pd[VMM_PD_INDEX(va)] |= PAGE_USER;
+
+    pt[VMM_PT_INDEX(va)] = (phys & ~0xFFF) | (flags & 0xFFF) | PAGE_PRESENT | PAGE_USER;
+    vmm_invlpg(va);
+    return 0;
+}
+
 int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     /* Ensure addresses are page-aligned */
     if (virt_addr & 0xFFF) return -1;

@@ -1,162 +1,118 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 Amine Khemissi */
+/**
+ * MakhOS - syscall.c
+ * System-call dispatch for ring 3 (Phase 16).
+ *
+ * The `syscall` instruction enters syscall_entry (usermode.asm), which builds
+ * a trapframe and calls syscall_dispatch() here. We read arguments from the
+ * frame, validate any user pointers through copy_from_user/copy_to_user, run
+ * the call, and return a value following the Linux convention: >= 0 on success,
+ * -errno on failure.
+ */
+
 #include <syscall.h>
+#include <arch/cpu.h>
+#include <arch/usermode.h>
+#include <errno.h>
 #include <kernel.h>
+#include <klog.h>
 #include <vga.h>
+#include <proc_internal.h>
 #include <drivers/timer.h>
+#include <lib/string.h>
 
-// Syscall function table
-static syscall_fn_t syscall_table[MAX_SYSCALLS];
+/* From usermode.c: leave ring 3. */
+void usermode_exit(long code) __attribute__((noreturn));
 
-// MSR addresses for syscall/sysret setup
-#define IA32_EFER   0xC0000080
-#define IA32_STAR   0xC0000081
-#define IA32_LSTAR  0xC0000082
-#define IA32_FMASK  0xC0000084
-
-// External assembly entry point
-extern void syscall_entry(void);
-
-// Forward declarations of syscall implementations
-static uint64_t sys_exit(uint64_t code, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
-static uint64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count, uint64_t a4, uint64_t a5);
-static uint64_t sys_getpid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
-static uint64_t sys_sleep(uint64_t ms, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
-static uint64_t sys_getticks(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5);
-
-// MSR read/write helpers
-static inline uint64_t rdmsr(uint32_t msr) {
-    uint32_t low, high;
-    __asm__ volatile("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return ((uint64_t)high << 32) | low;
-}
-
-static inline void wrmsr(uint32_t msr, uint64_t value) {
-    uint32_t low = value & 0xFFFFFFFF;
-    uint32_t high = value >> 32;
-    __asm__ volatile("wrmsr" : : "c"(msr), "a"(low), "d"(high));
-}
+/* -------------------------------------------------------------------------- */
+/* MSR setup                                                                  */
+/* -------------------------------------------------------------------------- */
 
 void syscall_init(void) {
-    terminal_writestring("[SYSCALL] Initializing system call interface...\n");
-    char buf[32];  // Buffer for number conversion
-    
-    // Initialize all entries to NULL
-    for (int i = 0; i < MAX_SYSCALLS; i++) {
-        syscall_table[i] = NULL;
-    }
-    
-    // Register syscalls
-    syscall_table[SYS_EXIT] = sys_exit;
-    syscall_table[SYS_WRITE] = sys_write;
-    syscall_table[SYS_GETPID] = sys_getpid;
-    syscall_table[SYS_SLEEP] = sys_sleep;
-    syscall_table[SYS_GETTICKS] = sys_getticks;
-    
-    // Enable syscall instruction in EFER MSR
-    uint64_t efer = rdmsr(IA32_EFER);
-    terminal_writestring("[SYSCALL] EFER before: 0x");
-    uint64_to_hex(efer, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    efer |= 0x01;  // Set SCE (Syscall Enable) bit
-    wrmsr(IA32_EFER, efer);
-    terminal_writestring("[SYSCALL] EFER after: 0x");
-    uint64_to_hex(rdmsr(IA32_EFER), buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    // Set up STAR MSR:
-    // Bits 63:48 = Kernel CS (0x08) - loaded into CS on syscall
-    // Bits 47:32 = User CS (0x1B = 0x18 | 3) - target for sysret
-    // SS is calculated as CS + 8 automatically by CPU
-    uint64_t star_val = ((uint64_t)0x08 << 48) | ((uint64_t)0x1B << 32);
-    wrmsr(IA32_STAR, star_val);
-    terminal_writestring("[SYSCALL] STAR set to: 0x");
-    uint64_to_hex(star_val, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    // Set LSTAR MSR to syscall_entry address (RIP loaded on syscall)
-    terminal_writestring("[SYSCALL] syscall_entry at: 0x");
-    uint64_to_hex((uint64_t)syscall_entry, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    wrmsr(IA32_LSTAR, (uint64_t)syscall_entry);
-    terminal_writestring("[SYSCALL] LSTAR read back: 0x");
-    uint64_to_hex(rdmsr(IA32_LSTAR), buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    // Set SFMASK MSR (RFLAGS mask) - bits to clear on syscall
-    // Clear IF bit (0x200) to disable interrupts on syscall entry
-    wrmsr(IA32_FMASK, 0x200);
-    terminal_writestring("[SYSCALL] FMASK set to: 0x200\n");
-    
-    terminal_writestring("[SYSCALL] Registered 5 system calls\n");
-    terminal_writestring("  [0] exit\n");
-    terminal_writestring("  [1] write\n");
-    terminal_writestring("  [5] getpid\n");
-    terminal_writestring("  [6] sleep\n");
-    terminal_writestring("  [7] getticks\n");
-    terminal_writestring("[SYSCALL] syscall/sysret enabled via MSRs\n");
+    /* EFER.SCE enables the syscall/sysret instructions. */
+    wrmsr(IA32_EFER, rdmsr(IA32_EFER) | 1);
+
+    /*
+     * STAR:
+     *   [47:32] syscall base  = 0x08  -> CS 0x08 (ring 0), SS 0x10
+     *   [63:48] sysret  base  = 0x10  -> SS 0x18|3, CS 0x20|3 (ring 3)
+     * This is why the GDT places user DATA (0x18) directly below user CODE
+     * (0x20). See arch/gdt.h.
+     */
+    wrmsr(IA32_STAR, ((uint64_t)0x10 << 48) | ((uint64_t)0x08 << 32));
+    wrmsr(IA32_LSTAR, (uint64_t)(uintptr_t)syscall_entry);
+
+    /* Clear IF, DF and AC on entry: interrupts off until we choose to sti,
+     * forward string direction, and AC off so a stray user access under SMAP
+     * still traps until uaccess deliberately raises it. */
+    wrmsr(IA32_FMASK, 0x200 | 0x400 | 0x40000);
+
+    KLOG_I("SYSCALL", "ring-3 syscall/sysret enabled (STAR=%p)\n",
+           (void*)rdmsr(IA32_STAR));
 }
 
-uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, 
-                         uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    // Check if syscall number is valid
-    if (num >= MAX_SYSCALLS || syscall_table[num] == NULL) {
-        terminal_writestring("[SYSCALL] Unknown syscall number\n");
-        return -1;
-    }
-    
-    // Call the syscall implementation
-    return syscall_table[num](arg1, arg2, arg3, arg4, arg5);
-}
+/* -------------------------------------------------------------------------- */
+/* Individual calls. `from_user` selects pointer validation.                  */
+/* -------------------------------------------------------------------------- */
 
-// Syscall implementations
-static uint64_t sys_exit(uint64_t code, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a2; (void)a3; (void)a4; (void)a5;  // Suppress unused warnings
-    terminal_writestring("[SYSCALL] exit(");
-    char buf[32];
-    uint64_to_string(code, buf);
-    terminal_writestring(buf);
-    terminal_writestring(") called\n");
-    terminal_writestring("System halted.\n");
-    for(;;) {
-        __asm__ volatile("hlt");
-    }
-    return 0;
-}
+static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
+    if (fd != 1 && fd != 2) return -EBADF;        /* stdout / stderr only */
+    if (count == 0) return 0;
 
-static uint64_t sys_write(uint64_t fd, uint64_t buf, uint64_t count, uint64_t a4, uint64_t a5) {
-    (void)a4; (void)a5;  // Suppress unused warnings
-    const char* str = (const char*)buf;
-    
-    // Only handle stdout (fd=1) for now
-    if (fd == 1) {
-        for (uint64_t i = 0; i < count; i++) {
-            terminal_putchar(str[i]);
+    char tmp[256];
+    uint64_t done = 0;
+    while (done < count) {
+        uint64_t chunk = count - done;
+        if (chunk > sizeof(tmp)) chunk = sizeof(tmp);
+        if (from_user) {
+            if (copy_from_user(tmp, (const void*)(uintptr_t)(ubuf + done), chunk) < 0)
+                return done ? (int64_t)done : -EFAULT;
+        } else {
+            memcpy(tmp, (const void*)(uintptr_t)(ubuf + done), chunk);
         }
-        return count;
+        for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
+        done += chunk;
     }
-    
-    return -1;
+    return (int64_t)done;
 }
 
-static uint64_t sys_getpid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;  // Suppress unused warnings
-    // For now, kernel process gets PID 1
-    return 1;
+static int64_t do_getpid(void) {
+    return current_process ? (int64_t)current_process->pid : 0;
 }
 
-static uint64_t sys_sleep(uint64_t ms, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a2; (void)a3; (void)a4; (void)a5;  // Suppress unused warnings
-    timer_sleep(ms);
-    return 0;
+/* -------------------------------------------------------------------------- */
+/* Dispatch                                                                   */
+/* -------------------------------------------------------------------------- */
+
+static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
+                        int from_user) {
+    switch (num) {
+        case SYS_WRITE:        return do_write(a1, a2, a3, from_user);
+        case SYS_GETPID:       return do_getpid();
+        case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
+        case SYS_READ:         return 0;            /* no input source yet (EOF) */
+        case SYS_CLOSE:        return 0;
+        case SYS_EXIT:
+            if (from_user) usermode_exit((long)a1);  /* does not return */
+            return 0;
+        case SYS_MAKH_SLEEP_MS:
+            /* Deliberately not supported from the non-preemptible ring-3 brick;
+             * returns success as a no-op for getticks-style demos. */
+            return 0;
+        default:
+            return -ENOSYS;
+    }
 }
 
-static uint64_t sys_getticks(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;  // Suppress unused warnings
-    return timer_get_ticks();
+uint64_t syscall_dispatch(trapframe_t* tf) {
+    /* System V/Linux argument registers were saved in the trapframe; the
+     * number is in int_no (see usermode.asm). */
+    int64_t rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, /*from_user*/1);
+    tf->rax = (uint64_t)rc;
+    return (uint64_t)rc;
+}
+
+int64_t syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3) {
+    return dispatch(num, a1, a2, a3, /*from_user*/0);
 }

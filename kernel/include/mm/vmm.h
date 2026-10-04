@@ -56,6 +56,9 @@ void vmm_switch_address_space(uint64_t pml4_phys);
 /* Map physical address to virtual address */
 int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);
 
+/* Map a ring-3-accessible page (sets PAGE_USER on every level of the walk). */
+int vmm_map_user_page(uint64_t va, uint64_t phys, uint64_t flags);
+
 /* Unmap virtual page */
 int vmm_unmap_page(uint64_t virt_addr);
 
