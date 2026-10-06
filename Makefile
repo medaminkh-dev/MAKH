@@ -103,6 +103,13 @@ C_SOURCES_NET = \
     kernel/net/tcp.c \
     kernel/net/socket.c
 
+# C source files - Filesystem (Phase 18)
+C_SOURCES_FS = \
+    kernel/fs/vfs.c \
+    kernel/fs/tmpfs.c \
+    kernel/fs/devfs.c \
+    kernel/fs/tar.c
+
 # C source files - Process Management (Split into modules)
 C_SOURCES_PROC = \
     kernel/proc/core/core.c \
@@ -125,7 +132,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_shell.c \
     kernel/tests/test_kfuzz.c \
     kernel/tests/test_user.c \
-    kernel/tests/test_vm.c
+    kernel/tests/test_vm.c \
+    kernel/tests/test_vfs.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -135,6 +143,7 @@ C_SOURCES = \
     $(C_SOURCES_DRIVERS) \
     $(C_SOURCES_PROC) \
     $(C_SOURCES_NET) \
+    $(C_SOURCES_FS) \
     $(C_SOURCES_TESTS)
 
 # =============================================================================
@@ -156,9 +165,19 @@ COV_SOURCES = \
     kernel/net/icmp.c \
     kernel/net/udp.c \
     kernel/net/tcp.c \
-    kernel/net/socket.c
+    kernel/net/socket.c \
+    kernel/fs/vfs.c \
+    kernel/fs/tmpfs.c \
+    kernel/fs/tar.c
 COV_OBJECTS = $(COV_SOURCES:.c=.o)
 $(COV_OBJECTS): CFLAGS += -fsanitize-coverage=trace-pc
+
+# Phase 18: the initrd is a USTAR archive of the initrd/ directory, loaded by
+# GRUB as a multiboot2 module and unpacked into the root tmpfs at boot.
+INITRD = initrd.tar
+$(INITRD): $(shell find initrd -type f 2>/dev/null)
+	@echo "Building initrd.tar"
+	@(cd initrd && tar -cf ../$(INITRD) --format=ustar *)
 
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
 C_OBJECTS   = $(C_SOURCES:.c=.o)
@@ -195,11 +214,12 @@ $(KERNEL): $(OBJECTS)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # Create ISO
-$(ISO): $(KERNEL)
+$(ISO): $(KERNEL) $(INITRD)
 	@echo "Creating ISO..."
 	@mkdir -p isodir/boot/grub
 	@cp grub.cfg isodir/boot/grub/
 	@cp $(KERNEL) isodir/boot/
+	@cp $(INITRD) isodir/boot/
 	@grub-mkrescue -o $(ISO) isodir 2>/dev/null || \
 		(echo "Note: grub-mkrescue not found, copying kernel as ISO" && \
 		 cp $(KERNEL) $(ISO))
@@ -248,11 +268,12 @@ run: $(ISO)
 
 TEST_ISO = makhos-test.iso
 
-$(TEST_ISO): $(KERNEL) grub-test.cfg
+$(TEST_ISO): $(KERNEL) grub-test.cfg $(INITRD)
 	@echo "Creating test ISO..."
 	@mkdir -p isodir-test/boot/grub
 	@cp grub-test.cfg isodir-test/boot/grub/grub.cfg
 	@cp $(KERNEL) isodir-test/boot/
+	@cp $(INITRD) isodir-test/boot/
 	@grub-mkrescue -o $(TEST_ISO) isodir-test 2>/dev/null
 	@rm -rf isodir-test
 	@echo "Test ISO created: $(TEST_ISO)"

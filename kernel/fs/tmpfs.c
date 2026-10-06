@@ -1,0 +1,164 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Copyright (C) 2026 Amine Khemissi */
+/**
+ * MakhOS - fs/tmpfs.c
+ * A RAM-backed filesystem (Phase 18). Directories are singly linked lists of
+ * named children; regular files are a heap buffer that grows on write. It is
+ * the root filesystem and the substrate devfs and the initrd populate.
+ */
+
+#include <fs/vfs.h>
+#include <mm/kheap.h>
+#include <lib/string.h>
+#include <errno.h>
+
+typedef struct tmpfs_dirent {
+    char                 name[VFS_NAME_MAX + 1];
+    vnode_t*             vnode;
+    struct tmpfs_dirent* next;
+} tmpfs_dirent_t;
+
+/* priv for a directory: its child list. priv for a regular file: a buffer. */
+typedef struct tmpfs_dir  { tmpfs_dirent_t* head; } tmpfs_dir_t;
+typedef struct tmpfs_file { uint8_t* data; uint64_t cap; } tmpfs_file_t;
+
+static const vfs_ops_t tmpfs_ops;   /* forward */
+
+static vnode_t* mk_vnode(vtype_t type) {
+    vnode_t* vn = kcalloc(1, sizeof(vnode_t));
+    if (!vn) return NULL;
+    vn->type = type;
+    vn->ops = &tmpfs_ops;
+    if (type == VNODE_DIR) {
+        vn->priv = kcalloc(1, sizeof(tmpfs_dir_t));
+    } else if (type == VNODE_REG) {
+        vn->priv = kcalloc(1, sizeof(tmpfs_file_t));
+    }
+    if (type != VNODE_CHR && !vn->priv) { kfree(vn); return NULL; }
+    return vn;
+}
+
+static vnode_t* tmpfs_lookup(vnode_t* dir, const char* name) {
+    if (dir->type != VNODE_DIR) return NULL;
+    for (tmpfs_dirent_t* e = ((tmpfs_dir_t*)dir->priv)->head; e; e = e->next)
+        if (strcmp(e->name, name) == 0) return e->vnode;
+    return NULL;
+}
+
+/* Insert an already-built vnode as a named child (used by devfs/initrd too). */
+vnode_t* tmpfs_link(vnode_t* dir, const char* name, vnode_t* child) {
+    if (!dir || dir->type != VNODE_DIR || !child) return NULL;
+    tmpfs_dirent_t* e = kcalloc(1, sizeof(tmpfs_dirent_t));
+    if (!e) return NULL;
+    int i = 0;
+    for (; name[i] && i < VFS_NAME_MAX; i++) e->name[i] = name[i];
+    e->name[i] = '\0';
+    e->vnode = child;
+    tmpfs_dir_t* d = (tmpfs_dir_t*)dir->priv;
+    e->next = d->head;
+    d->head = e;
+    child->refcount++;
+    return child;
+}
+
+static vnode_t* tmpfs_create(vnode_t* dir, const char* name, vtype_t type) {
+    if (tmpfs_lookup(dir, name)) return NULL;
+    vnode_t* vn = mk_vnode(type);
+    if (!vn) return NULL;
+    if (!tmpfs_link(dir, name, vn)) { kfree(vn->priv); kfree(vn); return NULL; }
+    return vn;
+}
+
+static int tmpfs_readdir(vnode_t* dir, uint32_t index, char* name_out) {
+    if (dir->type != VNODE_DIR) return -1;
+    for (tmpfs_dirent_t* e = ((tmpfs_dir_t*)dir->priv)->head; e; e = e->next) {
+        if (index == 0) {
+            int i = 0; for (; e->name[i]; i++) name_out[i] = e->name[i]; name_out[i] = '\0';
+            return 0;
+        }
+        index--;
+    }
+    return -1;
+}
+
+static long tmpfs_read(vnode_t* vn, void* buf, size_t n, uint64_t off) {
+    if (vn->type != VNODE_REG) return -EINVAL;
+    if (off >= vn->size) return 0;
+    uint64_t avail = vn->size - off;
+    if (n > avail) n = (size_t)avail;
+    memcpy(buf, ((tmpfs_file_t*)vn->priv)->data + off, n);
+    return (long)n;
+}
+
+static int tmpfs_truncate(vnode_t* vn, uint64_t len);
+
+static long tmpfs_write(vnode_t* vn, const void* buf, size_t n, uint64_t off) {
+    if (vn->type != VNODE_REG) return -EINVAL;
+    tmpfs_file_t* f = (tmpfs_file_t*)vn->priv;
+    uint64_t end = off + n;
+    if (end > f->cap) {
+        uint64_t ncap = f->cap ? f->cap : 64;
+        while (ncap < end) ncap *= 2;
+        uint8_t* nd = krealloc(f->data, (size_t)ncap);
+        if (!nd) return -ENOMEM;
+        f->data = nd;
+        f->cap = ncap;
+    }
+    if (off > vn->size) memset(f->data + vn->size, 0, (size_t)(off - vn->size));  /* sparse fill */
+    memcpy(f->data + off, buf, n);
+    if (end > vn->size) vn->size = end;
+    return (long)n;
+}
+
+static int tmpfs_truncate(vnode_t* vn, uint64_t len) {
+    if (vn->type != VNODE_REG) return -EINVAL;
+    vn->size = len;
+    return 0;
+}
+
+static void free_vnode(vnode_t* vn) {
+    if (!vn) return;
+    if (vn->type == VNODE_REG && vn->priv) {
+        kfree(((tmpfs_file_t*)vn->priv)->data);
+        kfree(vn->priv);
+    } else if (vn->type == VNODE_DIR && vn->priv) {
+        kfree(vn->priv);   /* caller must have emptied the child list */
+    }
+    kfree(vn);
+}
+
+static int tmpfs_unlink(vnode_t* dir, const char* name) {
+    if (dir->type != VNODE_DIR) return -ENOTDIR;
+    tmpfs_dir_t* d = (tmpfs_dir_t*)dir->priv;
+    tmpfs_dirent_t** pp = &d->head;
+    while (*pp) {
+        if (strcmp((*pp)->name, name) == 0) {
+            tmpfs_dirent_t* e = *pp;
+            vnode_t* vn = e->vnode;
+            if (vn->type == VNODE_DIR && ((tmpfs_dir_t*)vn->priv)->head) return -ENOTEMPTY;
+            *pp = e->next;
+            kfree(e);
+            if (vn->refcount) vn->refcount--;
+            if (vn->refcount == 0) free_vnode(vn);
+            return 0;
+        }
+        pp = &(*pp)->next;
+    }
+    return -ENOENT;
+}
+
+static const vfs_ops_t tmpfs_ops = {
+    .read = tmpfs_read,
+    .write = tmpfs_write,
+    .lookup = tmpfs_lookup,
+    .create = tmpfs_create,
+    .readdir = tmpfs_readdir,
+    .unlink = tmpfs_unlink,
+    .truncate = tmpfs_truncate,
+};
+
+vnode_t* tmpfs_create_root(void) {
+    vnode_t* root = mk_vnode(VNODE_DIR);
+    if (root) root->refcount = 1;
+    return root;
+}

@@ -8,3 +8,10 @@
 
 # Directories
 iso_check/
+
+# Generated initrd archive
+initrd.tar
+
+# initrd source content is tracked despite the generic *.txt rule
+!initrd/
+!initrd/**

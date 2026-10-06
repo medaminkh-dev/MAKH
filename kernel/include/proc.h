@@ -109,6 +109,7 @@ typedef struct process {
     int32_t preempt_count;        // >0 => this thread must not be preempted
     int     errno_val;            // per-thread errno (see errno.h)
     uint8_t stack_canary;         // 1 => kernel_stack[0..7] holds STACK_CANARY_MAGIC
+    void*   fd_table;             // Phase 18: lazily-allocated file* [VFS_MAX_FDS]
 
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)

@@ -22,6 +22,8 @@
 #include "include/input_line.h"
 #include <arch/usermode.h>
 #include <mm/page.h>
+#include <multiboot.h>
+#include <fs/vfs.h>
 #include <shell.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
@@ -841,6 +843,18 @@ void kernel_main(void) {
     terminal_writestring("Initializing Kernel Heap...\n");
     kheap_init();
     page_init();   /* Phase 17: per-frame refcounts for COW */
+
+    /* Phase 18: filesystem — root tmpfs, device nodes, and the initrd. */
+    vfs_init();
+    devfs_mount("/dev");
+    multiboot_parse(multiboot_info_ptr);
+    struct multiboot_tag_module* mod =
+        (struct multiboot_tag_module*)multiboot_find_tag(MULTIBOOT_TAG_TYPE_MODULE);
+    if (mod)
+        tar_load_initrd((const void*)(uintptr_t)mod->mod_start,
+                        (size_t)(mod->mod_end - mod->mod_start));
+    else
+        KLOG_W("INITRD", "no initrd module provided by the bootloader\n");
     
     /* Run heap tests */
     test_kheap();

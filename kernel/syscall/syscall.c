@@ -21,6 +21,7 @@
 #include <proc_internal.h>
 #include <drivers/timer.h>
 #include <lib/string.h>
+#include <fs/vfs.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -57,7 +58,6 @@ void syscall_init(void) {
 /* -------------------------------------------------------------------------- */
 
 static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (fd != 1 && fd != 2) return -EBADF;        /* stdout / stderr only */
     if (count == 0) return 0;
 
     char tmp[256];
@@ -71,10 +71,62 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
         } else {
             memcpy(tmp, (const void*)(uintptr_t)(ubuf + done), chunk);
         }
-        for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
+        if (fd == 1 || fd == 2) {               /* stdout / stderr -> console */
+            for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
+        } else {                                /* a real file descriptor */
+            long w = vfs_fd_write((int)fd, tmp, chunk);
+            if (w < 0) return done ? (int64_t)done : w;
+            if (w == 0) break;
+            done += (uint64_t)w;
+            continue;
+        }
         done += chunk;
     }
     return (int64_t)done;
+}
+
+static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
+    if (fd == 0 || fd == 1 || fd == 2) return 0;   /* no console input yet (EOF) */
+    if (count == 0) return 0;
+    char tmp[256];
+    uint64_t done = 0;
+    while (done < count) {
+        uint64_t chunk = count - done;
+        if (chunk > sizeof(tmp)) chunk = sizeof(tmp);
+        long got = vfs_fd_read((int)fd, tmp, chunk);
+        if (got < 0) return done ? (int64_t)done : got;
+        if (got == 0) break;                    /* EOF */
+        if (from_user) {
+            if (copy_to_user((void*)(uintptr_t)(ubuf + done), tmp, (size_t)got) < 0)
+                return done ? (int64_t)done : -EFAULT;
+        } else {
+            memcpy((void*)(uintptr_t)(ubuf + done), tmp, (size_t)got);
+        }
+        done += (uint64_t)got;
+        if ((uint64_t)got < chunk) break;
+    }
+    return (int64_t)done;
+}
+
+static int64_t do_open(uint64_t upath, uint64_t flags, int from_user) {
+    char path[VFS_PATH_MAX];
+    if (from_user) {
+        /* Copy the path a byte at a time until NUL or the limit. */
+        size_t i = 0;
+        for (; i < sizeof(path) - 1; i++) {
+            char c;
+            if (copy_from_user(&c, (const void*)(uintptr_t)(upath + i), 1) < 0) return -EFAULT;
+            path[i] = c;
+            if (!c) break;
+        }
+        path[i] = '\0';
+    } else {
+        size_t i = 0;
+        const char* p = (const char*)(uintptr_t)upath;
+        for (; i < sizeof(path) - 1 && p[i]; i++) path[i] = p[i];
+        path[i] = '\0';
+    }
+    return vfs_open(path, (int)flags);
 }
 
 static int64_t do_getpid(void) {
@@ -89,10 +141,12 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
                         int from_user) {
     switch (num) {
         case SYS_WRITE:        return do_write(a1, a2, a3, from_user);
+        case SYS_READ:         return do_read(a1, a2, a3, from_user);
+        case SYS_OPEN:         return do_open(a1, a2, from_user);
+        case SYS_CLOSE:        return vfs_close((int)a1);
+        case SYS_LSEEK:        return vfs_lseek((int)a1, (long)a2, (int)a3);
         case SYS_GETPID:       return do_getpid();
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
-        case SYS_READ:         return 0;            /* no input source yet (EOF) */
-        case SYS_CLOSE:        return 0;
         case SYS_EXIT:
             if (from_user) usermode_exit((long)a1);  /* does not return */
             return 0;

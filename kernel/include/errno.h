@@ -13,6 +13,11 @@
 
 #define EPERM            1   /* Operation not permitted */
 #define ENOENT           2   /* No such entry */
+#define EEXIST         17
+#define ENOTDIR        20
+#define EISDIR         21
+#define ENOTEMPTY      39
+#define ENAMETOOLONG   36
 #define ESRCH            3   /* No such process/thread */
 #define EINTR            4   /* Interrupted */
 #define EBADF            9   /* Bad file (socket) descriptor */

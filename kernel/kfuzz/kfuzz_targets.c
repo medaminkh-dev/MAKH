@@ -27,6 +27,7 @@
 #include <mm/vmm.h>
 #include <mm/pmm.h>
 #include <mm/page.h>
+#include <fs/vfs.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -372,6 +373,72 @@ static int t_vmspace(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 8. Filesystem: random VFS ops + the tar parser on malformed input (P18)     */
+/* -------------------------------------------------------------------------- */
+#define VFS_FZ_FILES 8
+
+static int t_vfs(kfuzz_rng_t* r, uint32_t iters) {
+    vfs_mkdir("/fz");                               /* scratch namespace */
+    for (uint32_t it = 0; it < iters; it++) {
+        char path[12] = { '/', 'f', 'z', '/', 'f',
+                          (char)('0' + kfuzz_rand_below(r, VFS_FZ_FILES)), 0 };
+        switch (kfuzz_rand_below(r, 7)) {
+        case 0:
+            vfs_create(path, VNODE_REG);
+            break;
+        case 1: {                                   /* write random bytes */
+            int fd = vfs_open(path, O_CREAT | O_RDWR);
+            if (fd >= 0) {
+                uint8_t b[64];
+                uint32_t n = kfuzz_rand_below(r, sizeof(b) + 1);
+                kfuzz_fill(r, b, n);
+                vfs_fd_write(fd, b, n);
+                vfs_close(fd);
+            }
+            break;
+        }
+        case 2: {                                   /* read */
+            int fd = vfs_open(path, O_RDONLY);
+            if (fd >= 0) { uint8_t b[64]; vfs_fd_read(fd, b, sizeof(b)); vfs_close(fd); }
+            break;
+        }
+        case 3: {                                   /* seek around */
+            int fd = vfs_open(path, O_RDWR);
+            if (fd >= 0) {
+                vfs_lseek(fd, (long)kfuzz_rand_below(r, 400) - 100,
+                          (int)kfuzz_rand_below(r, 3));
+                vfs_close(fd);
+            }
+            break;
+        }
+        case 4:
+            vfs_unlink(path);
+            break;
+        case 5: {                                   /* readdir */
+            vnode_t* d = vfs_resolve("/fz");
+            if (d && d->ops && d->ops->readdir) {
+                char nm[VFS_NAME_MAX + 1];
+                for (uint32_t i = 0; i < 64 && d->ops->readdir(d, i, nm) == 0; i++) { }
+            }
+            break;
+        }
+        case 6: {                                   /* feed the tar parser garbage */
+            uint8_t buf[600];
+            uint32_t n = kfuzz_rand_below(r, sizeof(buf) + 1);
+            kfuzz_fill(r, buf, n);
+            tar_load_initrd(buf, n);                /* bounds must hold; must not crash */
+            break;
+        }
+        }
+    }
+    for (int i = 0; i < VFS_FZ_FILES; i++) {         /* clean up the scratch files */
+        char path[12] = { '/', 'f', 'z', '/', 'f', (char)('0' + i), 0 };
+        vfs_unlink(path);
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -399,6 +466,7 @@ static const kfuzz_target_t g_targets[] = {
     { "shell",   t_shell,   KFUZZ_T_SHELL,   NULL },
     { "netrx",   t_netrx,   KFUZZ_T_NETRX,   t_netrx_cleanup },
     { "vmspace", t_vmspace, KFUZZ_T_VMSPACE, NULL },
+    { "vfs",     t_vfs,     KFUZZ_T_VFS,     NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 
