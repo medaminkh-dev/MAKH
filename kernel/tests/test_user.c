@@ -69,3 +69,37 @@ KTEST(user, getpid_syscall_returns_value) {
     KEXPECT_EQ(status, (long)(proc_current()->pid & 0xFF));
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Phase 17: W^X enforcement from ring 3                                       */
+/* -------------------------------------------------------------------------- */
+
+/* Write to the (read-only, executable) code page -> #PF. The store targets
+ * USER_CODE_BASE itself via an absolute address, so it is position-dependent
+ * on the fixed load address, which is fine for this test. */
+static const unsigned char prog_write_code[] = {
+    0x48, 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, /* mov rax, 0x200000000000 */
+    0xC6, 0x00, 0x42,                   /* mov byte [rax], 0x42   -> write to RX page */
+};
+
+/* Execute from the (writable, NX) stack -> #PF on instruction fetch.
+ *   mov al, 0xC3 ; push rax ; jmp rsp     (0xC3 = ret, placed on the stack) */
+static const unsigned char prog_exec_stack[] = {
+    0xB0, 0xC3,                         /* mov al, 0xC3 (ret) */
+    0x50,                               /* push rax            */
+    0xFF, 0xE4,                         /* jmp rsp  -> fetch from NX stack */
+};
+
+KTEST(user, write_to_rx_code_faults) {
+    long status = -1;
+    user_stop_t r = run_user_program(prog_write_code, sizeof(prog_write_code), &status);
+    KEXPECT_EQ(r, USER_FAULTED);
+    KEXPECT_EQ(status, 14);            /* #PF: W^X write-protects executable pages */
+}
+
+KTEST(user, execute_nx_stack_faults) {
+    long status = -1;
+    user_stop_t r = run_user_program(prog_exec_stack, sizeof(prog_exec_stack), &status);
+    KEXPECT_EQ(r, USER_FAULTED);
+    KEXPECT_EQ(status, 14);            /* #PF: NX stops execution of data pages */
+}

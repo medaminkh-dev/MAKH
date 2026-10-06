@@ -101,7 +101,7 @@ static int map_user_frame(uint64_t va, int writable, int exec) {
     memset(frame, 0, 4096);                         /* via identity map (supervisor) */
     uint64_t flags = PAGE_PRESENT;
     if (writable) flags |= PAGE_WRITABLE;
-    (void)exec;   /* W^X/NX deferred to Phase 17 (needs EFER.NXE) */
+    if (!exec) flags |= PAGE_NO_EXECUTE;        /* W^X: data/stack is non-exec */
     return vmm_map_user_page(va, (uint64_t)(uintptr_t)frame, flags);
 }
 

@@ -21,6 +21,7 @@
 #include "include/drivers/keyboard.h"
 #include "include/input_line.h"
 #include <arch/usermode.h>
+#include <mm/page.h>
 #include <shell.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
@@ -839,6 +840,7 @@ void kernel_main(void) {
     print_check();
     terminal_writestring("Initializing Kernel Heap...\n");
     kheap_init();
+    page_init();   /* Phase 17: per-frame refcounts for COW */
     
     /* Run heap tests */
     test_kheap();

@@ -22,6 +22,10 @@
 #define PAGE_HUGE         (1 << 7)  /* 2MB or 1GB pages */
 #define PAGE_GLOBAL       (1 << 8)
 #define PAGE_NO_EXECUTE   (1ULL << 63)  /* NX bit (requires IA32_EFER.NXE) */
+#define PAGE_COW          (1ULL << 9)   /* software bit: copy-on-write (Phase 17) */
+
+/* 40-bit physical frame field of a PTE (clears flags, NX and reserved bits). */
+#define PTE_PHYS_MASK     0x000FFFFFFFFFF000ULL
 
 /* Virtual address indices extraction macros */
 /* PML4 index: bits 47-39 */
@@ -73,6 +77,10 @@ void vmm_free_page(void* virt_addr);
 
 /* Identity-map a device MMIO region, uncached (Phase 14). */
 int vmm_map_mmio(uint64_t phys, uint64_t size);
+
+/* The kernel's master PML4 (virtual pointer; its entries are shared by every
+ * address space so the kernel half stays mapped under any CR3). */
+uint64_t* vmm_kernel_pml4(void);
 
 /* Assembly functions (from paging_asm.asm) */
 extern void vmm_load_pml4(uint64_t pml4_phys);

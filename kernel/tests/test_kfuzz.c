@@ -94,6 +94,7 @@ KTEST(kfuzz, target_string)  { run_target(KFUZZ_T_STRING,  "string");  }
 KTEST(kfuzz, target_pthread) { run_target(KFUZZ_T_PTHREAD, "pthread"); }
 KTEST(kfuzz, target_shell)   { run_target(KFUZZ_T_SHELL,   "shell");   }
 KTEST(kfuzz, target_netrx)   { run_target(KFUZZ_T_NETRX,   "netrx");   }
+KTEST(kfuzz, target_vmspace) { run_target(KFUZZ_T_VMSPACE, "vmspace"); }
 
 KTEST(kfuzz, campaign_over_all_targets_builds_coverage) {
     kfuzz_cov_reset();

@@ -31,7 +31,8 @@ typedef enum {
     KFUZZ_T_PTHREAD= 1u << 3,
     KFUZZ_T_SHELL  = 1u << 4,
     KFUZZ_T_NETRX  = 1u << 5,
-    KFUZZ_T_ALL    = 0x3f,
+    KFUZZ_T_VMSPACE= 1u << 7,   /* address spaces / COW / refcounts (Phase 17) */
+    KFUZZ_T_ALL    = 0x3f | (1u << 7),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 

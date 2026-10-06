@@ -8,6 +8,7 @@
 
 #include "mm/vmm.h"
 #include "mm/pmm.h"
+#include <arch/cpu.h>
 #include "vga.h"
 #include "kernel.h"
 #include "klog.h"
@@ -252,6 +253,17 @@ void vmm_init(void) {
     vmm_load_pml4(pml4_phys);
     terminal_writestring("[VMM] CR3 loaded successfully\n");
     
+    /* Phase 17: enable No-Execute (EFER.NXE, bit 11) so leaf PTEs may set the
+     * NX bit and W^X can be enforced. CPUID leaf 0x80000001 EDX bit 20 reports
+     * NX support; QEMU provides it. */
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(0x80000001u));
+    if (edx & (1u << 20)) {
+        wrmsr(IA32_EFER, rdmsr(IA32_EFER) | (1u << 11));
+        terminal_writestring("[VMM] NX enabled (EFER.NXE)\n");
+    } else {
+        terminal_writestring("[VMM] NX not supported by CPU\n");
+    }
     terminal_writestring("[VMM] Initialized with 4-level paging\n");
 }
 
@@ -259,6 +271,8 @@ void vmm_init(void) {
  * vmm_create_address_space - Create a new address space (new PML4)
  * Returns: Physical address of new PML4, or 0 on failure
  */
+uint64_t* vmm_kernel_pml4(void) { return kernel_pml4; }
+
 uint64_t vmm_create_address_space(void) {
     /* Allocate a new PML4 */
     void* new_pml4 = pmm_alloc_page();
@@ -298,8 +312,9 @@ void vmm_switch_address_space(uint64_t pml4_phys) {
  * A page is only reachable from ring 3 if the USER bit is set on EVERY level
  * of the walk, not just the leaf. The generic get_or_create_* helpers create
  * intermediate tables with PRESENT|WRITABLE only, so we OR in PAGE_USER at each
- * level here. (W^X/NX is a Phase 17 item: the leaf flag mask below drops bit
- * 63, and EFER.NXE is not yet enabled.)
+ * level here. The leaf keeps the low flag bits AND the NX bit (63), so W^X can
+ * be enforced now that EFER.NXE is on (vmm_init). Intermediate tables stay
+ * executable (NX only matters on the leaf for 4 KiB pages).
  */
 int vmm_map_user_page(uint64_t va, uint64_t phys, uint64_t flags) {
     if ((va & 0xFFF) || (phys & 0xFFF)) return -1;
@@ -316,7 +331,8 @@ int vmm_map_user_page(uint64_t va, uint64_t phys, uint64_t flags) {
     if (!pt) return -1;
     pd[VMM_PD_INDEX(va)] |= PAGE_USER;
 
-    pt[VMM_PT_INDEX(va)] = (phys & ~0xFFF) | (flags & 0xFFF) | PAGE_PRESENT | PAGE_USER;
+    pt[VMM_PT_INDEX(va)] = (phys & ~0xFFF) | (flags & 0xFFF) |
+                           (flags & PAGE_NO_EXECUTE) | PAGE_PRESENT | PAGE_USER;
     vmm_invlpg(va);
     return 0;
 }

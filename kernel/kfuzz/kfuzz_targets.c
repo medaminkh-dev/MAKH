@@ -23,6 +23,10 @@
 #include <mm/pmm.h>
 #include <lib/string.h>
 #include <net/net.h>
+#include <mm/vmspace.h>
+#include <mm/vmm.h>
+#include <mm/pmm.h>
+#include <mm/page.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -303,6 +307,71 @@ static int t_netrx(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 7. Address spaces / COW / refcounts (Phase 17)                              */
+/* -------------------------------------------------------------------------- */
+/*
+ * Random sequences of vmspace create/map/fork/cow_fault/destroy, then tear
+ * everything down and assert the PMM returned to its starting free count. A
+ * leaked frame, a missed decref, or a double-free all break that balance and
+ * are reported with the reproducing seed. Never switches CR3 (that would risk
+ * the running kernel); only data-structure manipulation via the identity map.
+ */
+#define VM_SPACES  6
+#define VM_VAS     6
+#define VM_VA_BASE 0x0000200000020000ULL   /* user PML4 slot 64, clear of tests */
+
+static int t_vmspace(kfuzz_rng_t* r, uint32_t iters) {
+    size_t base_free = pmm_get_free_memory();
+    struct { int used; address_space_t as; } pool[VM_SPACES];
+    for (int i = 0; i < VM_SPACES; i++) pool[i].used = 0;
+
+    for (uint32_t it = 0; it < iters; it++) {
+        int s = (int)kfuzz_rand_below(r, VM_SPACES);
+        switch (kfuzz_rand_below(r, 5)) {
+        case 0:                                 /* create + map fresh frames */
+            if (!pool[s].used && vmspace_create(&pool[s].as) == 0) {
+                pool[s].used = 1;
+                int k = 1 + (int)kfuzz_rand_below(r, VM_VAS);
+                for (int j = 0; j < k; j++) {
+                    void* f = pmm_alloc_page();
+                    if (!f) break;
+                    uint64_t pf = (uint64_t)(uintptr_t)f;
+                    page_setref(pf, 1);
+                    uint64_t fl = PAGE_WRITABLE | ((kfuzz_rand(r) & 1) ? PAGE_NO_EXECUTE : 0);
+                    if (vmspace_map(&pool[s].as, VM_VA_BASE + (uint64_t)j * 0x1000, pf, fl) != 0)
+                        page_decref(pf);
+                }
+            }
+            break;
+        case 1:                                 /* fork into a free slot */
+            if (pool[s].used) {
+                int d = -1;
+                for (int j = 0; j < VM_SPACES; j++) if (!pool[j].used) { d = j; break; }
+                if (d >= 0 && vmspace_fork(&pool[s].as, &pool[d].as) == 0) pool[d].used = 1;
+            }
+            break;
+        case 2:                                 /* resolve a COW fault */
+            if (pool[s].used)
+                vmspace_cow_fault(&pool[s].as,
+                    VM_VA_BASE + (uint64_t)kfuzz_rand_below(r, VM_VAS) * 0x1000);
+            break;
+        case 3:                                 /* read-only probe */
+            if (pool[s].used)
+                (void)vmspace_phys(&pool[s].as,
+                    VM_VA_BASE + (uint64_t)kfuzz_rand_below(r, VM_VAS) * 0x1000);
+            break;
+        case 4:                                 /* destroy */
+            if (pool[s].used) { vmspace_destroy(&pool[s].as); pool[s].used = 0; }
+            break;
+        }
+    }
+    for (int i = 0; i < VM_SPACES; i++)
+        if (pool[i].used) { vmspace_destroy(&pool[i].as); pool[i].used = 0; }
+
+    return pmm_get_free_memory() == base_free ? 0 : -1;   /* no leak / no double-free */
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -329,6 +398,7 @@ static const kfuzz_target_t g_targets[] = {
     { "pthread", t_pthread, KFUZZ_T_PTHREAD, NULL },
     { "shell",   t_shell,   KFUZZ_T_SHELL,   NULL },
     { "netrx",   t_netrx,   KFUZZ_T_NETRX,   t_netrx_cleanup },
+    { "vmspace", t_vmspace, KFUZZ_T_VMSPACE, NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

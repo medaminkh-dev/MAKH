@@ -80,7 +80,9 @@ C_SOURCES_ARCH = \
 C_SOURCES_MM = \
     kernel/mm/pmm.c \
     kernel/mm/vmm.c \
-    kernel/mm/kheap.c
+    kernel/mm/kheap.c \
+    kernel/mm/page.c \
+    kernel/mm/vmspace.c
 
 # C source files - Drivers
 C_SOURCES_DRIVERS = \
@@ -122,7 +124,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_net.c \
     kernel/tests/test_shell.c \
     kernel/tests/test_kfuzz.c \
-    kernel/tests/test_user.c
+    kernel/tests/test_user.c \
+    kernel/tests/test_vm.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -143,6 +146,8 @@ C_SOURCES = \
 COV_SOURCES = \
     kernel/mm/kheap.c \
     kernel/mm/pmm.c \
+    kernel/mm/page.c \
+    kernel/mm/vmspace.c \
     kernel/lib/string.c \
     kernel/shell/shell.c \
     kernel/net/eth.c \
