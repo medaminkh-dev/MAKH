@@ -19,6 +19,7 @@
 #define SYS_CLOSE       3
 #define SYS_GETPID      39
 #define SYS_EXIT        60
+#define SYS_KILL        62
 
 #define SYS_MAKH_GETTICKS  0x200
 #define SYS_MAKH_SLEEP_MS  0x201

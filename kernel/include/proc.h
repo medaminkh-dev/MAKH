@@ -111,6 +111,14 @@ typedef struct process {
     uint8_t stack_canary;         // 1 => kernel_stack[0..7] holds STACK_CANARY_MAGIC
     void*   fd_table;             // Phase 18: lazily-allocated file* [VFS_MAX_FDS]
 
+    // -------- Phase 19: signals, process groups, sessions --------
+    uint64_t sig_pending;         // bitmask of pending signals (bit = signo)
+    uint64_t sig_blocked;         // signals currently blocked (sigprocmask)
+    uint32_t sig_ignore;          // bitmask: disposition is "ignore"
+    uint32_t pgid;                // process group id
+    uint32_t sid;                 // session id
+    uint8_t  sig_interrupt;       // a signal interrupted a blocking wait (EINTR)
+
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)
     void*   retval;               // pthread return / exit value

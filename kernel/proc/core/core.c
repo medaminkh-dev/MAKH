@@ -40,6 +40,7 @@ static void init_common(process_t* p, uint32_t pid, const char* name,
                         uint8_t prio, uint8_t* stack, uint64_t stack_size) {
     memset(p, 0, sizeof(*p));
     p->pid = pid;
+    p->pgid = pid; p->sid = pid;
     p->state = PROC_READY;
     p->priority = prio;
     p->kernel_stack = (uint64_t)stack;

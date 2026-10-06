@@ -22,6 +22,7 @@
 #include <drivers/timer.h>
 #include <lib/string.h>
 #include <fs/vfs.h>
+#include <signal.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -146,6 +147,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_CLOSE:        return vfs_close((int)a1);
         case SYS_LSEEK:        return vfs_lseek((int)a1, (long)a2, (int)a3);
         case SYS_GETPID:       return do_getpid();
+        case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
         case SYS_EXIT:
             if (from_user) usermode_exit((long)a1);  /* does not return */

@@ -28,6 +28,8 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <fs/vfs.h>
+#include <tty.h>
+#include <signal.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -439,6 +441,45 @@ static int t_vfs(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 9. TTY line discipline + signal masks (Phase 19)                            */
+/* -------------------------------------------------------------------------- */
+/*
+ * Feed the line discipline arbitrary bytes (it must never overrun its line
+ * buffer or crash) and toggle termios flags and signal masks. The foreground
+ * group is pinned to a non-existent pgid so control characters raise signals
+ * at nobody. Signals aimed at the fuzzer thread are only masked/unmasked and
+ * cleared, never allowed to terminate it.
+ */
+static int t_tty(kfuzz_rng_t* r, uint32_t iters) {
+    tty_set_foreground(0xFFFFFFu);
+    for (uint32_t it = 0; it < iters; it++) {
+        switch (kfuzz_rand_below(r, 5)) {
+        case 0: tty_input((char)kfuzz_rand(r)); break;        /* raw byte */
+        case 1: tty_termios()->c_lflag = (uint32_t)kfuzz_rand_below(r, 16); break;
+        case 2: {
+            char buf[64];
+            tty_read(buf, kfuzz_rand_below(r, sizeof(buf) + 1));
+            break;
+        }
+        case 3: {
+            uint64_t m = sigmask(1 + kfuzz_rand_below(r, NSIG - 1));
+            signal_procmask((int)kfuzz_rand_below(r, 3), m, 0);
+            break;
+        }
+        case 4:
+            /* clear any pending so a stray terminate signal can't end us */
+            signal_procmask(SIG_SETMASK, 0, 0);
+            (void)signal_take_terminate();
+            break;
+        }
+    }
+    tty_termios()->c_lflag = ICANON | ECHO | ISIG;    /* restore a sane default */
+    signal_procmask(SIG_SETMASK, 0, 0);
+    while (signal_take_terminate()) { }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -467,6 +508,7 @@ static const kfuzz_target_t g_targets[] = {
     { "netrx",   t_netrx,   KFUZZ_T_NETRX,   t_netrx_cleanup },
     { "vmspace", t_vmspace, KFUZZ_T_VMSPACE, NULL },
     { "vfs",     t_vfs,     KFUZZ_T_VFS,     NULL },
+    { "tty",     t_tty,     KFUZZ_T_TTY,     NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

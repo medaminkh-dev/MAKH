@@ -332,7 +332,10 @@ int sched_wait_event(wait_queue_t* wq, uint64_t timeout_ticks, irqflags_t flags)
     wq_remove(wq, cur);
     sleep_remove(cur);
     int timed = cur->timed_out;
+    int intr = cur->sig_interrupt;      /* Phase 19: a signal woke us */
+    cur->sig_interrupt = 0;
     local_irq_restore(flags);
+    if (intr) return 2;                 /* EINTR: caller should re-check signals */
     return timed;
 }
 
@@ -397,6 +400,7 @@ process_t* thread_create(thread_entry_t entry, void* arg,
     if (pid == 0) { kfree(stack); proc_table_free(t); return NULL; }
 
     t->pid = pid;
+    t->pgid = pid; t->sid = pid;   /* Phase 19: own group/session by default */
     t->state = PROC_EMBRYO;
     t->priority = priority < PRIO_LEVELS ? priority : PRIO_DEFAULT;
     t->kernel_stack = (uint64_t)stack;

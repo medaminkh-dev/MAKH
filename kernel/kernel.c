@@ -24,6 +24,7 @@
 #include <mm/page.h>
 #include <multiboot.h>
 #include <fs/vfs.h>
+#include <tty.h>
 #include <shell.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
@@ -847,6 +848,7 @@ void kernel_main(void) {
     /* Phase 18: filesystem — root tmpfs, device nodes, and the initrd. */
     vfs_init();
     devfs_mount("/dev");
+    tty_init();                 /* Phase 19: terminal line discipline */
     multiboot_parse(multiboot_info_ptr);
     struct multiboot_tag_module* mod =
         (struct multiboot_tag_module*)multiboot_find_tag(MULTIBOOT_TAG_TYPE_MODULE);

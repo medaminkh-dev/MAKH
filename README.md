@@ -188,6 +188,7 @@ CI runs the suite and a stress job on every push.
 | 16 | Ring-3 userspace: syscall/sysret ABI, uaccess, fault containment | ✅ [docs](docs/PHASE16_USERSPACE.md) |
 | 17 | VM v2: per-process address spaces, copy-on-write, NX/W^X | ✅ [docs](docs/PHASE17_VMV2.md) |
 | 18 | Filesystem: VFS, tmpfs, devfs, tar initrd, fd/syscalls | ✅ [docs](docs/PHASE18_VFS.md) |
+| 19 | Signals, process groups, TTY line discipline (Ctrl+C / job control) | ✅ [docs](docs/PHASE19_SIGNALS_TTY.md) |
 
 ## 📚 Documentation
 

@@ -110,6 +110,11 @@ C_SOURCES_FS = \
     kernel/fs/devfs.c \
     kernel/fs/tar.c
 
+# C source files - Signals & TTY (Phase 19)
+C_SOURCES_SIG = \
+    kernel/signal/signal.c \
+    kernel/tty/tty.c
+
 # C source files - Process Management (Split into modules)
 C_SOURCES_PROC = \
     kernel/proc/core/core.c \
@@ -133,7 +138,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_kfuzz.c \
     kernel/tests/test_user.c \
     kernel/tests/test_vm.c \
-    kernel/tests/test_vfs.c
+    kernel/tests/test_vfs.c \
+    kernel/tests/test_signal.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -144,6 +150,7 @@ C_SOURCES = \
     $(C_SOURCES_PROC) \
     $(C_SOURCES_NET) \
     $(C_SOURCES_FS) \
+    $(C_SOURCES_SIG) \
     $(C_SOURCES_TESTS)
 
 # =============================================================================
@@ -168,7 +175,9 @@ COV_SOURCES = \
     kernel/net/socket.c \
     kernel/fs/vfs.c \
     kernel/fs/tmpfs.c \
-    kernel/fs/tar.c
+    kernel/fs/tar.c \
+    kernel/tty/tty.c \
+    kernel/signal/signal.c
 COV_OBJECTS = $(COV_SOURCES:.c=.o)
 $(COV_OBJECTS): CFLAGS += -fsanitize-coverage=trace-pc
 

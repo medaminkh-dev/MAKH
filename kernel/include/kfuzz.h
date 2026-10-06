@@ -33,7 +33,8 @@ typedef enum {
     KFUZZ_T_NETRX  = 1u << 5,
     KFUZZ_T_VMSPACE= 1u << 7,   /* address spaces / COW / refcounts (Phase 17) */
     KFUZZ_T_VFS    = 1u << 8,   /* filesystem ops + tar parser (Phase 18)      */
-    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8),
+    KFUZZ_T_TTY    = 1u << 9,   /* tty line discipline + signal masks (Phase 19) */
+    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 
