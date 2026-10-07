@@ -31,7 +31,41 @@
 #define SYS_GETTIMEOFDAY   96
 #define SYS_CLOCK_GETTIME  228
 #define SYS_GETRANDOM      318
+#define SYS_STAT           4
+#define SYS_FSTAT          5
+#define SYS_FCNTL          72
+#define SYS_GETDENTS64     217
 #define SYS_KILL      62
+
+/* st_mode bits + fcntl + getdents (match kernel fs/vfs.h). */
+#define S_IFMT   0170000
+#define S_IFCHR  0020000
+#define S_IFDIR  0040000
+#define S_IFREG  0100000
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#define F_GETFL  3
+#define F_SETFL  4
+#define DT_DIR   4
+#define DT_REG   8
+
+struct stat {
+    unsigned long st_dev, st_ino, st_nlink;
+    unsigned int  st_mode, st_uid, st_gid, __pad0;
+    unsigned long st_rdev;
+    long st_size, st_blksize, st_blocks;
+    long st_atime_sec, st_atime_nsec;
+    long st_mtime_sec, st_mtime_nsec;
+    long st_ctime_sec, st_ctime_nsec;
+    long __unused[3];
+};
+struct linux_dirent64 {
+    unsigned long  d_ino;
+    long           d_off;
+    unsigned short d_reclen;
+    unsigned char  d_type;
+    char           d_name[];
+};
 
 #define CLOCK_REALTIME   0
 #define CLOCK_MONOTONIC  1
@@ -181,5 +215,19 @@ static inline long ugetrandom(void* buf, unsigned long len, unsigned int flags) 
 static inline long usleep_ms(long ms) {
     struct timespec r = { ms / 1000, (ms % 1000) * 1000000L };
     return unanosleep(&r, 0);
+}
+
+/* --- metadata / listing / fcntl (Phase 20-J) --- */
+static inline long ustat(const char* path, struct stat* st) {
+    return usyscall(SYS_STAT, (long)path, (long)st, 0);
+}
+static inline long ufstat(int fd, struct stat* st) {
+    return usyscall(SYS_FSTAT, fd, (long)st, 0);
+}
+static inline long ugetdents64(int fd, void* buf, unsigned long n) {
+    return usyscall(SYS_GETDENTS64, fd, (long)buf, (long)n);
+}
+static inline long ufcntl(int fd, int cmd, long arg) {
+    return usyscall(SYS_FCNTL, fd, cmd, arg);
 }
 #endif

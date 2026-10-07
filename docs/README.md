@@ -37,6 +37,7 @@ numbers are navigable rather than mysterious.
 | 20-G | User signal handlers: `sigaction`/`sigprocmask`/`sigreturn`, a signal frame on the user stack | [PHASE20G_SIGNALS](PHASE20G_SIGNALS.md) |
 | 20-H | Thread-local storage: `arch_prctl(ARCH_SET_FS)`, per-process FS base | [PHASE20H_TLS](PHASE20H_TLS.md) |
 | 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` | [PHASE20I_TIME_RANDOM](PHASE20I_TIME_RANDOM.md) |
+| 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` | [PHASE20J_STAT](PHASE20J_STAT.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -73,6 +74,8 @@ past gap #1 — toward a libc userland (Stage 1: the syscall surface):
                        (the thread pointer musl needs first)    (musl enabler)
 20-I time + random ... clock_gettime/nanosleep/getrandom     ─▶ libc startup bits
                        (interruptible sleep; xoshiro256** RNG)  (1.1 of Stage 1)
+20-J stat + listing .. stat/fstat/getdents64/fcntl           ─▶ ls/find/opendir
+                       (byte-exact struct stat for musl)        (1.2 of Stage 1)
 ```
 
 ## Doc conventions (phases 16+)

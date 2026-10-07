@@ -28,6 +28,7 @@
 #include <tty.h>
 #include <ktime.h>
 #include <krandom.h>
+#include <mm/kheap.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -311,6 +312,43 @@ static int64_t do_sigprocmask(uint64_t how, uint64_t set, uint64_t uoldset) {
     return 0;
 }
 
+/* File metadata / listing / fcntl (Phase 20-J). stat/fstat copy a fixed struct
+ * out; getdents64 fills a kernel buffer then copies it; fcntl is thin. */
+static int64_t do_stat(uint64_t upath, uint64_t ust, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    struct stat st;
+    rc = vfs_stat(abs, &st);
+    if (rc < 0) return rc;
+    if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int64_t do_fstat(uint64_t fd, uint64_t ust) {
+    struct stat st;
+    int rc = vfs_fstat((int)fd, &st);
+    if (rc < 0) return rc;
+    if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int64_t do_getdents64(uint64_t fd, uint64_t ubuf, uint64_t count) {
+    size_t cap = count < 4096 ? (size_t)count : 4096;
+    if (cap == 0) return 0;
+    void* kbuf = kmalloc(cap);
+    if (!kbuf) return -ENOMEM;
+    long r = vfs_getdents((int)fd, kbuf, cap);
+    if (r > 0 && copy_to_user((void*)(uintptr_t)ubuf, kbuf, (size_t)r) < 0) r = -EFAULT;
+    kfree(kbuf);
+    return r;
+}
+
+static int64_t do_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
+    return vfs_fcntl((int)fd, (int)cmd, (long)arg);
+}
+
 /* Time + randomness (Phase 20-I). nanosleep parks on a wait queue nothing ever
  * wakes, so only its own timeout or a signal ends it (interruptible -> -EINTR).
  * (sleep_wq is declared near the top so syscall_init can wq_init it.) */
@@ -420,6 +458,11 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_GETTIMEOFDAY:   return do_gettimeofday(a1, a2);
         case SYS_NANOSLEEP:      return do_nanosleep(a1, a2);
         case SYS_GETRANDOM:      return do_getrandom(a1, a2, a3);
+        case SYS_STAT:
+        case SYS_LSTAT:          return do_stat(a1, a2, from_user);   /* no symlinks */
+        case SYS_FSTAT:          return do_fstat(a1, a2);
+        case SYS_GETDENTS64:     return do_getdents64(a1, a2, a3);
+        case SYS_FCNTL:          return do_fcntl(a1, a2, a3);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */

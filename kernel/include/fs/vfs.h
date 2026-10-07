@@ -68,10 +68,66 @@ typedef struct file {
 #define O_TRUNC    0x0200
 #define O_APPEND   0x0400
 
+/* open() more flags (accepted; mostly advisory here). */
+#define O_DIRECTORY 0x10000
+#define O_CLOEXEC   0x80000
+#define O_NONBLOCK  0x0800
+
 /* lseek() whence. */
 #define SEEK_SET   0
 #define SEEK_CUR   1
 #define SEEK_END   2
+
+/* fcntl() commands (subset). */
+#define F_DUPFD   0
+#define F_GETFD   1
+#define F_SETFD   2
+#define F_GETFL   3
+#define F_SETFL   4
+
+/* st_mode type bits + S_IS* helpers (POSIX values). */
+#define S_IFMT    0170000
+#define S_IFCHR   0020000
+#define S_IFDIR   0040000
+#define S_IFREG   0100000
+#define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
+#define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
+#define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
+
+/* getdents64 d_type values. */
+#define DT_UNKNOWN 0
+#define DT_CHR     2
+#define DT_DIR     4
+#define DT_REG     8
+
+/* struct stat — Linux x86-64 layout, byte-for-byte, so a future musl sees the
+ * fields at the offsets it expects. timespecs are embedded as sec/nsec pairs. */
+struct stat {
+    uint64_t st_dev;
+    uint64_t st_ino;
+    uint64_t st_nlink;
+    uint32_t st_mode;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t __pad0;
+    uint64_t st_rdev;
+    int64_t  st_size;
+    int64_t  st_blksize;
+    int64_t  st_blocks;
+    int64_t  st_atime_sec,  st_atime_nsec;
+    int64_t  st_mtime_sec,  st_mtime_nsec;
+    int64_t  st_ctime_sec,  st_ctime_nsec;
+    int64_t  __unused[3];
+};
+
+/* struct linux_dirent64 — the getdents64 record (variable-length name). */
+struct linux_dirent64 {
+    uint64_t d_ino;
+    int64_t  d_off;
+    uint16_t d_reclen;
+    uint8_t  d_type;
+    char     d_name[];
+};
 
 /* -------- lifecycle -------- */
 void      vfs_init(void);                 /* mount a tmpfs as "/" */
@@ -106,6 +162,12 @@ long      vfs_fd_write(int fd, const void* buf, size_t n);
 long      vfs_lseek(int fd, long off, int whence);
 int       vfs_close(int fd);
 file_t*   vfs_file(int fd);               /* raw file for a fd, or NULL */
+
+/* -------- metadata / listing / fcntl (Phase 20-J) -------- */
+int       vfs_stat(const char* path, struct stat* st);
+int       vfs_fstat(int fd, struct stat* st);
+long      vfs_getdents(int fd, void* buf, size_t n);   /* bytes, 0 at end */
+long      vfs_fcntl(int fd, int cmd, long arg);
 
 /* -------- filesystem constructors -------- */
 vnode_t*  tmpfs_create_root(void);        /* fs/tmpfs.c */

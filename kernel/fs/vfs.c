@@ -210,3 +210,99 @@ int vfs_close(int fd) {
     t[fd] = NULL;
     return 0;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Metadata / listing / fcntl (Phase 20-J)                                    */
+/* -------------------------------------------------------------------------- */
+
+static void fill_stat(vnode_t* vn, struct stat* st) {
+    memset(st, 0, sizeof(*st));
+    uint32_t mode;
+    switch (vn->type) {
+        case VNODE_DIR: mode = S_IFDIR | 0755; break;
+        case VNODE_CHR: mode = S_IFCHR | 0666; break;
+        default:        mode = S_IFREG | 0644; break;
+    }
+    st->st_mode    = mode;
+    st->st_nlink   = 1;
+    st->st_size    = (int64_t)vn->size;
+    st->st_blksize = 4096;
+    st->st_blocks  = (int64_t)((vn->size + 511) / 512);
+    st->st_ino     = (uint64_t)(uintptr_t)vn;   /* stable per-vnode identity */
+}
+
+int vfs_stat(const char* path, struct stat* st) {
+    vnode_t* vn = vfs_resolve(path);
+    if (!vn) return -ENOENT;
+    fill_stat(vn, st);
+    return 0;
+}
+
+int vfs_fstat(int fd, struct stat* st) {
+    if (fd >= 0 && fd <= 2) {                   /* the console/tty: a char device */
+        memset(st, 0, sizeof(*st));
+        st->st_mode  = S_IFCHR | 0620;
+        st->st_nlink = 1;
+        st->st_rdev  = 0x0501;                  /* arbitrary (major 5, minor 1) */
+        return 0;
+    }
+    file_t* f = vfs_file(fd);
+    if (!f || !f->vnode) return -EBADF;
+    fill_stat(f->vnode, st);
+    return 0;
+}
+
+/* getdents64 into a kernel buffer; returns bytes written (0 at end of dir). */
+long vfs_getdents(int fd, void* buf, size_t n) {
+    file_t* f = vfs_file(fd);
+    if (!f || !f->vnode) return -EBADF;
+    vnode_t* dir = f->vnode;
+    if (dir->type != VNODE_DIR || !dir->ops || !dir->ops->readdir) return -ENOTDIR;
+
+    const size_t hdr = __builtin_offsetof(struct linux_dirent64, d_name);
+    uint8_t* out = (uint8_t*)buf;
+    size_t used = 0;
+    char name[VFS_NAME_MAX + 1];
+
+    for (;;) {
+        uint32_t idx = (uint32_t)f->offset;
+        if (dir->ops->readdir(dir, idx, name) != 0) break;       /* end of dir */
+        size_t namelen = strlen(name);
+        size_t reclen = (hdr + namelen + 1 + 7) & ~(size_t)7;    /* 8-aligned */
+        if (used + reclen > n) {
+            if (used == 0) return -EINVAL;      /* buffer can't hold one entry */
+            break;                               /* resume here next call */
+        }
+        struct linux_dirent64* d = (struct linux_dirent64*)(out + used);
+        d->d_ino    = (uint64_t)idx + 1;
+        d->d_off    = (int64_t)idx + 1;
+        d->d_reclen = (uint16_t)reclen;
+        d->d_type   = DT_UNKNOWN;
+        if (dir->ops->lookup) {
+            vnode_t* c = dir->ops->lookup(dir, name);
+            if (c) d->d_type = (c->type == VNODE_DIR) ? DT_DIR
+                             : (c->type == VNODE_CHR) ? DT_CHR : DT_REG;
+        }
+        memcpy(d->d_name, name, namelen);
+        for (size_t p = hdr + namelen; p < reclen; p++) out[used + p] = 0; /* pad+NUL */
+        used += reclen;
+        f->offset++;
+    }
+    return (long)used;
+}
+
+long vfs_fcntl(int fd, int cmd, long arg) {
+    file_t* f = vfs_file(fd);
+    if (!f && (fd < 0 || fd > 2)) return -EBADF;   /* 0/1/2 have no file_t */
+    switch (cmd) {
+        case F_GETFL: return f ? f->flags : O_RDWR;
+        case F_SETFL:
+            if (f) f->flags = (f->flags & ~(O_APPEND | O_NONBLOCK))
+                            | ((int)arg & (O_APPEND | O_NONBLOCK));
+            return 0;
+        case F_GETFD: return 0;                    /* no FD_CLOEXEC tracking yet */
+        case F_SETFD: return 0;                    /* accept, ignore */
+        case F_DUPFD: return -EINVAL;              /* dup arrives with 1.3 */
+        default:      return -EINVAL;
+    }
+}

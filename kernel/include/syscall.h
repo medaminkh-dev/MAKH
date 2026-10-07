@@ -20,6 +20,11 @@
 #define SYS_RT_SIGPROCMASK 14
 #define SYS_RT_SIGRETURN   15
 #define SYS_ARCH_PRCTL     158
+#define SYS_STAT           4
+#define SYS_FSTAT          5
+#define SYS_LSTAT          6
+#define SYS_FCNTL          72
+#define SYS_GETDENTS64     217
 #define SYS_NANOSLEEP      35
 #define SYS_GETTIMEOFDAY   96
 #define SYS_CLOCK_GETTIME  228
