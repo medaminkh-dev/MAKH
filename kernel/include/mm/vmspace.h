@@ -48,6 +48,13 @@ int  vmspace_map(address_space_t* as, uint64_t va, uint64_t phys, uint64_t flags
 /* Physical frame backing `va`, or 0 if unmapped. */
 uint64_t vmspace_phys(address_space_t* as, uint64_t va);
 
+/* Drop the mapping at `va`, releasing its frame. 0 if unmapped, -1 if none. */
+int  vmspace_unmap(address_space_t* as, uint64_t va);
+
+/* Change the leaf protection (PAGE_WRITABLE / PAGE_NO_EXECUTE) at `va`, keeping
+ * the frame. COW pages stay COW. 0 on success, -1 if `va` is unmapped. */
+int  vmspace_protect(address_space_t* as, uint64_t va, uint64_t flags);
+
 /* COW-fork `parent` into `child` (which must be uninitialised): the user
  * region becomes shared copy-on-write in both. Returns 0 or -1. */
 int  vmspace_fork(address_space_t* parent, address_space_t* child);

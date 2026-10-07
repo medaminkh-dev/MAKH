@@ -164,6 +164,48 @@ int vmspace_cow_fault(address_space_t* as, uint64_t va) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* unmap / protect (Phase 20-B: the primitives munmap and mprotect ride on)    */
+/* -------------------------------------------------------------------------- */
+
+/* Drop the mapping at `va`: clear the leaf PTE and release its frame (freeing
+ * it when the last reference goes). Returns 0 if a page was unmapped, -1 if
+ * nothing was mapped there. Flushes the TLB entry when `as` is active. */
+int vmspace_unmap(address_space_t* as, uint64_t va) {
+    uint64_t* slot = leaf_slot(as->pml4_phys, va, 0);
+    if (!slot || !(*slot & PAGE_PRESENT)) return -1;
+    uint64_t phys = *slot & PTE_PHYS_MASK;
+    *slot = 0;
+    page_decref(phys);
+
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    if ((cr3 & PTE_PHYS_MASK) == (as->pml4_phys & PTE_PHYS_MASK))
+        vmm_invlpg(va);
+    return 0;
+}
+
+/* Change the protection of the page at `va` to `flags` (the leaf bits
+ * PAGE_WRITABLE / PAGE_NO_EXECUTE). The frame and PRESENT|USER are kept. A COW
+ * page is never force-made-writable here: it stays COW so a write still takes
+ * a private copy, which keeps fork isolation intact. Returns 0, or -1 if `va`
+ * is not mapped. Flushes the TLB entry when `as` is active. */
+int vmspace_protect(address_space_t* as, uint64_t va, uint64_t flags) {
+    uint64_t* slot = leaf_slot(as->pml4_phys, va, 0);
+    if (!slot || !(*slot & PAGE_PRESENT)) return -1;
+    uint64_t e = *slot;
+    uint64_t newe = (e & PTE_PHYS_MASK) | PAGE_PRESENT | PAGE_USER | (e & PAGE_COW);
+    if ((flags & PAGE_WRITABLE) && !(e & PAGE_COW)) newe |= PAGE_WRITABLE;
+    if (flags & PAGE_NO_EXECUTE) newe |= PAGE_NO_EXECUTE;
+    *slot = newe;
+
+    uint64_t cr3;
+    __asm__ volatile("mov %%cr3, %0" : "=r"(cr3));
+    if ((cr3 & PTE_PHYS_MASK) == (as->pml4_phys & PTE_PHYS_MASK))
+        vmm_invlpg(va);
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* destroy                                                                     */
 /* -------------------------------------------------------------------------- */
 

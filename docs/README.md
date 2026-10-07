@@ -28,6 +28,7 @@ numbers are navigable rather than mysterious.
 | 18 | Filesystem: VFS, tmpfs, devfs, tar initrd, fd/syscalls | [PHASE18_VFS](PHASE18_VFS.md) |
 | 19 | Signals, process groups, TTY line discipline | [PHASE19_SIGNALS_TTY](PHASE19_SIGNALS_TTY.md) |
 | 20-A | The user process model: ELF load, preemptible ring 3, `waitpid` | [PHASE20A_PROCESS_MODEL](PHASE20A_PROCESS_MODEL.md) |
+| 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | [PHASE20B_MMAP_BRK](PHASE20B_MMAP_BRK.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -46,7 +47,8 @@ is always visible:
 19  signals / tty .... "SIGCHLD/waitpid need a process"    ─┘    into a real,
                                                                  scheduled,
 20-A user process .... fork/execve/cwd/tty-read ─▶ 20-A-2        preemptible
-                                                                 user process
+20-B anon memory ..... brk + mmap/munmap/mprotect              user process
+                       (what malloc stands on)
 ```
 
 ## Doc conventions (phases 16+)

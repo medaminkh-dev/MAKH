@@ -126,6 +126,11 @@ typedef struct process {
     uint64_t user_stack;          // ring-3 initial RSP
     wait_queue_t child_wq;        // parent blocks here in waitpid() for a child to exit
 
+    // -------- Phase 20-B: anonymous memory (brk / mmap) --------
+    uint64_t brk_start;           // base of the program break region
+    uint64_t brk_cur;             // current program break (grows up)
+    uint64_t mmap_cur;            // next anonymous mmap address (bump allocator)
+
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)
     void*   retval;               // pthread return / exit value

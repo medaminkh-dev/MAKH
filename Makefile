@@ -82,7 +82,8 @@ C_SOURCES_MM = \
     kernel/mm/vmm.c \
     kernel/mm/kheap.c \
     kernel/mm/page.c \
-    kernel/mm/vmspace.c
+    kernel/mm/vmspace.c \
+    kernel/mm/uvm.c
 
 # C source files - Drivers
 C_SOURCES_DRIVERS = \
@@ -142,7 +143,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_vm.c \
     kernel/tests/test_vfs.c \
     kernel/tests/test_signal.c \
-    kernel/tests/test_proc.c
+    kernel/tests/test_proc.c \
+    kernel/tests/test_uvm.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -167,6 +169,7 @@ COV_SOURCES = \
     kernel/mm/pmm.c \
     kernel/mm/page.c \
     kernel/mm/vmspace.c \
+    kernel/mm/uvm.c \
     kernel/lib/string.c \
     kernel/shell/shell.c \
     kernel/net/eth.c \
@@ -194,7 +197,8 @@ INITRD = initrd.tar
 UCC      = $(CC)
 UCFLAGS  = -ffreestanding -nostdlib -fno-pie -mno-red-zone -mcmodel=large -O2 -Wall -Iuser
 ULDFLAGS = -T user/user.ld -nostdlib -no-pie -z noexecstack
-USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulter
+USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulter \
+            build/user/vmtest build/user/mprotfault
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

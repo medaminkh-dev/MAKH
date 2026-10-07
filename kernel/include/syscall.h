@@ -16,6 +16,10 @@
 #define SYS_WRITE       1
 #define SYS_OPEN        2
 #define SYS_LSEEK       8
+#define SYS_MMAP        9
+#define SYS_MPROTECT    10
+#define SYS_MUNMAP      11
+#define SYS_BRK         12
 #define SYS_CLOSE       3
 #define SYS_GETPID      39
 #define SYS_EXIT        60
@@ -23,6 +27,16 @@
 
 #define SYS_MAKH_GETTICKS  0x200
 #define SYS_MAKH_SLEEP_MS  0x201
+
+/* mmap/mprotect protection bits and flags (Linux ABI subset, Phase 20-B). */
+#define PROT_NONE       0x0
+#define PROT_READ       0x1
+#define PROT_WRITE      0x2
+#define PROT_EXEC       0x4
+
+#define MAP_PRIVATE     0x02
+#define MAP_ANONYMOUS   0x20
+#define MAP_FAILED      (-1L)   /* mmap returns this (as a pointer) on failure */
 
 /* Set up EFER.SCE, STAR/LSTAR/FMASK so `syscall` from ring 3 traps correctly. */
 void syscall_init(void);

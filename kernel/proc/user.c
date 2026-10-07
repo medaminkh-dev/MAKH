@@ -22,6 +22,7 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <mm/kheap.h>
+#include <mm/uvm.h>
 #include <lib/string.h>
 #include <errno.h>
 #include <klog.h>
@@ -80,6 +81,8 @@ int proc_spawn_user(const char* path) {
     t->user_entry = entry;
     t->user_stack = ustack;
     t->context.cr3 = as->pml4_phys;      /* run in its own address space */
+    t->brk_start = t->brk_cur = USER_HEAP_BASE;   /* Phase 20-B: empty heap */
+    t->mmap_cur  = USER_MMAP_BASE;                /* mmap arena bump pointer */
     preempt_enable();
     return (int)t->pid;
 }

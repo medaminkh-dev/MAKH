@@ -31,6 +31,8 @@
 #include <tty.h>
 #include <signal.h>
 #include <elf.h>
+#include <mm/uvm.h>
+#include <syscall.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -557,6 +559,70 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 11. Anonymous memory: random mmap/munmap/mprotect/brk (Phase 20-B)           */
+/* -------------------------------------------------------------------------- */
+/*
+ * Drive the brk/mmap engine with a random stream of operations against one
+ * throwaway address space, tracking the live mmap regions so they can be
+ * unmapped again. The oracle is strict page conservation across the whole
+ * campaign: create space -> (random ops) -> destroy must return every frame,
+ * so a leak (a rolled-back mmap that forgot a frame, a munmap that failed to
+ * free) or a double free shows up immediately.
+ */
+#define UVM_FZ_LIVE 16
+
+static int t_uvm(kfuzz_rng_t* r, uint32_t iters) {
+    size_t base = pmm_get_free_memory();
+    address_space_t as;
+    if (vmspace_create(&as) != 0) return 0;
+
+    uint64_t mmap_cur = USER_MMAP_BASE;
+    uint64_t brk_cur  = USER_HEAP_BASE;
+    struct { uint64_t va, len; } live[UVM_FZ_LIVE];
+    int nlive = 0;
+
+    for (uint32_t it = 0; it < iters; it++) {
+        switch (kfuzz_rand_below(r, 5)) {
+        case 0: {                                   /* mmap */
+            uint64_t len = (1 + (uint64_t)kfuzz_rand_below(r, 8)) * 4096;
+            int prot = PROT_READ | ((kfuzz_rand(r) & 1) ? PROT_WRITE : 0);
+            long a = uvm_mmap(&as, &mmap_cur, len, prot,
+                              MAP_ANONYMOUS | MAP_PRIVATE);
+            if (a > 0 && nlive < UVM_FZ_LIVE) {
+                live[nlive].va = (uint64_t)a; live[nlive].len = len; nlive++;
+            }
+            break;
+        }
+        case 1:                                     /* munmap a live region */
+            if (nlive) {
+                int k = (int)kfuzz_rand_below(r, (uint32_t)nlive);
+                uvm_munmap(&as, live[k].va, live[k].len);
+                live[k] = live[--nlive];
+            }
+            break;
+        case 2:                                     /* mprotect a live region */
+            if (nlive) {
+                int k = (int)kfuzz_rand_below(r, (uint32_t)nlive);
+                int prot = (kfuzz_rand(r) & 1) ? (PROT_READ | PROT_WRITE) : PROT_READ;
+                uvm_mprotect(&as, live[k].va, live[k].len, prot);
+            }
+            break;
+        case 3:                                     /* brk grow */
+            uvm_brk(&as, &brk_cur, USER_HEAP_BASE,
+                    brk_cur + (uint64_t)kfuzz_rand_below(r, 8) * 4096);
+            break;
+        case 4:                                     /* brk shrink/reset */
+            uvm_brk(&as, &brk_cur, USER_HEAP_BASE,
+                    USER_HEAP_BASE + (uint64_t)kfuzz_rand_below(r, 32) * 4096);
+            break;
+        }
+    }
+
+    vmspace_destroy(&as);                            /* frees whatever is left */
+    return pmm_get_free_memory() == base ? 0 : -1;   /* no leak / no double free */
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -587,6 +653,7 @@ static const kfuzz_target_t g_targets[] = {
     { "vfs",     t_vfs,     KFUZZ_T_VFS,     NULL },
     { "tty",     t_tty,     KFUZZ_T_TTY,     NULL },
     { "elf",     t_elf,     KFUZZ_T_ELF,     NULL },
+    { "uvm",     t_uvm,     KFUZZ_T_UVM,     NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

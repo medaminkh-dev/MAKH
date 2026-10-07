@@ -24,6 +24,7 @@
 #include <lib/string.h>
 #include <fs/vfs.h>
 #include <signal.h>
+#include <mm/uvm.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -136,17 +137,51 @@ static int64_t do_getpid(void) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Anonymous memory (Phase 20-B): operate on the calling process's space.      */
+/* -------------------------------------------------------------------------- */
+
+static int64_t do_mmap(uint64_t addr, uint64_t len, uint64_t prot, uint64_t flags) {
+    (void)addr;                                  /* hint ignored: we bump-allocate */
+    process_t* p = current_process;
+    if (!p || !p->is_user || !p->aspace) return -ENOSYS;
+    return uvm_mmap((address_space_t*)p->aspace, &p->mmap_cur, len,
+                    (int)prot, (int)flags);
+}
+
+static int64_t do_munmap(uint64_t addr, uint64_t len) {
+    process_t* p = current_process;
+    if (!p || !p->is_user || !p->aspace) return -ENOSYS;
+    return uvm_munmap((address_space_t*)p->aspace, addr, len);
+}
+
+static int64_t do_mprotect(uint64_t addr, uint64_t len, uint64_t prot) {
+    process_t* p = current_process;
+    if (!p || !p->is_user || !p->aspace) return -ENOSYS;
+    return uvm_mprotect((address_space_t*)p->aspace, addr, len, (int)prot);
+}
+
+static int64_t do_brk(uint64_t newbrk) {
+    process_t* p = current_process;
+    if (!p || !p->is_user || !p->aspace) return -ENOSYS;
+    return uvm_brk((address_space_t*)p->aspace, &p->brk_cur, p->brk_start, newbrk);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
 
 static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
-                        int from_user) {
+                        uint64_t a4, int from_user) {
     switch (num) {
         case SYS_WRITE:        return do_write(a1, a2, a3, from_user);
         case SYS_READ:         return do_read(a1, a2, a3, from_user);
         case SYS_OPEN:         return do_open(a1, a2, from_user);
         case SYS_CLOSE:        return vfs_close((int)a1);
         case SYS_LSEEK:        return vfs_lseek((int)a1, (long)a2, (int)a3);
+        case SYS_MMAP:         return do_mmap(a1, a2, a3, a4);
+        case SYS_MUNMAP:       return do_munmap(a1, a2);
+        case SYS_MPROTECT:     return do_mprotect(a1, a2, a3);
+        case SYS_BRK:          return do_brk(a1);
         case SYS_GETPID:       return do_getpid();
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
@@ -168,12 +203,14 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
 
 uint64_t syscall_dispatch(trapframe_t* tf) {
     /* System V/Linux argument registers were saved in the trapframe; the
-     * number is in int_no (see usermode.asm). */
-    int64_t rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, /*from_user*/1);
+     * number is in int_no (see usermode.asm). The 4th argument is r10 (the
+     * syscall ABI's replacement for rcx, which `syscall` clobbers). */
+    int64_t rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, tf->r10,
+                          /*from_user*/1);
     tf->rax = (uint64_t)rc;
     return (uint64_t)rc;
 }
 
 int64_t syscall_handler(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3) {
-    return dispatch(num, a1, a2, a3, /*from_user*/0);
+    return dispatch(num, a1, a2, a3, 0, /*from_user*/0);
 }
