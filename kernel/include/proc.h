@@ -123,6 +123,9 @@ typedef struct process {
     uint64_t sig_handlers[32];    // per-signal handler VA (0 = SIG_DFL); NSIG == 32
     uint64_t sig_restorer;        // user trampoline that calls sigreturn (sa_restorer)
 
+    // -------- Phase 20-H: thread-local storage base (arch_prctl SET_FS) --------
+    uint64_t fs_base;             // IA32_FS_BASE for this process (TLS); 0 until set
+
     // -------- Phase 20-A: user process model --------
     void*    aspace;              // address_space_t* for a user process (NULL => kernel thread)
     uint8_t  is_user;             // 1 => scheduled user process (ring 3)

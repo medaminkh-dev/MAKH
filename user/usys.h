@@ -26,7 +26,11 @@
 #define SYS_RT_SIGACTION   13
 #define SYS_RT_SIGPROCMASK 14
 #define SYS_RT_SIGRETURN   15
+#define SYS_ARCH_PRCTL     158
 #define SYS_KILL      62
+
+#define ARCH_SET_FS   0x1002
+#define ARCH_GET_FS   0x1003
 
 #define TIOCGPGRP     0x540F
 #define TIOCSPGRP     0x5410
@@ -142,5 +146,13 @@ static inline long usignal(int sig, void (*handler)(int)) {
 /* 64-bit signal mask by value; *oldset (if non-NULL) gets the prior mask. */
 static inline long usigprocmask(int how, unsigned long set, unsigned long* oldset) {
     return usyscall(SYS_RT_SIGPROCMASK, how, (long)set, (long)oldset);
+}
+
+/* --- arch_prctl: thread-local-storage base (Phase 20-H) --- */
+static inline long uarch_prctl(int code, unsigned long addr) {
+    return usyscall(SYS_ARCH_PRCTL, code, (long)addr, 0);
+}
+static inline long uset_fs(void* tls) {
+    return uarch_prctl(ARCH_SET_FS, (unsigned long)tls);
 }
 #endif

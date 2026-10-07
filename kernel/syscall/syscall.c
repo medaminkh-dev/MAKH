@@ -304,6 +304,26 @@ static int64_t do_sigprocmask(uint64_t how, uint64_t set, uint64_t uoldset) {
     return 0;
 }
 
+/* arch_prctl(code, addr): set/get the FS base (the thread pointer for TLS).
+ * Only FS is user-owned; GS belongs to the kernel (swapgs), so it is refused.
+ * The base is stored in the PCB and re-pinned every context switch. */
+static int64_t do_arch_prctl(uint64_t code, uint64_t addr) {
+    process_t* cur = current_process;
+    if (!cur || !cur->is_user) return -ENOSYS;
+    switch (code) {
+        case ARCH_SET_FS:
+            cur->fs_base = addr;
+            wrmsr(IA32_FS_BASE, addr);          /* effective immediately */
+            return 0;
+        case ARCH_GET_FS:
+            if (copy_to_user((void*)(uintptr_t)addr, &cur->fs_base, 8) < 0)
+                return -EFAULT;
+            return 0;
+        default:
+            return -EINVAL;                      /* SET_GS/GET_GS unsupported */
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -328,6 +348,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_IOCTL:        return do_ioctl(a1, a2, a3, from_user);
         case SYS_RT_SIGACTION:   return do_sigaction(a1, a2, a3);
         case SYS_RT_SIGPROCMASK: return do_sigprocmask(a1, a2, a3);
+        case SYS_ARCH_PRCTL:     return do_arch_prctl(a1, a2);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */

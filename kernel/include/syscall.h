@@ -19,7 +19,12 @@
 #define SYS_RT_SIGACTION   13
 #define SYS_RT_SIGPROCMASK 14
 #define SYS_RT_SIGRETURN   15
+#define SYS_ARCH_PRCTL     158
 #define SYS_LSEEK       8
+
+/* arch_prctl codes (Phase 20-H). */
+#define ARCH_SET_FS   0x1002
+#define ARCH_GET_FS   0x1003
 #define SYS_MMAP        9
 #define SYS_MPROTECT    10
 #define SYS_MUNMAP      11

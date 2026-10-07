@@ -62,6 +62,12 @@ void arch_prepare_switch(struct process* next) {
     }
     wrmsr(IA32_GS_BASE, (uint64_t)(uintptr_t)&boot_cpu);
     wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)(uintptr_t)&boot_cpu);
+    /* Restore the thread-local-storage base (arch_prctl SET_FS, Phase 20-H).
+     * FS is user-owned — the kernel never reads it — so this is the only place
+     * it needs tending: 0 for a kernel thread, the process's TLS base otherwise.
+     * context_switch saves/restores GP regs but not MSRs, so FS base lives in
+     * the PCB and is re-pinned here, exactly like the TSS stack and GS base. */
+    wrmsr(IA32_FS_BASE, next->fs_base);
     boot_cpu.current = next;
 }
 
