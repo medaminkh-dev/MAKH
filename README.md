@@ -189,11 +189,15 @@ CI runs the suite and a stress job on every push.
 | 17 | VM v2: per-process address spaces, copy-on-write, NX/W^X | ✅ [docs](docs/PHASE17_VMV2.md) |
 | 18 | Filesystem: VFS, tmpfs, devfs, tar initrd, fd/syscalls | ✅ [docs](docs/PHASE18_VFS.md) |
 | 19 | Signals, process groups, TTY line discipline (Ctrl+C / job control) | ✅ [docs](docs/PHASE19_SIGNALS_TTY.md) |
+| 20-A | User process model: ELF load, preemptible ring 3, per-process address space, `waitpid` | ✅ [docs](docs/PHASE20A_PROCESS_MODEL.md) |
 
 ## 📚 Documentation
 
-Design documents for each phase live in [`docs/`](docs/), including
-[networking](docs/PHASE14_NETWORK.md) and [KFUZZ](docs/PHASE15_KFUZZ.md).
+Every phase has a design document in [`docs/`](docs/); start with the
+[**docs map**](docs/README.md), which threads all phases in order — from boot
+through the [user process model](docs/PHASE20A_PROCESS_MODEL.md), by way of
+[networking](docs/PHASE14_NETWORK.md) and the [KFUZZ](docs/PHASE15_KFUZZ.md)
+self-fuzzer.
 
 ## ⚖️ License
 

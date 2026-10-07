@@ -34,7 +34,8 @@ typedef enum {
     KFUZZ_T_VMSPACE= 1u << 7,   /* address spaces / COW / refcounts (Phase 17) */
     KFUZZ_T_VFS    = 1u << 8,   /* filesystem ops + tar parser (Phase 18)      */
     KFUZZ_T_TTY    = 1u << 9,   /* tty line discipline + signal masks (Phase 19) */
-    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9),
+    KFUZZ_T_ELF    = 1u << 10,  /* ELF64 loader on malformed images (Phase 20-A) */
+    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 

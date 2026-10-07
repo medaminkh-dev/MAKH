@@ -140,6 +140,10 @@ void exception_handler(registers_t* regs) {
      * kernel. (regs->cs carries the privilege level of the faulting code.) */
     if (vector < 32 && (regs->cs & 3) == 3 && usermode_active())
         usermode_fault(vector);
+    if (vector < 32 && (regs->cs & 3) == 3 && proc_current() && proc_current()->is_user) {
+        extern void proc_user_fault(long vector);
+        proc_user_fault(vector);              /* terminate the process (SIGSEGV) */
+    }
 
     /* Phase 15: if a KFUZZ target is running, a CPU fault (vectors 0-31) is a
      * finding, not a fatal event: hand it to the sandbox, which records the

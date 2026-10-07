@@ -22,12 +22,7 @@ void tss_init(void) {
 }
 
 void tss_set_kernel_stack(uint64_t rsp0) {
-    tss.rsp0 = rsp0;
-    terminal_writestring("[TSS] Kernel stack set to 0x");
-    char buf[32];
-    uint64_to_hex(rsp0, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
+    tss.rsp0 = rsp0;   /* quiet: called on every context switch (Phase 20-A) */
 }
 
 void tss_set_ist(uint8_t ist_index, uint64_t stack_top) {

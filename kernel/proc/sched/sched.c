@@ -8,6 +8,9 @@
 #include <lib/string.h>
 #include <mm/kheap.h>
 #include <drivers/timer.h>
+#include <arch/usermode.h>
+#include <signal.h>
+#include <mm/vmspace.h>
 
 /**
  * =============================================================================
@@ -154,6 +157,7 @@ void schedule(void) {
     current_process = next;
 
     if (prev != next) {
+        arch_prepare_switch(next);   /* TSS.rsp0 + GS base for the incoming thread */
         context_switch(prev ? &prev->context : NULL, &next->context);
     }
 
@@ -463,6 +467,11 @@ void proc_add_to_ready(process_t* t) { sched_wake(t); }
 static void reap(process_t* t) {
     /* Caller holds IRQs disabled. Frees everything owned by a dead thread. */
     all_list_remove(t);
+    if (t->aspace) {            /* Phase 20-A: user process address space */
+        vmspace_destroy((address_space_t*)t->aspace);
+        kfree(t->aspace);
+        t->aspace = NULL;
+    }
     if (t->tls) {
         kfree(t->tls);
         t->tls = NULL;
@@ -474,6 +483,14 @@ static void reap(process_t* t) {
     pid_free(t->pid);
     t->reaped = 1;
     proc_table_free(t);
+}
+
+/* Public reap for waitpid(): reap an already-ZOMBIE child under IRQs off. */
+void proc_reap(process_t* t) {
+    if (!t) return;
+    irqflags_t f = local_irq_save();
+    if (!t->reaped) reap(t);
+    local_irq_restore(f);
 }
 
 /* Free any detached threads that have exited. Called by the idle thread, which
@@ -519,6 +536,13 @@ void thread_exit(int code) {
 
     /* Wake any thread blocked in thread_join() on us; it will reap us. */
     wq_wake_all(&cur->join_wq);
+
+    /* Phase 20-A: notify a parent blocked in waitpid(), and raise SIGCHLD. */
+    process_t* parent = proc_find(cur->parent_pid);
+    if (parent && parent != cur) {
+        wq_wake_all(&parent->child_wq);
+        signal_send(parent, SIGCHLD);
+    }
 
     if (cur->detached) {
         /* No joiner will ever come: hand ourselves to the idle reaper. */

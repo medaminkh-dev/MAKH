@@ -46,6 +46,26 @@ percpu_t* this_cpu(void) { return &boot_cpu; }
 void percpu_set_kernel_rsp(uint64_t rsp_top) { boot_cpu.kernel_rsp = rsp_top; }
 
 /*
+ * Prepare the CPU to run `next`. Called by schedule() just before the context
+ * switch. It points TSS.rsp0 and the per-CPU syscall stack at the thread's own
+ * kernel stack (so a ring-3 trap lands there), and re-pins the GS base to the
+ * per-CPU block. Re-pinning every switch is the bulletproof single-CPU answer
+ * to the fact that `mov gs` in context_switch wipes the active GS base: after
+ * this, both GS bases are &boot_cpu, so any swapgs yields the per-CPU block.
+ */
+void arch_prepare_switch(struct process* next) {
+    extern uint64_t proc_kstack_top(struct process*);   /* small accessor below */
+    uint64_t top = proc_kstack_top(next);
+    if (top) {
+        tss_set_kernel_stack(top);
+        boot_cpu.kernel_rsp = top;
+    }
+    wrmsr(IA32_GS_BASE, (uint64_t)(uintptr_t)&boot_cpu);
+    wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)(uintptr_t)&boot_cpu);
+    boot_cpu.current = next;
+}
+
+/*
  * Dedicated stack for handling traps that arrive from ring 3 (syscall entry,
  * and IRQ/#PF via TSS.rsp0). It MUST be separate from the kernel thread's own
  * C stack: run_user_program() is called from deep inside the kernel call chain

@@ -97,6 +97,7 @@ KTEST(kfuzz, target_netrx)   { run_target(KFUZZ_T_NETRX,   "netrx");   }
 KTEST(kfuzz, target_vmspace) { run_target(KFUZZ_T_VMSPACE, "vmspace"); }
 KTEST(kfuzz, target_vfs)     { run_target(KFUZZ_T_VFS,     "vfs");     }
 KTEST(kfuzz, target_tty)     { run_target(KFUZZ_T_TTY,     "tty");     }
+KTEST(kfuzz, target_elf)     { run_target(KFUZZ_T_ELF,     "elf");     }
 
 KTEST(kfuzz, campaign_over_all_targets_builds_coverage) {
     kfuzz_cov_reset();

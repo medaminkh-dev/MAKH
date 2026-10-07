@@ -20,8 +20,9 @@ enter_user_mode:
     mov es, ax
     push 0x1B                  ; SS
     push rsi                   ; RSP
-    push 0x002                 ; RFLAGS (IF=0: Phase-16 user runs are not
-                               ; preemptible; bit1 is the reserved set bit)
+    push 0x202                 ; RFLAGS: IF=1 so the timer can preempt ring 3
+                               ; (run_user_program stays non-preemptive via
+                               ; preempt_disable; bit1 is the reserved set bit)
     push 0x23                  ; CS  (SEL_USER_CODE)
     push rdi                   ; RIP
     xor rax, rax

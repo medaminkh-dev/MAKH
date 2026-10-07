@@ -105,3 +105,9 @@ void proc_become_current(void) {
     current_process = &init_pcb;
     KLOG_I("PROC", "kernel_main is now init (PID 1)\n");
 }
+
+/* Top of a thread's kernel stack, 16-aligned (used by arch_prepare_switch). */
+uint64_t proc_kstack_top(process_t* p) {
+    if (!p || !p->kernel_stack) return 0;
+    return (p->kernel_stack + p->kernel_stack_size) & ~0xFULL;
+}

@@ -124,7 +124,9 @@ C_SOURCES_PROC = \
     kernel/proc/sched/sched.c \
     kernel/proc/exit/exit.c \
     kernel/proc/table/table.c \
-    kernel/proc/tree/tree.c
+    kernel/proc/tree/tree.c \
+    kernel/proc/elf.c \
+    kernel/proc/user.c
 
 # C source files - In-kernel tests (registered via the .ktests section)
 C_SOURCES_TESTS = \
@@ -139,7 +141,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_user.c \
     kernel/tests/test_vm.c \
     kernel/tests/test_vfs.c \
-    kernel/tests/test_signal.c
+    kernel/tests/test_signal.c \
+    kernel/tests/test_proc.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -177,16 +180,37 @@ COV_SOURCES = \
     kernel/fs/tmpfs.c \
     kernel/fs/tar.c \
     kernel/tty/tty.c \
-    kernel/signal/signal.c
+    kernel/signal/signal.c \
+    kernel/proc/elf.c
 COV_OBJECTS = $(COV_SOURCES:.c=.o)
 $(COV_OBJECTS): CFLAGS += -fsanitize-coverage=trace-pc
 
-# Phase 18: the initrd is a USTAR archive of the initrd/ directory, loaded by
-# GRUB as a multiboot2 module and unpacked into the root tmpfs at boot.
+# Phase 18/20-A: the initrd is a USTAR archive (GRUB module) unpacked into the
+# root tmpfs at boot. It bundles the static initrd/ content plus the user-space
+# ELF programs built from user/.
 INITRD = initrd.tar
-$(INITRD): $(shell find initrd -type f 2>/dev/null)
-	@echo "Building initrd.tar"
-	@(cd initrd && tar -cf ../$(INITRD) --format=ustar *)
+
+# User programs: freestanding static ELF64 linked into the per-process region.
+UCC      = $(CC)
+UCFLAGS  = -ffreestanding -nostdlib -fno-pie -mno-red-zone -mcmodel=large -O2 -Wall -Iuser
+ULDFLAGS = -T user/user.ld -nostdlib -no-pie -z noexecstack
+USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulter
+
+build/user/start.o: user/start.S
+	@mkdir -p build/user
+	@$(UCC) $(UCFLAGS) -c -o $@ $<
+
+build/user/%: user/%.c user/usys.h build/user/start.o user/user.ld
+	@mkdir -p build/user
+	@$(UCC) $(UCFLAGS) -c -o build/user/$*.o $<
+	@$(LD) $(ULDFLAGS) -o $@ build/user/start.o build/user/$*.o
+
+$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS)
+	@echo "Building initrd.tar (+ user programs)"
+	@rm -rf build/initrd && mkdir -p build/initrd/bin
+	@cp -r initrd/. build/initrd/
+	@cp $(USER_BINS) build/initrd/bin/
+	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
 C_OBJECTS   = $(C_SOURCES:.c=.o)

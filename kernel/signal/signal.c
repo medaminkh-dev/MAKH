@@ -26,11 +26,23 @@ static int is_terminate(int sig) {
 /* SIGKILL and SIGSTOP can never be blocked or ignored. */
 static int uncatchable(int sig) { return sig == SIGKILL || sig == SIGSTOP; }
 
+/* A signal is discarded on generation when its effective disposition is to
+ * ignore it: either explicitly (set via signal_set_ignore) or because its
+ * default action is "ignore" (SIGCHLD, SIGCONT, ...). SIGKILL/SIGSTOP can
+ * never be ignored. POSIX: a generated signal with ignore disposition is not
+ * added to the pending set — this is what keeps a child's SIGCHLD from piling
+ * up on a parent that is not catching it. */
+static int effectively_ignored(process_t* t, int sig) {
+    if (uncatchable(sig)) return 0;
+    if (t->sig_ignore & (1u << sig)) return 1;     /* SIG_IGN disposition */
+    return !is_terminate(sig);                     /* SIG_DFL == ignore */
+}
+
 int signal_send(process_t* t, int sig) {
     if (!t || sig <= 0 || sig >= NSIG) return -EINVAL;
 
     irqflags_t f = local_irq_save();
-    if ((t->sig_ignore & (1u << sig)) && !uncatchable(sig)) {
+    if (effectively_ignored(t, sig)) {
         local_irq_restore(f);     /* ignored disposition: drop it */
         return 0;
     }
@@ -55,7 +67,7 @@ int signal_send_pgrp(uint32_t pgid, int sig) {
             /* signal_send takes IRQs off itself; we already hold them, and it
              * is re-entrant on local_irq_save/restore (restore keeps them off
              * while f still says off). To stay simple, set the bit inline. */
-            if ((p->sig_ignore & (1u << sig)) && !uncatchable(sig)) continue;
+            if (effectively_ignored(p, sig)) continue;
             p->sig_pending |= sigmask(sig);
             if ((uncatchable(sig) || !(p->sig_blocked & sigmask(sig))) &&
                 p->state == PROC_BLOCKED) {

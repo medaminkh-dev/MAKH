@@ -30,6 +30,7 @@
 #include <fs/vfs.h>
 #include <tty.h>
 #include <signal.h>
+#include <elf.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -480,6 +481,82 @@ static int t_tty(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 10. ELF loader on malformed images (Phase 20-A)                             */
+/* -------------------------------------------------------------------------- */
+/*
+ * Adversarial reverse-engineering of our own loader: build images that are
+ * mostly a well-formed static ELF64, then corrupt the high-value header and
+ * program-header fields (e_phnum, p_vaddr, p_offset, p_filesz, p_memsz), plus
+ * a slice of pure garbage. elf_load() parses entirely untrusted input, so it
+ * must ALWAYS return an int (0 or -errno) and NEVER fault the kernel or map
+ * outside the private per-process window. The per-iteration oracle is strict
+ * page conservation: create space -> load -> destroy must be net-zero, so a
+ * leaked frame or a double free on any error path is caught immediately.
+ */
+#define ELF_FZ_MAX 512
+
+static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
+    const char* path = "/fz_elf";
+    for (uint32_t it = 0; it < iters; it++) {
+        uint8_t buf[ELF_FZ_MAX];
+        uint32_t n;
+
+        if (kfuzz_rand_below(r, 4) == 0) {
+            n = kfuzz_rand_below(r, ELF_FZ_MAX + 1);     /* pure garbage */
+            kfuzz_fill(r, buf, n);
+        } else {
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;        /* \x7fELF */
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;          /* ELFCLASS64, LE, v1 */
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC */
+            *(uint16_t*)(buf + 18) = 0x3E;               /* x86-64 */
+            *(uint64_t*)(buf + 24) = 0x200000400000ull;  /* e_entry */
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff */
+            *(uint16_t*)(buf + 54) = 56;                 /* e_phentsize */
+            *(uint16_t*)(buf + 56) = 1;                  /* e_phnum */
+            uint8_t* ph = buf + 64;
+            *(uint32_t*)(ph + 0)  = 1;                            /* PT_LOAD */
+            *(uint32_t*)(ph + 4)  = 1 + kfuzz_rand_below(r, 7);   /* RWX mix */
+            *(uint64_t*)(ph + 8)  = kfuzz_rand_below(r, 200);     /* p_offset */
+            *(uint64_t*)(ph + 16) = 0x200000400000ull;           /* p_vaddr */
+            *(uint64_t*)(ph + 32) = kfuzz_rand_below(r, 0x3000);  /* p_filesz */
+            *(uint64_t*)(ph + 40) = kfuzz_rand_below(r, 0x3000);  /* p_memsz */
+            n = 64 + 56 + kfuzz_rand_below(r, 64);
+
+            uint32_t muts = kfuzz_rand_below(r, 8);      /* corrupt some bytes */
+            for (uint32_t m = 0; m < muts; m++)
+                buf[kfuzz_rand_below(r, 120)] = (uint8_t)kfuzz_rand(r);
+
+            /* Occasionally push the window-sensitive fields to wild values:
+             * these must be rejected before any frame is allocated. */
+            if (kfuzz_rand_below(r, 3) == 0) *(uint64_t*)(ph + 16) = kfuzz_rand(r);
+            if (kfuzz_rand_below(r, 3) == 0) *(uint64_t*)(ph + 40) = kfuzz_rand(r);
+            if (kfuzz_rand_below(r, 4) == 0) *(uint16_t*)(buf + 56) = (uint16_t)kfuzz_rand(r);
+        }
+
+        /* Fresh scratch file each time (unlink first so there is no stale tail). */
+        vfs_unlink(path);
+        int fd = vfs_open(path, O_CREAT | O_RDWR);
+        if (fd < 0) continue;
+        vfs_fd_write(fd, buf, n);
+        vfs_close(fd);
+
+        vnode_t* vn = vfs_resolve(path);
+        if (!vn) continue;
+
+        size_t snap = pmm_get_free_memory();
+        address_space_t as;
+        if (vmspace_create(&as) != 0) continue;
+        uint64_t entry = 0;
+        (void)elf_load(vn, &as, &entry);     /* must return, never fault */
+        vmspace_destroy(&as);
+        if (pmm_get_free_memory() != snap) { vfs_unlink(path); return -1; }
+    }
+    vfs_unlink(path);
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -509,6 +586,7 @@ static const kfuzz_target_t g_targets[] = {
     { "vmspace", t_vmspace, KFUZZ_T_VMSPACE, NULL },
     { "vfs",     t_vfs,     KFUZZ_T_VFS,     NULL },
     { "tty",     t_tty,     KFUZZ_T_TTY,     NULL },
+    { "elf",     t_elf,     KFUZZ_T_ELF,     NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

@@ -18,6 +18,9 @@
 #define EISDIR         21
 #define ENOTEMPTY      39
 #define ENAMETOOLONG   36
+#define EIO            5
+#define ENOEXEC        8
+#define ECHILD         10
 #define ESRCH            3   /* No such process/thread */
 #define EINTR            4   /* Interrupted */
 #define EBADF            9   /* Bad file (socket) descriptor */

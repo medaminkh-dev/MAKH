@@ -49,6 +49,8 @@ void enter_user_mode(uint64_t rip, uint64_t rsp) __attribute__((noreturn));
 
 /* Lifecycle + exception-handler hooks (usermode.c). */
 void usermode_init(void);                       /* per-CPU block + GS base     */
+struct process;
+void arch_prepare_switch(struct process* next); /* TSS.rsp0 + GS base per switch */
 int  usermode_active(void);                     /* 1 while in run_user_program */
 void usermode_exit(long code) __attribute__((noreturn));   /* sys_exit path    */
 void usermode_fault(long vector) __attribute__((noreturn));/* ring-3 CPU fault */

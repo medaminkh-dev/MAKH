@@ -119,6 +119,13 @@ typedef struct process {
     uint32_t sid;                 // session id
     uint8_t  sig_interrupt;       // a signal interrupted a blocking wait (EINTR)
 
+    // -------- Phase 20-A: user process model --------
+    void*    aspace;              // address_space_t* for a user process (NULL => kernel thread)
+    uint8_t  is_user;             // 1 => scheduled user process (ring 3)
+    uint64_t user_entry;          // ring-3 entry point (set by the ELF loader)
+    uint64_t user_stack;          // ring-3 initial RSP
+    wait_queue_t child_wq;        // parent blocks here in waitpid() for a child to exit
+
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)
     void*   retval;               // pthread return / exit value

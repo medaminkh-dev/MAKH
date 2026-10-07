@@ -15,3 +15,6 @@ initrd.tar
 # initrd source content is tracked despite the generic *.txt rule
 !initrd/
 !initrd/**
+
+# Build artifacts
+build/

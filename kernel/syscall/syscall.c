@@ -19,6 +19,7 @@
 #include <klog.h>
 #include <vga.h>
 #include <proc_internal.h>
+#include <sched.h>
 #include <drivers/timer.h>
 #include <lib/string.h>
 #include <fs/vfs.h>
@@ -150,7 +151,11 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
         case SYS_EXIT:
-            if (from_user) usermode_exit((long)a1);  /* does not return */
+            if (from_user) {
+                if (current_process && current_process->is_user)
+                    thread_exit((int)(a1 & 0xff));   /* real process: become a zombie */
+                usermode_exit((long)a1);             /* Phase-16 run_user_program */
+            }
             return 0;
         case SYS_MAKH_SLEEP_MS:
             /* Deliberately not supported from the non-preemptible ring-3 brick;
