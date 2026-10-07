@@ -85,6 +85,13 @@ syscall_entry:
     call syscall_dispatch
     mov rsp, rbx               ; restore exactly to the trapframe
 
+; Shared syscall-return epilogue. On entry RSP points at a full trapframe_t
+; (its r15 field). A fork()'d child is started here by context_switch: its
+; saved context has rip=syscall_return and rsp pointing at a copy of the
+; parent's trapframe (with rax=0), so the child resumes in ring 3 exactly as
+; if it had returned from the fork syscall. See proc_fork() in proc/user.c.
+global syscall_return
+syscall_return:
     pop r15
     pop r14
     pop r13
@@ -107,6 +114,37 @@ syscall_entry:
     pop rsp                    ; tf.rsp (user) ; tf.ss left abandoned on kstack
     swapgs
     o64 sysret
+
+; -----------------------------------------------------------------------------
+; fork_child_entry - first thing a fork()'d child runs. Its saved context has
+; rip=fork_child_entry and rsp pointing at a copy of the parent's trapframe (its
+; r15 field, with rax forced to 0). We return to ring 3 with IRETQ, not SYSRET:
+; iretq takes rip/cs/rflags/rsp/ss straight from the trapframe tail, preserves
+; every general register exactly (fork must), and — crucially — does NOT swapgs.
+; Exactly like enter_user_mode, the child relies on KERNEL_GS_BASE already being
+; &boot_cpu (arch_prepare_switch set it and iretq leaves it alone), so its first
+; real syscall's swapgs lands on the per-CPU block. Using SYSRET here instead
+; would run an unpaired swapgs and corrupt KERNEL_GS_BASE.
+; -----------------------------------------------------------------------------
+global fork_child_entry
+fork_child_entry:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rbp
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax                    ; tf.rax = 0  (the child's fork() return value)
+    add rsp, 8                 ; skip tf.int_no; rsp now at tf.rip
+    iretq                      ; pops rip, cs, rflags, rsp, ss -> ring 3
 
 ; -----------------------------------------------------------------------------
 ; __copy_user(dst=rdi, src=rsi, n=rdx) -> rax = bytes NOT copied (0 = success)

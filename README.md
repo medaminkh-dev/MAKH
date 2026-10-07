@@ -192,6 +192,7 @@ CI runs the suite and a stress job on every push.
 | 20-A | User process model: ELF load, preemptible ring 3, per-process address space, `waitpid` | ✅ [docs](docs/PHASE20A_PROCESS_MODEL.md) |
 | 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | ✅ [docs](docs/PHASE20B_MMAP_BRK.md) |
 | 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | ✅ [docs](docs/PHASE20C_CWD.md) |
+| 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | ✅ [docs](docs/PHASE20A2_FORK_EXECVE.md) |
 
 ## 📚 Documentation
 

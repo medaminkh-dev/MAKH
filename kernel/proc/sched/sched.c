@@ -452,6 +452,17 @@ process_t* thread_create(thread_entry_t entry, void* arg,
     return t;
 }
 
+/* Admit a fully-built PCB (e.g. a fork()'d child) to the run queue. Everything
+ * else about the thread must already be set; this is the one step that makes
+ * it runnable, so it can never be scheduled half-formed. */
+void sched_admit(process_t* t) {
+    irqflags_t f = local_irq_save();
+    t->state = PROC_READY;
+    runq_push(t);
+    need_resched = 1;
+    local_irq_restore(f);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Yield / exit / join                                                        */
 /* -------------------------------------------------------------------------- */

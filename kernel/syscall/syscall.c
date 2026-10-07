@@ -192,6 +192,21 @@ static int64_t do_getpid(void) {
     return current_process ? (int64_t)current_process->pid : 0;
 }
 
+/* wait4(pid, status, options, rusage): reap a child. options/rusage ignored. */
+static int64_t do_wait4(uint64_t pid, uint64_t ustatus, int from_user) {
+    int status = 0;
+    int r = sys_waitpid((int)pid, &status);
+    if (r >= 0 && ustatus) {
+        if (from_user) {
+            if (copy_to_user((void*)(uintptr_t)ustatus, &status, sizeof(status)) < 0)
+                return -EFAULT;
+        } else {
+            *(int*)(uintptr_t)ustatus = status;
+        }
+    }
+    return r;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Anonymous memory (Phase 20-B): operate on the calling process's space.      */
 /* -------------------------------------------------------------------------- */
@@ -241,6 +256,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_MPROTECT:     return do_mprotect(a1, a2, a3);
         case SYS_BRK:          return do_brk(a1);
         case SYS_GETPID:       return do_getpid();
+        case SYS_WAIT4:        return do_wait4(a1, a2, from_user);
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
         case SYS_EXIT:
@@ -262,9 +278,19 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
 uint64_t syscall_dispatch(trapframe_t* tf) {
     /* System V/Linux argument registers were saved in the trapframe; the
      * number is in int_no (see usermode.asm). The 4th argument is r10 (the
-     * syscall ABI's replacement for rcx, which `syscall` clobbers). */
-    int64_t rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, tf->r10,
+     * syscall ABI's replacement for rcx, which `syscall` clobbers).
+     *
+     * fork() and execve() are handled here, not in dispatch(), because they
+     * need the live trapframe: fork copies it for the child, and execve
+     * rewrites it so the return path lands in the new image. */
+    int64_t rc;
+    switch (tf->int_no) {
+        case SYS_FORK:   rc = proc_fork(tf); break;
+        case SYS_EXECVE: rc = proc_execve(tf, tf->rdi, tf->rsi, tf->rdx); break;
+        default:
+            rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, tf->r10,
                           /*from_user*/1);
+    }
     tf->rax = (uint64_t)rc;
     return (uint64_t)rc;
 }

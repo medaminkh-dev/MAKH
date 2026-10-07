@@ -13,6 +13,9 @@
 #define SYS_GETCWD    79
 #define SYS_CHDIR     80
 #define SYS_GETPID    39
+#define SYS_FORK      57
+#define SYS_EXECVE    59
+#define SYS_WAIT4     61
 #define SYS_EXIT      60
 
 #define PROT_READ     0x1
@@ -62,5 +65,12 @@ static inline long uchdir(const char* path) {
 }
 static inline long ugetcwd(char* buf, unsigned long size) {
     return usyscall(SYS_GETCWD, (long)buf, (long)size, 0);
+}
+static inline long ufork(void) { return usyscall(SYS_FORK, 0, 0, 0); }
+static inline long uexecve(const char* path, char* const* argv, char* const* envp) {
+    return usyscall(SYS_EXECVE, (long)path, (long)argv, (long)envp);
+}
+static inline long uwaitpid(int pid, int* status) {
+    return usyscall(SYS_WAIT4, pid, (long)status, 0);
 }
 #endif

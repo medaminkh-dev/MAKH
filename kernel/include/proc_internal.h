@@ -70,6 +70,11 @@ int  sys_waitpid(int pid, int* status);   /* reap a child; -ECHILD if none   */
 void proc_user_fault(long vector) __attribute__((noreturn));
 void proc_reap(struct process* t);        /* reap a ZOMBIE child (waitpid)    */
 
+/* Phase 20-A-2: fork / execve (need the live syscall trapframe). */
+struct trapframe;
+long proc_fork(struct trapframe* tf);
+long proc_execve(struct trapframe* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp);
+
 // -----------------------------------------------------------------------------
 // HELPER FUNCTIONS
 // -----------------------------------------------------------------------------

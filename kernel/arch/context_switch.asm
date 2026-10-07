@@ -133,15 +133,19 @@ context_switch:
     mov  rax, [rsi + 144]
     mov  cr3, rax
 
-    ; Segment registers
+    ; Segment registers. NOTE: GS is deliberately NOT reloaded here. Reloading
+    ; the gs selector resets the active GS base to 0, which breaks the swapgs
+    ; invariant when resuming a thread that blocked mid-syscall (it would unwind
+    ; to syscall_return's swapgs with the bases the wrong way round and leave
+    ; ring 3 with KERNEL_GS_BASE = 0, crashing its next syscall). The GS base is
+    ; owned entirely by arch_prepare_switch (it pins both bases to the per-CPU
+    ; block on every switch) and by swapgs; context_switch must not touch it.
     mov  rax, [rsi + 160]
     mov  ds, rax
     mov  rax, [rsi + 168]
     mov  es, rax
     mov  rax, [rsi + 176]
     mov  fs, rax
-    mov  rax, [rsi + 184]
-    mov  gs, rax
 
     ; Load rax, rdi, rsi last (destroys context pointer)
     mov  rax, [rsi +   0]

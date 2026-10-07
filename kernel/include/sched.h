@@ -59,6 +59,12 @@ typedef void (*thread_entry_t)(void* arg);
 process_t* thread_create(thread_entry_t entry, void* arg,
                          const char* name, uint8_t priority);
 
+/* Admit a fully-built PCB to the run queue (Phase 20-A-2: fork). The caller
+ * must have set everything — context, address space, lists — first; this is
+ * the single step that makes the thread schedulable, so there is no window in
+ * which it could run half-formed. */
+void sched_admit(process_t* t);
+
 void thread_yield(void);
 void thread_exit(int code) __attribute__((noreturn));
 

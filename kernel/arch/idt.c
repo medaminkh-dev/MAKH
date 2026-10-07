@@ -17,6 +17,7 @@
 #include <proc.h>
 #include <kfuzz.h>
 #include <arch/usermode.h>
+#include <mm/vmspace.h>
 
 static void exception_report(registers_t* regs) __attribute__((noreturn));
 
@@ -130,7 +131,19 @@ void exception_handler(registers_t* regs) {
         irq_handler(regs);
         return;
     }
-    
+
+    /* Phase 20-A-2: a write to a copy-on-write page (after fork) is resolved by
+     * handing this space a private copy and retrying — not a fault. This fires
+     * both for a ring-3 write and for a kernel copy_to_user into the current
+     * process's COW page, so it must run before the uaccess fixup below. */
+    if (vector == 14 && proc_current() && proc_current()->is_user &&
+        proc_current()->aspace) {
+        uint64_t cr2;
+        __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        if (vmspace_cow_fault((address_space_t*)proc_current()->aspace, cr2) == 0)
+            return;                      /* COW resolved: retry the instruction */
+    }
+
     /* Phase 16: a fault inside copy_from/to_user resumes at the uaccess fixup
      * label, which aborts the copy cleanly and returns -EFAULT to the caller. */
     uint64_t fixup = uaccess_fixup(regs->rip);
