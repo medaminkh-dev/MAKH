@@ -32,6 +32,7 @@ numbers are navigable rather than mysterious.
 | 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | [PHASE20C_CWD](PHASE20C_CWD.md) |
 | 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | [PHASE20A2_FORK_EXECVE](PHASE20A2_FORK_EXECVE.md) |
 | 20-D | Controlling terminal: blocking `read`, Ctrl+C, a `/bin/sh` shell | [PHASE20D_SHELL](PHASE20D_SHELL.md) |
+| 20-E | `argv`/`envp`/`auxv`: the SysV initial stack; the shell parses arguments | [PHASE20E_ARGV](PHASE20E_ARGV.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -56,6 +57,8 @@ is always visible:
 20-A-2 fork/execve ... COW clone + replace-image + wait4        pieces)
 20-D controlling tty . blocking read + Ctrl+C + /bin/sh  ─▶ an interactive prompt
                        (the "run a command" sequence)      (boot: makh.sh)
+20-E argv/envp/auxv .. SysV initial stack; sh parses args ─▶ "echo a b" works
+                       (the ABI a C runtime stands on)        (musl-ready stack)
 ```
 
 ## Doc conventions (phases 16+)

@@ -42,12 +42,37 @@ static void user_trampoline(void* arg) {
     enter_user_mode(cur->user_entry, cur->user_stack);   /* noreturn */
 }
 
+#define U_ARGC_MAX   32              /* most argv entries we accept (kernel-stack bound) */
+#define U_ARGSTORE   1024            /* total bytes of argv string data                 */
+
+/* ELF auxiliary-vector types we supply (the subset a freestanding crt needs;
+ * AT_PHDR/AT_RANDOM for musl come with the libc brick). */
+#define AT_NULL   0
+#define AT_ENTRY  9
+#define AT_PAGESZ 6
+
+/* Write `n` bytes into address space `as` at user virtual address `va`, through
+ * the identity map of its frames (so `as` need not be the active CR3). Handles
+ * a write that straddles a page boundary. */
+static void poke(address_space_t* as, uint64_t va, const void* src, size_t n) {
+    const uint8_t* s = (const uint8_t*)src;
+    while (n) {
+        uint64_t phys = vmspace_phys(as, va & ~0xFFFULL);
+        uint64_t off  = va & 0xFFF;
+        size_t   chunk = 4096 - (size_t)off;
+        if (chunk > n) chunk = n;
+        if (phys) memcpy((void*)(uintptr_t)(phys + off), s, chunk);
+        va += chunk; s += chunk; n -= chunk;
+    }
+}
+static void poke64(address_space_t* as, uint64_t va, uint64_t v) {
+    poke(as, va, &v, 8);
+}
+
 /* Build the ring-3 image of `vn` in the (already created) space `as`: load the
- * ELF segments and map a zeroed user stack with argc=0 on top. Sets *entry and
- * *ustack on success; on failure returns -errno and the caller tears `as` down.
- * Shared by proc_spawn_user() and execve(). */
-static int build_user_image(address_space_t* as, vnode_t* vn,
-                            uint64_t* entry, uint64_t* ustack) {
+ * ELF segments and map a zeroed user stack. Sets *entry; the caller then lays
+ * out the initial stack with setup_user_stack(). Returns 0 or -errno. */
+static int build_user_image(address_space_t* as, vnode_t* vn, uint64_t* entry) {
     int rc = elf_load(vn, as, entry);
     if (rc != 0) return rc;
 
@@ -58,14 +83,50 @@ static int build_user_image(address_space_t* as, vnode_t* vn,
         page_setref((uint64_t)(uintptr_t)fp, 1);
         vmspace_map(as, va, (uint64_t)(uintptr_t)fp, PAGE_WRITABLE | PAGE_NO_EXECUTE);
     }
-    uint64_t sp = (USTACK_TOP - 16) & ~0xFULL;
-    /* Minimal SysV stack: argc = 0 (argv/envp/auxv arrive with musl). Written
-     * through the identity map of the top page. */
-    uint64_t top_pg = vmspace_phys(as, USTACK_TOP - 4096);
-    if (top_pg)
-        *(volatile uint64_t*)(uintptr_t)(top_pg + (sp - (USTACK_TOP - 4096))) = 0;
-    *ustack = sp;
     return 0;
+}
+
+/* Lay out the SysV x86-64 initial process stack in `as` and return the value
+ * RSP must have at entry (16-byte aligned, pointing at argc):
+ *
+ *   [argc][argv[0..argc-1]][NULL][envp[0..envc-1]][NULL][auxv...][AT_NULL]
+ *   ... then the argv/envp string bytes near the top of the stack.
+ *
+ * argv_k/envp_k are kernel pointers to NUL-terminated strings. */
+static uint64_t setup_user_stack(address_space_t* as, int argc, char* const argv_k[],
+                                 int envc, char* const envp_k[], uint64_t entry) {
+    uint64_t sp = USTACK_TOP;
+    uint64_t argv_va[U_ARGC_MAX], envp_va[U_ARGC_MAX];
+
+    /* Both callers bound these (execve caps its copy loop, spawn passes 0), but
+     * clamp defensively so the va[] arrays can never be overrun by a third one. */
+    if (argc > U_ARGC_MAX) argc = U_ARGC_MAX;
+    if (envc > U_ARGC_MAX) envc = U_ARGC_MAX;
+
+    for (int i = envc - 1; i >= 0; i--) {              /* env strings */
+        size_t len = strlen(envp_k[i]) + 1;
+        sp -= len; poke(as, sp, envp_k[i], len); envp_va[i] = sp;
+    }
+    for (int i = argc - 1; i >= 0; i--) {              /* arg strings */
+        size_t len = strlen(argv_k[i]) + 1;
+        sp -= len; poke(as, sp, argv_k[i], len); argv_va[i] = sp;
+    }
+    sp &= ~0xFULL;                                     /* end of the string area */
+
+    /* Reserve the pointer arrays below the strings and 16-align argc. */
+    size_t slots = 1 + (size_t)(argc + 1) + (size_t)(envc + 1) + 3 * 2;
+    uint64_t rsp = (sp - slots * 8) & ~0xFULL;
+
+    uint64_t p = rsp;
+    poke64(as, p, (uint64_t)argc);              p += 8;
+    for (int i = 0; i < argc; i++) { poke64(as, p, argv_va[i]); p += 8; }
+    poke64(as, p, 0);                           p += 8;      /* argv NULL */
+    for (int i = 0; i < envc; i++) { poke64(as, p, envp_va[i]); p += 8; }
+    poke64(as, p, 0);                           p += 8;      /* envp NULL */
+    poke64(as, p, AT_PAGESZ); p += 8; poke64(as, p, 4096);  p += 8;
+    poke64(as, p, AT_ENTRY);  p += 8; poke64(as, p, entry); p += 8;
+    poke64(as, p, AT_NULL);   p += 8; poke64(as, p, 0);     p += 8;
+    return rsp;
 }
 
 /* Load `path` and start it as a ring-3 process. Returns the new pid, -errno. */
@@ -77,9 +138,11 @@ int proc_spawn_user(const char* path) {
     if (!as) return -ENOMEM;
     if (vmspace_create(as) != 0) { kfree(as); return -ENOMEM; }
 
-    uint64_t entry = 0, ustack = 0;
-    int rc = build_user_image(as, vn, &entry, &ustack);
+    uint64_t entry = 0;
+    int rc = build_user_image(as, vn, &entry);
     if (rc != 0) { vmspace_destroy(as); kfree(as); return rc; }
+    /* A kernel-launched process (e.g. the shell) starts with no arguments. */
+    uint64_t ustack = setup_user_stack(as, 0, NULL, 0, NULL, entry);
 
     /* thread_create() returns the thread already READY and queued, so a timer
      * tick could run user_trampoline before the user fields below are set —
@@ -197,7 +260,7 @@ long proc_fork(trapframe_t* tf) {
 long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp) {
     process_t* cur = current_process;
     if (!cur || !cur->is_user || !cur->aspace) return -ENOSYS;
-    (void)uargv; (void)uenvp;              /* argc=0 for this brick (no argv yet) */
+    (void)uenvp;                           /* envp copy is a trivial follow-on */
 
     /* Copy and canonicalise the path against the process cwd. */
     char raw[256], abs[256];
@@ -211,6 +274,30 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     if (path_canonicalize(cur->cwd[0] ? cur->cwd : "/", raw, abs, sizeof(abs)) != 0)
         return -ENAMETOOLONG;
 
+    /* Copy argv in from the CALLER's address space now, while it is still
+     * mapped — the strings live in the old image we are about to tear down. */
+    char  argstore[U_ARGSTORE];
+    char* argv_k[U_ARGC_MAX];
+    int   argc = 0;
+    size_t used = 0;
+    if (uargv) {
+        while (argc < U_ARGC_MAX) {
+            uint64_t ptr;
+            if (copy_from_user(&ptr, (const void*)(uintptr_t)(uargv + (uint64_t)argc * 8),
+                               8) < 0) return -EFAULT;
+            if (!ptr) break;                        /* NULL terminates argv */
+            argv_k[argc] = &argstore[used];
+            for (size_t j = 0;; j++) {
+                if (used >= sizeof(argstore)) return -E2BIG;
+                char c;
+                if (copy_from_user(&c, (const void*)(uintptr_t)(ptr + j), 1) < 0) return -EFAULT;
+                argstore[used++] = c;
+                if (!c) break;
+            }
+            argc++;
+        }
+    }
+
     vnode_t* vn = vfs_resolve(abs);
     if (!vn) return -ENOENT;
 
@@ -219,9 +306,11 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     address_space_t* nas = kcalloc(1, sizeof(*nas));
     if (!nas) return -ENOMEM;
     if (vmspace_create(nas) != 0) { kfree(nas); return -ENOMEM; }
-    uint64_t entry = 0, ustack = 0;
-    int rc = build_user_image(nas, vn, &entry, &ustack);
+    uint64_t entry = 0;
+    int rc = build_user_image(nas, vn, &entry);
     if (rc != 0) { vmspace_destroy(nas); kfree(nas); return rc; }
+    /* Lay out argc/argv/auxv on the new stack (identity-map writes). */
+    uint64_t ustack = setup_user_stack(nas, argc, argv_k, 0, NULL, entry);
 
     /* Swap address spaces. We run on the shared kernel stack, so switching CR3
      * and freeing the old space is safe (the kernel half stays mapped). */

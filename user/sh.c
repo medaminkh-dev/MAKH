@@ -9,8 +9,9 @@
 #include "usys.h"
 
 int umain(void) {
-    char line[128];
-    int last = 0;
+    char  line[128];
+    char* argv[16];
+    int   last = 0;
 
     for (;;) {
         uwrite(1, "$ ", 2);
@@ -18,12 +19,23 @@ int umain(void) {
         if (n <= 0) return last;                 /* EOF: leave with last status */
         if (line[n - 1] == '\n') n--;            /* drop the newline */
         line[n] = '\0';
-        if (n == 0) continue;                    /* blank line */
+
+        /* Split the line into whitespace-separated argv (argv[0] = command). */
+        int ac = 0, i = 0;
+        while (i < n && ac < 15) {
+            while (i < n && line[i] == ' ') i++;
+            if (i >= n) break;
+            argv[ac++] = &line[i];
+            while (i < n && line[i] != ' ') i++;
+            if (i < n) line[i++] = '\0';
+        }
+        argv[ac] = 0;
+        if (ac == 0) continue;                   /* blank line */
 
         long pid = ufork();
         if (pid < 0) { last = 127; continue; }
         if (pid == 0) {                          /* child: become the command */
-            uexecve(line, 0, 0);
+            uexecve(argv[0], argv, 0);
             return 127;                          /* exec failed (no such command) */
         }
         int st = -1;                             /* parent: wait for it */
