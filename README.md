@@ -200,6 +200,7 @@ CI runs the suite and a stress job on every push.
 | 20-H | Thread-local storage: `arch_prctl(ARCH_SET_FS)`, per-process FS base (musl enabler) | ✅ [docs](docs/PHASE20H_TLS.md) |
 | 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` (xoshiro256**) | ✅ [docs](docs/PHASE20I_TIME_RANDOM.md) |
 | 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` (byte-exact `struct stat`) | ✅ [docs](docs/PHASE20J_STAT.md) |
+| 20-K | Pipes & redirection: `pipe`/`pipe2`/`dup2`, fd inheritance, shell `a \| b` pipelines | ✅ [docs](docs/PHASE20K_PIPE.md) |
 
 ## 📚 Documentation
 

@@ -25,6 +25,9 @@
 #define SYS_LSTAT          6
 #define SYS_FCNTL          72
 #define SYS_GETDENTS64     217
+#define SYS_PIPE           22
+#define SYS_DUP2           33
+#define SYS_PIPE2          293
 #define SYS_NANOSLEEP      35
 #define SYS_GETTIMEOFDAY   96
 #define SYS_CLOCK_GETTIME  228

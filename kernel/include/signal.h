@@ -31,6 +31,7 @@
 #define SIGABRT     6
 #define SIGKILL     9       /* uncatchable     */
 #define SIGSEGV     11      /* bad memory access */
+#define SIGPIPE     13      /* write to a pipe with no readers */
 #define SIGTERM     15
 #define SIGCHLD     17      /* child stopped/exited (default: ignore) */
 #define SIGCONT     18      /* continue (default: ignore)            */

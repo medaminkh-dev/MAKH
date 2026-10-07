@@ -12,6 +12,9 @@
 #include <errno.h>
 #include <klog.h>
 #include <proc_internal.h>
+#include <sched.h>
+#include <irq.h>
+#include <signal.h>
 
 static vnode_t* root_vnode;
 
@@ -169,6 +172,7 @@ int vfs_open(const char* path, int flags) {
     f->flags = flags;
     f->offset = (flags & O_APPEND) ? vn->size : 0;
     f->used = 1;
+    f->refcount = 1;              /* one fd owns this description */
     vn->refcount++;
     t[fd] = f;
     return fd;
@@ -202,12 +206,33 @@ long vfs_lseek(int fd, long off, int whence) {
     return target;
 }
 
+static void pipe_detach(vnode_t* vn, int access);   /* fwd (Phase 20-K) */
+
+/* Release one reference to an open-file description. The caller has already
+ * removed it from its fd slot. At the last reference the backing is released:
+ * a pipe end is detached (waking the far side) and its vnode freed when no end
+ * remains; a regular vnode just has its open-count decremented. */
+static void file_put(file_t* f) {
+    if (!f) return;
+    if (--f->refcount > 0) return;
+    vnode_t* vn = f->vnode;
+    if (vn) {
+        if (vn->type == VNODE_FIFO) pipe_detach(vn, f->flags & O_ACCMODE);
+        if (vn->refcount) vn->refcount--;
+        if (vn->type == VNODE_FIFO && vn->refcount == 0) {
+            kfree(vn->priv);
+            kfree(vn);
+        }
+    }
+    kfree(f);
+}
+
 int vfs_close(int fd) {
     file_t** t = fd_table();
     if (!t || fd < 0 || fd >= VFS_MAX_FDS || !t[fd]) return -EBADF;
-    if (t[fd]->vnode && t[fd]->vnode->refcount) t[fd]->vnode->refcount--;
-    kfree(t[fd]);
+    file_t* f = t[fd];
     t[fd] = NULL;
+    file_put(f);
     return 0;
 }
 
@@ -302,7 +327,173 @@ long vfs_fcntl(int fd, int cmd, long arg) {
             return 0;
         case F_GETFD: return 0;                    /* no FD_CLOEXEC tracking yet */
         case F_SETFD: return 0;                    /* accept, ignore */
-        case F_DUPFD: return -EINVAL;              /* dup arrives with 1.3 */
+        case F_DUPFD: {                            /* lowest free fd >= arg */
+            file_t** t = fd_table();
+            if (!t || !f) return -EBADF;
+            int lo = (int)arg; if (lo < 0) lo = 0;
+            for (int i = lo; i < VFS_MAX_FDS; i++) {
+                if (!t[i]) { t[i] = f; f->refcount++; return i; }
+            }
+            return -EMFILE;
+        }
         default:      return -EINVAL;
     }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pipes + descriptor duplication (Phase 20-K)                                */
+/* -------------------------------------------------------------------------- */
+
+#define PIPE_CAP 4096
+
+typedef struct pipe {
+    uint8_t  buf[PIPE_CAP];
+    size_t   head, tail, count;
+    int      readers, writers;   /* live read-end / write-end descriptions */
+    wait_queue_t rwait, wwait;   /* readers wait for data; writers for space */
+} pipe_t;
+
+static long pipe_read(vnode_t* vn, void* dst, size_t n, uint64_t off) {
+    (void)off;
+    pipe_t* p = (pipe_t*)vn->priv;
+    uint8_t* out = (uint8_t*)dst;
+    size_t got = 0;
+    irqflags_t f = local_irq_save();
+    while (got < n) {
+        if (p->count == 0) {
+            if (p->writers == 0) break;                  /* EOF: no writers */
+            if (got > 0) break;                          /* return partial */
+            int rc = sched_wait_event(&p->rwait, 0, f);  /* restores f */
+            if (rc == 2) return got ? (long)got : -EINTR;
+            f = local_irq_save();
+            continue;
+        }
+        size_t chunk = n - got;
+        if (chunk > p->count) chunk = p->count;
+        for (size_t i = 0; i < chunk; i++) {
+            out[got + i] = p->buf[p->tail];
+            p->tail = (p->tail + 1) % PIPE_CAP;
+        }
+        p->count -= chunk;
+        got += chunk;
+        wq_wake_all(&p->wwait);                           /* space freed */
+        break;                                            /* one burst */
+    }
+    local_irq_restore(f);
+    return (long)got;
+}
+
+static long pipe_write(vnode_t* vn, const void* src, size_t n, uint64_t off) {
+    (void)off;
+    pipe_t* p = (pipe_t*)vn->priv;
+    const uint8_t* in = (const uint8_t*)src;
+    size_t put = 0;
+    irqflags_t f = local_irq_save();
+    while (put < n) {
+        if (p->readers == 0) {                            /* broken pipe */
+            local_irq_restore(f);
+            if (current_process) signal_send(current_process, SIGPIPE);
+            return put ? (long)put : -EPIPE;
+        }
+        if (p->count == PIPE_CAP) {                       /* full: wait */
+            int rc = sched_wait_event(&p->wwait, 0, f);
+            if (rc == 2) return put ? (long)put : -EINTR;
+            f = local_irq_save();
+            continue;
+        }
+        size_t space = PIPE_CAP - p->count;
+        size_t chunk = n - put;
+        if (chunk > space) chunk = space;
+        for (size_t i = 0; i < chunk; i++) {
+            p->buf[p->head] = in[put + i];
+            p->head = (p->head + 1) % PIPE_CAP;
+        }
+        p->count += chunk;
+        put += chunk;
+        wq_wake_all(&p->rwait);                           /* data ready */
+    }
+    local_irq_restore(f);
+    return (long)put;
+}
+
+static const vfs_ops_t pipe_ops = { .read = pipe_read, .write = pipe_write };
+
+static void pipe_detach(vnode_t* vn, int access) {
+    pipe_t* p = (pipe_t*)vn->priv;
+    if (!p) return;
+    irqflags_t f = local_irq_save();
+    if (access == O_WRONLY) { if (p->writers) p->writers--; }
+    else                    { if (p->readers) p->readers--; }
+    local_irq_restore(f);
+    wq_wake_all(&p->rwait);     /* last writer gone -> readers see EOF   */
+    wq_wake_all(&p->wwait);     /* last reader gone -> writers see EPIPE */
+}
+
+int vfs_pipe(int fds[2]) {
+    file_t** t = fd_table();
+    if (!t) return -ENOMEM;
+
+    vnode_t* vn = kcalloc(1, sizeof(vnode_t));
+    pipe_t*  p  = kcalloc(1, sizeof(pipe_t));
+    file_t*  rf = kcalloc(1, sizeof(file_t));
+    file_t*  wf = kcalloc(1, sizeof(file_t));
+    if (!vn || !p || !rf || !wf) { kfree(vn); kfree(p); kfree(rf); kfree(wf); return -ENOMEM; }
+
+    wq_init(&p->rwait);
+    wq_init(&p->wwait);
+    p->readers = 1; p->writers = 1;
+    vn->type = VNODE_FIFO;
+    vn->ops  = &pipe_ops;
+    vn->priv = p;
+    vn->refcount = 2;                     /* the read-end + write-end file_t's */
+
+    rf->vnode = vn; rf->flags = O_RDONLY; rf->used = 1; rf->refcount = 1;
+    wf->vnode = vn; wf->flags = O_WRONLY; wf->used = 1; wf->refcount = 1;
+
+    int rfd = fd_alloc(t);
+    if (rfd < 0) { kfree(vn); kfree(p); kfree(rf); kfree(wf); return rfd; }
+    t[rfd] = rf;
+    int wfd = fd_alloc(t);
+    if (wfd < 0) { t[rfd] = NULL; kfree(vn); kfree(p); kfree(rf); kfree(wf); return wfd; }
+    t[wfd] = wf;
+
+    fds[0] = rfd;
+    fds[1] = wfd;
+    return 0;
+}
+
+int vfs_dup2(int oldfd, int newfd) {
+    file_t** t = fd_table();
+    if (!t) return -ENOMEM;
+    if (oldfd < 0 || oldfd >= VFS_MAX_FDS || !t[oldfd]) return -EBADF;
+    if (newfd < 0 || newfd >= VFS_MAX_FDS) return -EBADF;
+    if (oldfd == newfd) return newfd;
+    if (t[newfd]) { file_t* old = t[newfd]; t[newfd] = NULL; file_put(old); }
+    t[newfd] = t[oldfd];
+    t[newfd]->refcount++;                 /* another fd on this description */
+    return newfd;
+}
+
+/* fork: the child shares every open description (refcounts bumped). */
+void vfs_fork_fds(void* dstp, void* srcp) {
+    process_t* d = (process_t*)dstp;
+    process_t* s = (process_t*)srcp;
+    file_t** st = (file_t**)s->fd_table;
+    if (!st) return;                       /* parent had none (lazy table) */
+    file_t** dt = kcalloc(VFS_MAX_FDS, sizeof(file_t*));
+    if (!dt) return;
+    for (int i = 0; i < VFS_MAX_FDS; i++)
+        if (st[i]) { dt[i] = st[i]; st[i]->refcount++; }
+    d->fd_table = dt;
+}
+
+/* exit: drop every fd so pipe peers see EOF/EPIPE and descriptions free. */
+void vfs_close_all(void* procp) {
+    process_t* p = (process_t*)procp;
+    file_t** t = (file_t**)p->fd_table;
+    if (!t) return;
+    for (int i = 0; i < VFS_MAX_FDS; i++)
+        if (t[i]) { file_t* f = t[i]; t[i] = NULL; file_put(f); }
+    kfree(t);
+    p->fd_table = NULL;
 }

@@ -27,6 +27,7 @@ static int is_terminate(int sig) {
     switch (sig) {
         case SIGHUP: case SIGINT: case SIGQUIT: case SIGILL:
         case SIGABRT: case SIGKILL: case SIGSEGV: case SIGTERM:
+        case SIGPIPE:
         case SIGTSTP:   /* no job-control stop yet: treat as terminate */
             return 1;
         default:

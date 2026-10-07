@@ -155,7 +155,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_usignal.c \
     kernel/tests/test_tls.c \
     kernel/tests/test_time.c \
-    kernel/tests/test_stat.c
+    kernel/tests/test_stat.c \
+    kernel/tests/test_pipe.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -215,7 +216,8 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/readline build/user/sh build/user/echo \
             build/user/execargs build/user/spinner build/user/jobtest \
             build/user/sigtest build/user/sigmask build/user/tlstest \
-            build/user/timetest build/user/statls
+            build/user/timetest build/user/statls build/user/pipetest \
+            build/user/countin
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

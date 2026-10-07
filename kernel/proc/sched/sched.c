@@ -10,6 +10,7 @@
 #include <drivers/timer.h>
 #include <arch/usermode.h>
 #include <signal.h>
+#include <fs/vfs.h>          /* vfs_close_all on exit (Phase 20-K) */
 #include <mm/vmspace.h>
 
 /**
@@ -529,6 +530,11 @@ extern void pthread_tls_cleanup(process_t* t);
 void thread_exit(int code) {
     /* Run TLS destructors in thread context (IRQs on) before we tear down. */
     pthread_tls_cleanup(current_process);
+
+    /* Release open fds now (at zombie time, not reap) so a pipe peer sees EOF
+     * / EPIPE as soon as this process exits — Phase 20-K. No-op for a kernel
+     * thread (NULL table). */
+    vfs_close_all(current_process);
 
     irqflags_t f = local_irq_save();
     process_t* cur = current_process;

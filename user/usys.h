@@ -35,6 +35,8 @@
 #define SYS_FSTAT          5
 #define SYS_FCNTL          72
 #define SYS_GETDENTS64     217
+#define SYS_PIPE           22
+#define SYS_DUP2           33
 #define SYS_KILL      62
 
 /* st_mode bits + fcntl + getdents (match kernel fs/vfs.h). */
@@ -229,5 +231,13 @@ static inline long ugetdents64(int fd, void* buf, unsigned long n) {
 }
 static inline long ufcntl(int fd, int cmd, long arg) {
     return usyscall(SYS_FCNTL, fd, cmd, arg);
+}
+
+/* --- pipes / dup (Phase 20-K) --- */
+static inline long upipe(int fds[2]) {
+    return usyscall(SYS_PIPE, (long)fds, 0, 0);
+}
+static inline long udup2(int oldfd, int newfd) {
+    return usyscall(SYS_DUP2, oldfd, newfd, 0);
 }
 #endif

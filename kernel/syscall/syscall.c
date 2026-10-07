@@ -71,6 +71,10 @@ void syscall_init(void) {
 
 static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
     if (count == 0) return 0;
+    /* An open description (a file, or a pipe dup2'd onto 0/1/2) takes priority;
+     * otherwise 1/2 fall back to the console. This keeps the default stdout path
+     * unchanged while letting a pipeline redirect it (Phase 20-K). */
+    int backed = (vfs_file((int)fd) != NULL);
 
     char tmp[256];
     uint64_t done = 0;
@@ -83,36 +87,42 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
         } else {
             memcpy(tmp, (const void*)(uintptr_t)(ubuf + done), chunk);
         }
-        if (fd == 1 || fd == 2) {               /* stdout / stderr -> console */
-            for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
-        } else {                                /* a real file descriptor */
+        if (backed) {
             long w = vfs_fd_write((int)fd, tmp, chunk);
             if (w < 0) return done ? (int64_t)done : w;
             if (w == 0) break;
             done += (uint64_t)w;
             continue;
         }
-        done += chunk;
+        if (fd == 1 || fd == 2) {               /* stdout / stderr -> console */
+            for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
+            done += chunk;
+            continue;
+        }
+        return done ? (int64_t)done : -EBADF;   /* fd with no backing */
     }
     return (int64_t)done;
 }
 
 static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (fd == 0) {                                 /* stdin -> controlling tty */
-        if (count == 0) return 0;
-        char tmp[256];
-        size_t chunk = count < sizeof(tmp) ? count : sizeof(tmp);
-        long got = tty_read_blocking(tmp, chunk);  /* blocks until a line/EOF */
-        if (got <= 0) return got;                  /* 0 = EOF, <0 = -errno */
-        if (from_user) {
-            if (copy_to_user((void*)(uintptr_t)ubuf, tmp, (size_t)got) < 0) return -EFAULT;
-        } else {
-            memcpy((void*)(uintptr_t)ubuf, tmp, (size_t)got);
-        }
-        return got;
-    }
-    if (fd == 1 || fd == 2) return 0;              /* reading stdout/stderr = EOF */
     if (count == 0) return 0;
+    file_t* f = vfs_file((int)fd);
+    if (!f) {                                      /* fall back: tty / EOF / EBADF */
+        if (fd == 0) {
+            char tmp[256];
+            size_t chunk = count < sizeof(tmp) ? count : sizeof(tmp);
+            long got = tty_read_blocking(tmp, chunk);   /* blocks until a line/EOF */
+            if (got <= 0) return got;
+            if (from_user) {
+                if (copy_to_user((void*)(uintptr_t)ubuf, tmp, (size_t)got) < 0) return -EFAULT;
+            } else {
+                memcpy((void*)(uintptr_t)ubuf, tmp, (size_t)got);
+            }
+            return got;
+        }
+        if (fd == 1 || fd == 2) return 0;          /* reading stdout/stderr = EOF */
+        return -EBADF;
+    }
     char tmp[256];
     uint64_t done = 0;
     while (done < count) {
@@ -128,7 +138,7 @@ static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user
             memcpy((void*)(uintptr_t)(ubuf + done), tmp, (size_t)got);
         }
         done += (uint64_t)got;
-        if ((uint64_t)got < chunk) break;
+        if ((uint64_t)got < chunk) break;       /* short read (pipe/EOF): stop */
     }
     return (int64_t)done;
 }
@@ -349,6 +359,24 @@ static int64_t do_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg) {
     return vfs_fcntl((int)fd, (int)cmd, (long)arg);
 }
 
+/* pipe/pipe2: create a pipe, return the two fds to the user. (pipe2 flags are
+ * accepted and ignored — no O_CLOEXEC/O_NONBLOCK tracking yet.) */
+static int64_t do_pipe(uint64_t ufds, uint64_t flags) {
+    (void)flags;
+    int fds[2];
+    int rc = vfs_pipe(fds);
+    if (rc < 0) return rc;
+    if (copy_to_user((void*)(uintptr_t)ufds, fds, sizeof(fds)) < 0) {
+        vfs_close(fds[0]); vfs_close(fds[1]);
+        return -EFAULT;
+    }
+    return 0;
+}
+
+static int64_t do_dup2(uint64_t oldfd, uint64_t newfd) {
+    return vfs_dup2((int)oldfd, (int)newfd);
+}
+
 /* Time + randomness (Phase 20-I). nanosleep parks on a wait queue nothing ever
  * wakes, so only its own timeout or a signal ends it (interruptible -> -EINTR).
  * (sleep_wq is declared near the top so syscall_init can wq_init it.) */
@@ -463,6 +491,9 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_FSTAT:          return do_fstat(a1, a2);
         case SYS_GETDENTS64:     return do_getdents64(a1, a2, a3);
         case SYS_FCNTL:          return do_fcntl(a1, a2, a3);
+        case SYS_PIPE:           return do_pipe(a1, 0);
+        case SYS_PIPE2:          return do_pipe(a1, a2);
+        case SYS_DUP2:           return do_dup2(a1, a2);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */

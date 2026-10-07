@@ -210,10 +210,10 @@ long proc_fork(trapframe_t* tf) {
     c->creation_time = timer_get_ticks();
     for (int i = 0; i < 31 && parent->name[i]; i++) c->name[i] = parent->name[i];
 
-    /* 4. Inherit the parent's user-process state. (Open fds are NOT inherited
-     *    in this first brick — console I/O uses the fd 0/1/2 fast path, so a
-     *    forked child still has stdin/out/err; real fd inheritance lands with
-     *    the file refcount work alongside pipe/dup.) */
+    /* 4. Inherit the parent's user-process state, including the open-file table
+     *    (shared descriptions, refcounts bumped — Phase 20-K). Console I/O still
+     *    falls back to the fd 0/1/2 fast path when a slot is empty. */
+    vfs_fork_fds(c, parent);
     c->is_user = 1;
     c->aspace = cas;
     c->user_entry = parent->user_entry;

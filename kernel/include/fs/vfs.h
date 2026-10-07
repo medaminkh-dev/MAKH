@@ -28,6 +28,7 @@ typedef enum vtype {
     VNODE_REG,          /* regular file     */
     VNODE_DIR,          /* directory        */
     VNODE_CHR,          /* character device */
+    VNODE_FIFO,         /* pipe (Phase 20-K) */
 } vtype_t;
 
 struct vnode;
@@ -58,6 +59,7 @@ typedef struct file {
     uint64_t  offset;
     int       flags;
     int       used;
+    int       refcount;    /* fds sharing this open-file description (dup/fork) */
 } file_t;
 
 /* open() flags (subset of the Linux values). */
@@ -77,6 +79,8 @@ typedef struct file {
 #define SEEK_SET   0
 #define SEEK_CUR   1
 #define SEEK_END   2
+
+#define O_ACCMODE 3        /* mask for the access mode in open flags */
 
 /* fcntl() commands (subset). */
 #define F_DUPFD   0
@@ -162,6 +166,15 @@ long      vfs_fd_write(int fd, const void* buf, size_t n);
 long      vfs_lseek(int fd, long off, int whence);
 int       vfs_close(int fd);
 file_t*   vfs_file(int fd);               /* raw file for a fd, or NULL */
+
+/* -------- pipes / descriptor duplication (Phase 20-K) -------- */
+int       vfs_pipe(int fds[2]);           /* fds[0]=read end, fds[1]=write end */
+int       vfs_dup2(int oldfd, int newfd); /* share oldfd's description at newfd */
+/* Duplicate `src`'s whole fd table into `dst` (fork): shared descriptions,
+ * refcounts bumped. Both are process_t*. */
+void      vfs_fork_fds(void* dst, void* src);
+/* Drop every open fd of a process (exit): releases each description. */
+void      vfs_close_all(void* proc);
 
 /* -------- metadata / listing / fcntl (Phase 20-J) -------- */
 int       vfs_stat(const char* path, struct stat* st);
