@@ -159,9 +159,14 @@ int signal_take_terminate(void) {
 /* -------------------------------------------------------------------------- */
 
 int sys_setpgid(int pid, int pgid) {
-    process_t* t = (pid == 0) ? current_process : proc_find(pid);
-    if (!t || pgid < 0) return -ESRCH;
-    t->pgid = (pgid == 0) ? t->pid : (uint32_t)pgid;
+    process_t* cur = current_process;
+    if (!cur) return -ESRCH;
+    if (pgid < 0) return -EINVAL;
+    process_t* t = (pid == 0) ? cur : proc_find(pid);
+    if (!t) return -ESRCH;
+    if (t != cur && t->parent_pid != cur->pid) return -ESRCH;  /* self or a child */
+    if (t->sid != cur->sid) return -EPERM;                     /* same session   */
+    t->pgid = (pgid == 0) ? t->pid : (uint32_t)pgid;           /* 0 => lead group */
     return 0;
 }
 

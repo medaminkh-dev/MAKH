@@ -33,6 +33,7 @@ numbers are navigable rather than mysterious.
 | 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | [PHASE20A2_FORK_EXECVE](PHASE20A2_FORK_EXECVE.md) |
 | 20-D | Controlling terminal: blocking `read`, Ctrl+C, a `/bin/sh` shell | [PHASE20D_SHELL](PHASE20D_SHELL.md) |
 | 20-E | `argv`/`envp`/`auxv`: the SysV initial stack; the shell parses arguments | [PHASE20E_ARGV](PHASE20E_ARGV.md) |
+| 20-F | Job control: `setpgid`/`tcsetpgrp`, each command its own group, Ctrl+C hits the job | [PHASE20F_JOBCTL](PHASE20F_JOBCTL.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -59,6 +60,8 @@ is always visible:
                        (the "run a command" sequence)      (boot: makh.sh)
 20-E argv/envp/auxv .. SysV initial stack; sh parses args ─▶ "echo a b" works
                        (the ABI a C runtime stands on)        (musl-ready stack)
+20-F job control ..... per-command pgroup + tcsetpgrp     ─▶ Ctrl+C hits the job
+                       (the shell hands over the terminal)    (not the shell)
 ```
 
 ## Doc conventions (phases 16+)

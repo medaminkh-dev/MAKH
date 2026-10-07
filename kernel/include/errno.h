@@ -33,6 +33,7 @@
 #define EINVAL          22   /* Invalid argument */
 #define ERANGE          34   /* Result too large for the buffer */
 #define EMFILE          24   /* Too many open descriptors */
+#define ENOTTY          25   /* Not a terminal (bad ioctl for device) */
 #define EPIPE           32   /* Broken pipe */
 #define EDEADLK         35   /* Resource deadlock would occur */
 #define ENOSYS          38   /* Not implemented */

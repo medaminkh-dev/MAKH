@@ -1,10 +1,11 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 Amine Khemissi */
 /**
- * A tiny shell: print a prompt, read a line, run it as a program (fork+execve),
- * wait, and repeat. A line is treated as a command path (absolute, or relative
- * to the cwd). On EOF (^D) the shell exits with the last command's status.
- * Arguments are not parsed yet — that arrives with argv in a later brick.
+ * A tiny shell with job control: print a prompt, read a line, split it into an
+ * argv, then run it as a foreground job (fork + execve + wait). Each command
+ * runs in its own process group, and the shell hands the terminal to that group
+ * while it runs — so Ctrl+C reaches the job, not the shell. On EOF (^D) the
+ * shell exits with the last command's status.
  */
 #include "usys.h"
 
@@ -12,6 +13,7 @@ int umain(void) {
     char  line[128];
     char* argv[16];
     int   last = 0;
+    int   shell_pgid = (int)ugetpgrp();          /* the shell leads its own group */
 
     for (;;) {
         uwrite(1, "$ ", 2);
@@ -34,12 +36,19 @@ int umain(void) {
 
         long pid = ufork();
         if (pid < 0) { last = 127; continue; }
-        if (pid == 0) {                          /* child: become the command */
+        if (pid == 0) {                          /* child: own group, become cmd */
+            usetpgid(0, 0);                      /* lead a new group (race-safe)  */
             uexecve(argv[0], argv, 0);
             return 127;                          /* exec failed (no such command) */
         }
-        int st = -1;                             /* parent: wait for it */
-        uwaitpid((int)pid, &st);
+        /* Parent: put the job in its own group and give it the terminal. Both
+         * sides call setpgid so the group is set no matter who runs first. */
+        usetpgid((int)pid, (int)pid);
+        utcsetpgrp(0, (int)pid);                 /* the job is the foreground now  */
+
+        int st = -1;
+        uwaitpid((int)pid, &st);                 /* wait for the job to finish     */
+        utcsetpgrp(0, shell_pgid);               /* shell reclaims the terminal    */
         last = st;
     }
 }

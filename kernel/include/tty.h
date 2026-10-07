@@ -39,6 +39,10 @@ typedef struct termios {
 
 #define TTY_LINE_MAX 256
 
+/* Terminal ioctls for job control (Linux-compatible request numbers). */
+#define TIOCGPGRP 0x540F   /* get the terminal's foreground process group */
+#define TIOCSPGRP 0x5410   /* set the terminal's foreground process group */
+
 void      tty_init(void);
 /* When active, the keyboard IRQ feeds the line discipline (user-shell mode). */
 void      tty_set_active(int on);

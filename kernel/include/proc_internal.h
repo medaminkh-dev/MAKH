@@ -64,8 +64,7 @@ void proc_remove_child(process_t *child);
 void proc_reparent_orphans(process_t *dead_parent);
 int  proc_tree_check(void);   /* 0 = parent/child lists consistent */
 
-/* Phase 20-A: user process model. */
-int  proc_spawn_user(const char* path);   /* load an ELF, start it in ring 3 */
+/* Phase 20-A: user process model. (proc_spawn_user is public — see proc.h.) */
 int  sys_waitpid(int pid, int* status);   /* reap a child; -ECHILD if none   */
 void proc_user_fault(long vector) __attribute__((noreturn));
 void proc_reap(struct process* t);        /* reap a ZOMBIE child (waitpid)    */

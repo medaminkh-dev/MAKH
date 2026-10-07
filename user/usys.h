@@ -7,6 +7,7 @@
 #define SYS_WRITE     1
 #define SYS_OPEN      2
 #define SYS_CLOSE     3
+#define SYS_IOCTL     16
 #define SYS_MMAP      9
 #define SYS_MPROTECT  10
 #define SYS_MUNMAP    11
@@ -18,6 +19,13 @@
 #define SYS_EXECVE    59
 #define SYS_WAIT4     61
 #define SYS_EXIT      60
+#define SYS_SETPGID   109
+#define SYS_GETPGRP   111
+#define SYS_SETSID    112
+#define SYS_GETPGID   121
+
+#define TIOCGPGRP     0x540F
+#define TIOCSPGRP     0x5410
 
 #define PROT_READ     0x1
 #define PROT_WRITE    0x2
@@ -76,5 +84,25 @@ static inline long uexecve(const char* path, char* const* argv, char* const* env
 }
 static inline long uwaitpid(int pid, int* status) {
     return usyscall(SYS_WAIT4, pid, (long)status, 0);
+}
+
+/* --- job control (Phase 20-F) --- */
+static inline long usetpgid(int pid, int pgid) {
+    return usyscall(SYS_SETPGID, pid, pgid, 0);
+}
+static inline long ugetpgid(int pid) { return usyscall(SYS_GETPGID, pid, 0, 0); }
+static inline long ugetpgrp(void)     { return usyscall(SYS_GETPGRP, 0, 0, 0); }
+static inline long usetsid(void)      { return usyscall(SYS_SETSID, 0, 0, 0); }
+static inline long uioctl(int fd, unsigned long req, void* arg) {
+    return usyscall(SYS_IOCTL, fd, (long)req, (long)arg);
+}
+/* tcsetpgrp/tcgetpgrp: hand the terminal to a process group, or read it back. */
+static inline long utcsetpgrp(int fd, int pgid) {
+    return uioctl(fd, TIOCSPGRP, &pgid);
+}
+static inline int utcgetpgrp(int fd) {
+    int pgid = -1;
+    if (uioctl(fd, TIOCGPGRP, &pgid) < 0) return -1;
+    return pgid;
 }
 #endif

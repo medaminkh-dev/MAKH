@@ -15,6 +15,7 @@
 #define SYS_READ        0
 #define SYS_WRITE       1
 #define SYS_OPEN        2
+#define SYS_IOCTL       16
 #define SYS_LSEEK       8
 #define SYS_MMAP        9
 #define SYS_MPROTECT    10
@@ -29,6 +30,12 @@
 #define SYS_EXIT        60
 #define SYS_WAIT4       61
 #define SYS_KILL        62
+
+/* Phase 20-F: process groups / sessions (job control). */
+#define SYS_SETPGID     109
+#define SYS_GETPGRP     111
+#define SYS_SETSID      112
+#define SYS_GETPGID     121
 
 #define SYS_MAKH_GETTICKS  0x200
 #define SYS_MAKH_SLEEP_MS  0x201

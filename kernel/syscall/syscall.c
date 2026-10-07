@@ -252,6 +252,44 @@ static int64_t do_brk(uint64_t newbrk) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Job control (Phase 20-F). The process-group / session calls live in         */
+/* signal.c (sys_setpgid/getpgid/setsid) — the dispatch wires straight to them  */
+/* so there is a single implementation. Only the terminal ioctl is new here.    */
+/* -------------------------------------------------------------------------- */
+
+/* ioctl(fd, request, arg): only the controlling-terminal job-control requests
+ * are supported. fd must be the terminal (0/1/2); anything else is -ENOTTY.
+ * arg points at a pid_t (the foreground process group). */
+static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_user) {
+    if (fd != 0 && fd != 1 && fd != 2) return -ENOTTY;
+    switch (request) {
+        case TIOCGPGRP: {
+            uint32_t pgid = tty_get_foreground();
+            if (from_user) {
+                if (copy_to_user((void*)(uintptr_t)arg, &pgid, sizeof(pgid)) < 0)
+                    return -EFAULT;
+            } else {
+                *(uint32_t*)(uintptr_t)arg = pgid;
+            }
+            return 0;
+        }
+        case TIOCSPGRP: {
+            uint32_t pgid;
+            if (from_user) {
+                if (copy_from_user(&pgid, (const void*)(uintptr_t)arg, sizeof(pgid)) < 0)
+                    return -EFAULT;
+            } else {
+                pgid = *(const uint32_t*)(uintptr_t)arg;
+            }
+            tty_set_foreground(pgid);
+            return 0;
+        }
+        default:
+            return -EINVAL;
+    }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -272,6 +310,11 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_GETPID:       return do_getpid();
         case SYS_WAIT4:        return do_wait4(a1, a2, from_user);
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
+        case SYS_IOCTL:        return do_ioctl(a1, a2, a3, from_user);
+        case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
+        case SYS_GETPGID:      return sys_getpgid((int)a1);
+        case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */
+        case SYS_SETSID:       return sys_setsid();
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
         case SYS_EXIT:
             if (from_user) {
