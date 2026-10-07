@@ -420,7 +420,7 @@ static int64_t do_clock_gettime(uint64_t clk, uint64_t uts) {
 
 static int64_t do_gettimeofday(uint64_t utv, uint64_t utz) {
     (void)utz;                                   /* obsolete timezone arg */
-    uint64_t ms = clock_now_ms();
+    uint64_t ms = clock_now_realtime_ms();       /* wall clock (RTC-anchored) */
     struct { int64_t tv_sec, tv_usec; } tv = {
         (int64_t)(ms / 1000), (int64_t)((ms % 1000) * 1000)
     };

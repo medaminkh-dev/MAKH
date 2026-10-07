@@ -202,6 +202,7 @@ CI runs the suite and a stress job on every push.
 | 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` (byte-exact `struct stat`) | ✅ [docs](docs/PHASE20J_STAT.md) |
 | 20-K | Pipes & redirection: `pipe`/`pipe2`/`dup2`, fd inheritance, shell `a \| b` pipelines | ✅ [docs](docs/PHASE20K_PIPE.md) |
 | 20-L | User threads: `clone`+`futex`+`set_tid_address` (shared VM/fds, futex-join) | ✅ [docs](docs/PHASE20L_THREADS.md) |
+| 20-M | Wall clock: CMOS RTC anchors `CLOCK_REALTIME`/`gettimeofday` to a real epoch | ✅ [docs](docs/PHASE20M_RTC.md) |
 
 ## 📚 Documentation
 

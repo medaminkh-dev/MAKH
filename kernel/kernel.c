@@ -26,6 +26,7 @@
 #include <fs/vfs.h>
 #include <tty.h>
 #include <shell.h>
+#include <ktime.h>
 #include "include/arch/gdt.h"
 #include "include/arch/tss.h"
 #include "include/syscall.h"
@@ -370,7 +371,8 @@ void test_timer(void) {
     print_check();
     terminal_writestring("Initializing Timer...\n");
     timer_init(TIMER_FREQUENCY);
-    
+    ktime_init_realtime();        /* anchor the wall clock to the CMOS RTC */
+
     // Initialize system calls
     print_check();
     terminal_writestring("Initializing system calls...\n");

@@ -93,7 +93,8 @@ C_SOURCES_DRIVERS = \
     kernel/drivers/serial.c \
     kernel/drivers/keyboard.c \
     kernel/drivers/pci.c \
-    kernel/drivers/e1000.c
+    kernel/drivers/e1000.c \
+    kernel/drivers/rtc.c
 
 # C source files - Network stack (Phase 14)
 C_SOURCES_NET = \
@@ -158,7 +159,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_time.c \
     kernel/tests/test_stat.c \
     kernel/tests/test_pipe.c \
-    kernel/tests/test_thread.c
+    kernel/tests/test_thread.c \
+    kernel/tests/test_rtc.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -219,7 +221,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/execargs build/user/spinner build/user/jobtest \
             build/user/sigtest build/user/sigmask build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
-            build/user/countin build/user/threadtest
+            build/user/countin build/user/threadtest build/user/clktest
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

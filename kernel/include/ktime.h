@@ -21,6 +21,12 @@ struct timespec {
 /* Monotonic milliseconds since boot. */
 uint64_t clock_now_ms(void);
 
+/* Wall-clock milliseconds since the Unix epoch (RTC-anchored, Phase 20-M). */
+uint64_t clock_now_realtime_ms(void);
+
+/* Read the CMOS RTC once and anchor the wall clock. Call once at boot. */
+void ktime_init_realtime(void);
+
 /* POSIX-style clock read (monotonic only; realtime aliases it). */
 int clock_gettime(int clk, struct timespec* ts);
 
