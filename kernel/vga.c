@@ -12,6 +12,14 @@
 /* Static terminal state */
 static struct terminal_state terminal;
 
+/* Console "quiet" mode: when set, terminal output (VGA and the slow serial
+ * mirror) is suppressed. Used to silence intentionally-noisy operations such as
+ * the shell fuzz target, whose code paths matter for coverage but whose printed
+ * text would otherwise blow the test's wall-clock budget. panic() clears it so a
+ * crash is never hidden. */
+static volatile int terminal_quiet = 0;
+void terminal_set_quiet(int on) { terminal_quiet = on ? 1 : 0; }
+
 /**
  * terminal_enable_line_cursor - Set cursor to line style (instead of block/underscore)
  * Uses VGA scanline registers to create a line cursor appearance
@@ -147,6 +155,7 @@ void terminal_newline(void) {
  * Insert mode: typing in middle of line shifts characters right
  */
 void terminal_putchar(char c) {
+    if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
     /* Handle newline */
     if (c == '\n') {
         terminal_newline();
@@ -226,6 +235,7 @@ void terminal_write(const char* str, size_t len) {
  * @str: The string to write
  */
 void terminal_writestring(const char* str) {
+    if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
     size_t i = 0;
     while (str[i] != '\0') {
         terminal_putchar(str[i]);

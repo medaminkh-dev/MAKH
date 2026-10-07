@@ -76,6 +76,8 @@ void terminal_initialize_noclear(void);
 void terminal_setcolor(uint8_t color);
 void terminal_putchar(char c);
 void terminal_writestring(const char* str);
+/* Suppress (1) or restore (0) all terminal output; panic() always restores. */
+void terminal_set_quiet(int on);
 void terminal_write(const char* str, size_t len);
 void terminal_writestring_color(const char* str, uint8_t color);
 void terminal_newline(void);

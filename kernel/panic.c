@@ -68,6 +68,7 @@ void kernel_panic(const char* message) {
 /* Formatted panic. */
 void panic(const char* fmt, ...) {
     __asm__ volatile("cli");
+    terminal_set_quiet(0);                   /* a panic is never silenced */
     terminal_setcolor(vga_entry_color(VGA_COLOR_WHITE, VGA_COLOR_RED));
     kprintf("\n\n*** KERNEL PANIC ***\n");
     terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));

@@ -19,6 +19,7 @@
 #include <semaphore.h>
 #include <ktime.h>
 #include <shell.h>
+#include <vga.h>            /* terminal_set_quiet: silence shell-fuzz output */
 #include <mm/kheap.h>
 #include <mm/pmm.h>
 #include <lib/string.h>
@@ -228,6 +229,11 @@ static const char* shell_words[] = {
 
 static int t_shell(kfuzz_rng_t* r, uint32_t iters) {
     char line[SHELL_MAX_LINE];
+    /* The commands still run (that is the coverage we want), but their console
+     * output is silenced: verbose commands (ps/mem/ifconfig) over thousands of
+     * iterations would otherwise flood the slow serial log and blow the test's
+     * wall-clock budget. A panic would re-enable output. */
+    terminal_set_quiet(1);
     for (uint32_t i = 0; i < iters; i++) {
         uint32_t len = 0;
         if (kfuzz_rand(r) & 1) {
@@ -249,6 +255,7 @@ static int t_shell(kfuzz_rng_t* r, uint32_t iters) {
         line[len] = '\0';
         shell_exec(line);          /* only requirement: it returns */
     }
+    terminal_set_quiet(0);
     return 0;
 }
 
