@@ -73,6 +73,7 @@ void proc_reap(struct process* t);        /* reap a ZOMBIE child (waitpid)    */
 struct trapframe;
 long proc_fork(struct trapframe* tf);
 long proc_execve(struct trapframe* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp);
+long proc_clone(struct trapframe* tf);   /* Phase 20-L: create a thread */
 
 // -----------------------------------------------------------------------------
 // HELPER FUNCTIONS

@@ -487,13 +487,41 @@ void vfs_fork_fds(void* dstp, void* srcp) {
     d->fd_table = dt;
 }
 
-/* exit: drop every fd so pipe peers see EOF/EPIPE and descriptions free. */
+/* clone(CLONE_FILES): the child shares the parent's fd table by pointer, under a
+ * refcount so neither frees it until the last sharer exits (Phase 20-L). */
+void vfs_share_fds(void* dstp, void* srcp) {
+    process_t* d = (process_t*)dstp;
+    process_t* s = (process_t*)srcp;
+    if (!s->fd_table) {
+        s->fd_table = kcalloc(VFS_MAX_FDS, sizeof(file_t*));
+        if (!s->fd_table) return;
+    }
+    if (!s->fd_rc) {
+        s->fd_rc = (int*)kmalloc(sizeof(int));
+        if (!s->fd_rc) return;             /* fall back: child just gets none */
+        *s->fd_rc = 1;
+    }
+    (*s->fd_rc)++;
+    d->fd_table = s->fd_table;
+    d->fd_rc    = s->fd_rc;
+}
+
+/* exit: drop every fd so pipe peers see EOF/EPIPE and descriptions free. For a
+ * shared table (clone CLONE_FILES) only the last thread closes and frees it. */
 void vfs_close_all(void* procp) {
     process_t* p = (process_t*)procp;
     file_t** t = (file_t**)p->fd_table;
     if (!t) return;
+    if (p->fd_rc) {
+        int left = --(*p->fd_rc);
+        p->fd_table = NULL;
+        if (left > 0) { p->fd_rc = NULL; return; }   /* siblings still use it */
+        kfree(p->fd_rc);
+        p->fd_rc = NULL;
+    } else {
+        p->fd_table = NULL;
+    }
     for (int i = 0; i < VFS_MAX_FDS; i++)
         if (t[i]) { file_t* f = t[i]; t[i] = NULL; file_put(f); }
     kfree(t);
-    p->fd_table = NULL;
 }

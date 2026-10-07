@@ -29,6 +29,7 @@
 #include <ktime.h>
 #include <krandom.h>
 #include <mm/kheap.h>
+#include <futex.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -60,6 +61,7 @@ void syscall_init(void) {
     wrmsr(IA32_FMASK, 0x200 | 0x400 | 0x40000);
 
     wq_init(&sleep_wq);                       /* nanosleep's parking queue */
+    futex_init();                             /* futex hash buckets */
 
     KLOG_I("SYSCALL", "ring-3 syscall/sysret enabled (STAR=%p)\n",
            (void*)rdmsr(IA32_STAR));
@@ -377,6 +379,34 @@ static int64_t do_dup2(uint64_t oldfd, uint64_t newfd) {
     return vfs_dup2((int)oldfd, (int)newfd);
 }
 
+/* Thread primitives (Phase 20-L). */
+static int64_t do_set_tid_address(uint64_t tidptr) {
+    process_t* cur = current_process;
+    if (!cur) return -ENOSYS;
+    cur->clear_child_tid = tidptr;
+    return (int64_t)cur->pid;
+}
+
+static int64_t do_futex(uint64_t uaddr, uint64_t op, uint64_t val, uint64_t utimeout) {
+    int cmd = (int)op & FUTEX_CMD_MASK;             /* strip PRIVATE/CLOCK flags */
+    if (cmd == FUTEX_WAIT) {
+        uint64_t ticks = 0;
+        if (utimeout) {
+            struct timespec ts;
+            if (copy_from_user(&ts, (const void*)(uintptr_t)utimeout, sizeof(ts)) < 0)
+                return -EFAULT;
+            uint64_t ms = (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+            ticks = (ms * TIMER_FREQUENCY + 999) / 1000;
+            if (ticks == 0) ticks = 1;              /* a tiny timeout still waits a tick */
+        }
+        return futex_wait(uaddr, (uint32_t)val, ticks);
+    }
+    if (cmd == FUTEX_WAKE) {
+        return futex_wake(uaddr, (int)val);
+    }
+    return -ENOSYS;                                 /* other futex ops unsupported */
+}
+
 /* Time + randomness (Phase 20-I). nanosleep parks on a wait queue nothing ever
  * wakes, so only its own timeout or a signal ends it (interruptible -> -EINTR).
  * (sleep_wq is declared near the top so syscall_init can wq_init it.) */
@@ -494,6 +524,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_PIPE:           return do_pipe(a1, 0);
         case SYS_PIPE2:          return do_pipe(a1, a2);
         case SYS_DUP2:           return do_dup2(a1, a2);
+        case SYS_FUTEX:          return do_futex(a1, a2, a3, a4);
+        case SYS_SET_TID_ADDRESS:return do_set_tid_address(a1);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */
@@ -526,6 +558,7 @@ uint64_t syscall_dispatch(trapframe_t* tf) {
     int64_t rc;
     switch (tf->int_no) {
         case SYS_FORK:   rc = proc_fork(tf); break;
+        case SYS_CLONE:  rc = proc_clone(tf); break;   /* needs the live trapframe */
         case SYS_EXECVE: rc = proc_execve(tf, tf->rdi, tf->rsi, tf->rdx); break;
         case SYS_RT_SIGRETURN: rc = signal_sigreturn(tf); break;  /* restores tf */
         default:

@@ -11,6 +11,7 @@
 #include <arch/usermode.h>
 #include <signal.h>
 #include <fs/vfs.h>          /* vfs_close_all on exit (Phase 20-K) */
+#include <futex.h>           /* CLEARTID futex wake on exit (Phase 20-L) */
 #include <mm/vmspace.h>
 
 /**
@@ -480,9 +481,16 @@ static void reap(process_t* t) {
     /* Caller holds IRQs disabled. Frees everything owned by a dead thread. */
     all_list_remove(t);
     if (t->aspace) {            /* Phase 20-A: user process address space */
-        vmspace_destroy((address_space_t*)t->aspace);
-        kfree(t->aspace);
+        /* clone(CLONE_VM) shares one space across threads; tear it down only
+         * when the last thread referencing it is reaped (Phase 20-L). */
+        address_space_t* as = (address_space_t*)t->aspace;
         t->aspace = NULL;
+        if (as->refcount <= 1) {
+            vmspace_destroy(as);
+            kfree(as);
+        } else {
+            as->refcount--;
+        }
     }
     if (t->tls) {
         kfree(t->tls);
@@ -530,6 +538,16 @@ extern void pthread_tls_cleanup(process_t* t);
 void thread_exit(int code) {
     /* Run TLS destructors in thread context (IRQs on) before we tear down. */
     pthread_tls_cleanup(current_process);
+
+    /* A joined thread's clear_child_tid: zero it and wake any futex waiter, so
+     * pthread_join() returns (Phase 20-L). Done while our address space is still
+     * live (before reap tears it down). */
+    if (current_process->clear_child_tid) {
+        uint32_t zero = 0;
+        copy_to_user((void*)(uintptr_t)current_process->clear_child_tid, &zero, 4);
+        futex_wake(current_process->clear_child_tid, 1);
+        current_process->clear_child_tid = 0;
+    }
 
     /* Release open fds now (at zombie time, not reap) so a pipe peer sees EOF
      * / EPIPE as soon as this process exits — Phase 20-K. No-op for a kernel

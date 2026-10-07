@@ -173,6 +173,8 @@ int       vfs_dup2(int oldfd, int newfd); /* share oldfd's description at newfd 
 /* Duplicate `src`'s whole fd table into `dst` (fork): shared descriptions,
  * refcounts bumped. Both are process_t*. */
 void      vfs_fork_fds(void* dst, void* src);
+/* clone(CLONE_FILES): share src's fd table with dst under a refcount. */
+void      vfs_share_fds(void* dst, void* src);
 /* Drop every open fd of a process (exit): releases each description. */
 void      vfs_close_all(void* proc);
 

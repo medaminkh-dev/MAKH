@@ -62,6 +62,7 @@ int vmspace_create(address_space_t* as) {
             np[i] = kp[i];
 
     as->pml4_phys = (uint64_t)(uintptr_t)p;
+    as->refcount  = 1;            /* one thread until clone(CLONE_VM) shares it */
     return 0;
 }
 

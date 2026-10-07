@@ -201,6 +201,7 @@ CI runs the suite and a stress job on every push.
 | 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` (xoshiro256**) | ✅ [docs](docs/PHASE20I_TIME_RANDOM.md) |
 | 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` (byte-exact `struct stat`) | ✅ [docs](docs/PHASE20J_STAT.md) |
 | 20-K | Pipes & redirection: `pipe`/`pipe2`/`dup2`, fd inheritance, shell `a \| b` pipelines | ✅ [docs](docs/PHASE20K_PIPE.md) |
+| 20-L | User threads: `clone`+`futex`+`set_tid_address` (shared VM/fds, futex-join) | ✅ [docs](docs/PHASE20L_THREADS.md) |
 
 ## 📚 Documentation
 

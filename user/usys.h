@@ -37,7 +37,18 @@
 #define SYS_GETDENTS64     217
 #define SYS_PIPE           22
 #define SYS_DUP2           33
+#define SYS_CLONE          56
+#define SYS_FUTEX          202
+#define SYS_SET_TID_ADDRESS 218
 #define SYS_KILL      62
+
+/* clone flags + futex ops (match kernel). */
+#define CLONE_VM             0x00000100
+#define CLONE_FILES          0x00000400
+#define CLONE_CHILD_SETTID   0x01000000
+#define CLONE_CHILD_CLEARTID 0x00200000
+#define FUTEX_WAIT  0
+#define FUTEX_WAKE  1
 
 /* st_mode bits + fcntl + getdents (match kernel fs/vfs.h). */
 #define S_IFMT   0170000
@@ -240,4 +251,17 @@ static inline long upipe(int fds[2]) {
 static inline long udup2(int oldfd, int newfd) {
     return usyscall(SYS_DUP2, oldfd, newfd, 0);
 }
+
+/* --- threads / futex (Phase 20-L) --- */
+static inline long ufutex(volatile int* uaddr, int op, int val, void* timeout) {
+    return usyscall4(SYS_FUTEX, (long)uaddr, op, val, (long)timeout);
+}
+static inline long uset_tid_address(int* tidptr) {
+    return usyscall(SYS_SET_TID_ADDRESS, (long)tidptr, 0, 0);
+}
+/* Spawn a thread running fn(arg) on stack_top (grows down), sharing memory and
+ * fds. ctid is set to the tid now and cleared + futex-woken on exit (join).
+ * Implemented in start.S. Returns the new tid, or < 0 on error. */
+extern long __clone_thread(void (*fn)(void*), void* stack_top, void* arg,
+                           int* ctid, unsigned long flags);
 #endif

@@ -256,6 +256,107 @@ long proc_fork(trapframe_t* tf) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* clone() — create a thread sharing the address space (Phase 20-L)            */
+/* -------------------------------------------------------------------------- */
+
+#define CLONE_VM             0x00000100
+#define CLONE_FILES          0x00000400
+#define CLONE_SETTLS         0x00080000
+#define CLONE_PARENT_SETTID  0x00100000
+#define CLONE_CHILD_CLEARTID 0x00200000
+#define CLONE_CHILD_SETTID   0x01000000
+
+/* clone(flags, child_stack, ptid, ctid, tls). With CLONE_VM the new thread
+ * shares the caller's address space (refcounted) and fd table, runs on
+ * child_stack with its own TLS, and returns 0 from clone (via fork_child_entry)
+ * while the caller gets the new tid. Without CLONE_VM this is fork(). */
+long proc_clone(trapframe_t* tf) {
+    process_t* parent = current_process;
+    if (!parent || !parent->is_user || !parent->aspace) return -ENOSYS;
+
+    uint64_t flags       = tf->rdi;
+    uint64_t child_stack = tf->rsi;
+    uint64_t ptid        = tf->rdx;
+    uint64_t ctid        = tf->r10;
+    uint64_t newtls      = tf->r8;
+
+    if (!(flags & CLONE_VM) || child_stack == 0) return proc_fork(tf);  /* a process */
+
+    address_space_t* as = (address_space_t*)parent->aspace;
+
+    process_t* c = proc_table_alloc();
+    if (!c) return -ENOMEM;
+    memset(c, 0, sizeof(*c));
+    void* stk = kmalloc(DEFAULT_THREAD_STACK);
+    if (!stk) { proc_table_free(c); return -ENOMEM; }
+    memset(stk, 0, DEFAULT_THREAD_STACK);
+    *(volatile uint64_t*)stk = STACK_CANARY_MAGIC;
+    uint32_t pid = pid_alloc();
+    if (!pid) { kfree(stk); proc_table_free(c); return -ENOMEM; }
+
+    c->pid = pid;
+    c->state = PROC_EMBRYO;
+    c->priority = PRIO_DEFAULT;
+    c->kernel_stack = (uint64_t)stk;
+    c->kernel_stack_size = DEFAULT_THREAD_STACK;
+    c->stack_canary = 1;
+    c->time_slice = c->ticks_left = SCHED_QUANTUM;
+    c->creation_time = timer_get_ticks();
+    for (int i = 0; i < 31 && parent->name[i]; i++) c->name[i] = parent->name[i];
+
+    c->is_user = 1;
+    c->aspace = as;                        /* SHARE the parent's space */
+    as->refcount++;
+    c->user_entry = parent->user_entry;
+    c->user_stack = child_stack;
+    c->brk_start = parent->brk_start;
+    c->brk_cur   = parent->brk_cur;
+    c->mmap_cur  = parent->mmap_cur;
+    for (int i = 0; i < (int)sizeof(c->cwd); i++) c->cwd[i] = parent->cwd[i];
+    c->pgid = parent->pgid;
+    c->sid  = parent->sid;
+    c->sig_blocked = parent->sig_blocked;
+    c->sig_ignore  = parent->sig_ignore;
+    for (int i = 0; i < 32; i++) c->sig_handlers[i] = parent->sig_handlers[i];
+    c->sig_restorer = parent->sig_restorer;
+    c->fs_base = (flags & CLONE_SETTLS) ? newtls : parent->fs_base;
+
+    if (flags & CLONE_FILES) vfs_share_fds(c, parent);
+    else                     vfs_fork_fds(c, parent);
+
+    if (flags & CLONE_CHILD_CLEARTID) c->clear_child_tid = ctid;
+    c->detached = 1;                       /* a thread is joined via the futex, */
+                                           /* not waitpid: auto-reap on exit     */
+
+    /* Child returns from clone with rax=0 on its own stack (fork_child_entry
+     * iretq's the copied trapframe). */
+    uint64_t top = (c->kernel_stack + c->kernel_stack_size) & ~0xFULL;
+    trapframe_t* ctf = (trapframe_t*)(uintptr_t)(top - sizeof(trapframe_t));
+    *ctf = *tf;
+    ctf->rax = 0;
+    ctf->rsp = child_stack;
+    c->context.rsp = (uint64_t)(uintptr_t)ctf;
+    c->context.rip = (uint64_t)(uintptr_t)fork_child_entry;
+    c->context.rflags = 0x002;
+    c->context.cr3 = as->pml4_phys;
+    c->context.cs = 0x08;
+    c->context.ds = c->context.es = c->context.fs = c->context.gs = c->context.ss = 0x10;
+
+    /* The tid stores land in the shared space (the caller's live CR3). */
+    if (flags & CLONE_PARENT_SETTID) { uint32_t t = pid; copy_to_user((void*)(uintptr_t)ptid, &t, 4); }
+    if (flags & CLONE_CHILD_SETTID)  { uint32_t t = pid; copy_to_user((void*)(uintptr_t)ctid, &t, 4); }
+
+    irqflags_t f = local_irq_save();
+    c->parent_pid = parent->pid;
+    all_list_add(c);
+    proc_add_child(parent, c);
+    sched_admit(c);
+    local_irq_restore(f);
+
+    return (long)pid;                       /* caller: the new tid */
+}
+
+/* -------------------------------------------------------------------------- */
 /* execve() — replace the caller's image with a fresh program (Phase 20-A-2)   */
 /* -------------------------------------------------------------------------- */
 

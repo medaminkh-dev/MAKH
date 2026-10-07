@@ -126,6 +126,10 @@ typedef struct process {
     // -------- Phase 20-H: thread-local storage base (arch_prctl SET_FS) --------
     uint64_t fs_base;             // IA32_FS_BASE for this process (TLS); 0 until set
 
+    // -------- Phase 20-L: user threads (clone/futex) --------
+    uint64_t clear_child_tid;     // set_tid_address: *ptr=0 + futex-wake on exit
+    int*     fd_rc;               // shared fd-table refcount (CLONE_FILES); NULL = sole owner
+
     // -------- Phase 20-A: user process model --------
     void*    aspace;              // address_space_t* for a user process (NULL => kernel thread)
     uint8_t  is_user;             // 1 => scheduled user process (ring 3)

@@ -29,6 +29,7 @@
 
 typedef struct address_space {
     uint64_t pml4_phys;      /* physical address of this space's PML4 */
+    uint32_t refcount;       /* threads sharing this space (clone CLONE_VM) */
 } address_space_t;
 
 /* Create a fresh space: a new PML4 sharing all kernel entries, empty user

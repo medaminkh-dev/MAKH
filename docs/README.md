@@ -39,6 +39,7 @@ numbers are navigable rather than mysterious.
 | 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` | [PHASE20I_TIME_RANDOM](PHASE20I_TIME_RANDOM.md) |
 | 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` | [PHASE20J_STAT](PHASE20J_STAT.md) |
 | 20-K | Pipes & redirection: `pipe`/`dup2`, fd inheritance, shell `a \| b` | [PHASE20K_PIPE](PHASE20K_PIPE.md) |
+| 20-L | User threads: `clone`+`futex`+`set_tid_address`, shared VM/fds, join | [PHASE20L_THREADS](PHASE20L_THREADS.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -79,6 +80,8 @@ past gap #1 — toward a libc userland (Stage 1: the syscall surface):
                        (byte-exact struct stat for musl)        (1.2 of Stage 1)
 20-K pipe + dup2 ..... fd refcounts, fork-inherit, dup2      ─▶ echo abc | countin
                        (fds 0/1/2 table-first, console fallbk)  (1.3 of Stage 1)
+20-L clone + futex ... shared-VM threads, futex, CLEARTID join ─▶ pthreads base
+                       (aspace/fd refcounted lifetime)          (1.4 of Stage 1)
 ```
 
 ## Doc conventions (phases 16+)
