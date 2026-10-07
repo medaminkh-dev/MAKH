@@ -12,3 +12,11 @@ _start:
     mov $60, %eax           /* SYS_EXIT */
     syscall
 1:  jmp 1b
+
+/* Signal-return trampoline (Phase 20-G). The kernel sets a signal handler's
+ * return address to this; when the handler returns, %rsp points at the saved
+ * context, and rt_sigreturn restores it. Touch nothing before the syscall. */
+.global __sigreturn_trampoline
+__sigreturn_trampoline:
+    mov $15, %eax           /* SYS_RT_SIGRETURN */
+    syscall

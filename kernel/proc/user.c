@@ -226,6 +226,8 @@ long proc_fork(trapframe_t* tf) {
     c->sid  = parent->sid;
     c->sig_blocked = parent->sig_blocked;
     c->sig_ignore  = parent->sig_ignore;
+    for (int i = 0; i < 32; i++) c->sig_handlers[i] = parent->sig_handlers[i];
+    c->sig_restorer = parent->sig_restorer;   /* handlers survive fork (Phase 20-G) */
 
     /* 5. Fork-return context: a copy of the parent's trapframe, rax = 0, with
      *    the saved context pointed at the syscall-return epilogue. */
@@ -328,6 +330,7 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     cur->mmap_cur  = USER_MMAP_BASE;
     cur->user_entry = entry;
     cur->user_stack = ustack;
+    signal_reset_handlers(cur);   /* caught handlers point into the old image */
 
     /* Rewrite the trapframe so the syscall epilogue returns into the new image
      * with a clean register file (sysret takes rip from rcx and rflags from

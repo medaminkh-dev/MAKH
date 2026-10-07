@@ -42,9 +42,14 @@
 #define SIG_UNBLOCK  1
 #define SIG_SETMASK  2
 
+/* Special handler values for sigaction (Phase 20-G). */
+#define SIG_DFL      0      /* default action                 */
+#define SIG_IGN      1      /* ignore                         */
+
 #define sigmask(s)  (1ull << (s))
 
 struct process;
+struct trapframe;
 
 /* Deliver `sig` to one thread. Returns 0, or -errno. */
 int  signal_send(struct process* t, int sig);
@@ -71,9 +76,27 @@ int  signal_pending(void);
 int  signal_take_terminate(void);
 
 /* Return-to-ring-3 hook: terminate the current user process (128+signo) if it
- * has a pending fatal signal. Called from the syscall-return and timer-preempt
- * paths; this is what makes Ctrl+C kill a running program. */
+ * has a pending fatal signal with NO user handler. Called from the timer-preempt
+ * (IRQ) path, which cannot build a handler frame; handler'd signals are left
+ * pending for signal_deliver() at the next syscall return. */
 void signal_check_and_die(void);
+
+/* Full return-to-ring-3 delivery on the syscall path (has the trapframe): if a
+ * signal with a user handler is pending, build a signal frame on the user stack
+ * and redirect the trapframe into the handler; otherwise apply the default
+ * action (terminate or ignore). (Phase 20-G.) */
+void signal_deliver(struct trapframe* tf);
+
+/* sigaction(2): install handler (SIG_DFL/SIG_IGN or a user address) for sig,
+ * with the user trampoline (sa_restorer) that calls sigreturn. */
+int  signal_sigaction(int sig, uint64_t handler, uint64_t restorer);
+
+/* sigreturn(2): restore the context saved by signal_deliver from the user
+ * stack. Returns the restored rax (the dispatcher writes it into tf->rax). */
+long signal_sigreturn(struct trapframe* tf);
+
+/* Reset caught handlers to SIG_DFL across execve (SIG_IGN dispositions stay). */
+void signal_reset_handlers(struct process* t);
 
 /* Process-group / session calls. */
 int  sys_setpgid(int pid, int pgid);

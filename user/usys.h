@@ -23,9 +23,26 @@
 #define SYS_GETPGRP   111
 #define SYS_SETSID    112
 #define SYS_GETPGID   121
+#define SYS_RT_SIGACTION   13
+#define SYS_RT_SIGPROCMASK 14
+#define SYS_RT_SIGRETURN   15
+#define SYS_KILL      62
 
 #define TIOCGPGRP     0x540F
 #define TIOCSPGRP     0x5410
+
+/* Signals + sigaction/sigprocmask constants (match kernel signal.h). */
+#define SIGINT    2
+#define SIGKILL   9
+#define SIGSEGV   11
+#define SIGTERM   15
+#define SIGCHLD   17
+#define SIG_DFL   0
+#define SIG_IGN   1
+#define SIG_BLOCK    0
+#define SIG_UNBLOCK  1
+#define SIG_SETMASK  2
+#define sigmask(s) (1UL << (s))
 
 #define PROT_READ     0x1
 #define PROT_WRITE    0x2
@@ -104,5 +121,26 @@ static inline int utcgetpgrp(int fd) {
     int pgid = -1;
     if (uioctl(fd, TIOCGPGRP, &pgid) < 0) return -1;
     return pgid;
+}
+
+/* --- signals (Phase 20-G) --- */
+/* The kernel returns here after a handler: the trampoline invokes sigreturn,
+ * which restores the interrupted context. Its address is handed to the kernel
+ * as sa_restorer by usignal(), so the kernel never needs a user symbol. */
+extern void __sigreturn_trampoline(void);
+
+static inline long ukill(int pid, int sig) {
+    return usyscall(SYS_KILL, pid, sig, 0);
+}
+static inline long uraise(int sig) { return ukill((int)ugetpid(), sig); }
+
+/* Install `handler` (or SIG_DFL/SIG_IGN) for `sig`. */
+static inline long usignal(int sig, void (*handler)(int)) {
+    return usyscall(SYS_RT_SIGACTION, sig, (long)handler,
+                    (long)&__sigreturn_trampoline);
+}
+/* 64-bit signal mask by value; *oldset (if non-NULL) gets the prior mask. */
+static inline long usigprocmask(int how, unsigned long set, unsigned long* oldset) {
+    return usyscall(SYS_RT_SIGPROCMASK, how, (long)set, (long)oldset);
 }
 #endif

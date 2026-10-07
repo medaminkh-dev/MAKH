@@ -150,7 +150,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_fork.c \
     kernel/tests/test_term.c \
     kernel/tests/test_args.c \
-    kernel/tests/test_job.c
+    kernel/tests/test_job.c \
+    kernel/tests/test_usignal.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -208,7 +209,8 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/vmtest build/user/mprotfault build/user/cwdtest \
             build/user/forktest build/user/forkexec build/user/forkcow \
             build/user/readline build/user/sh build/user/echo \
-            build/user/execargs build/user/spinner build/user/jobtest
+            build/user/execargs build/user/spinner build/user/jobtest \
+            build/user/sigtest build/user/sigmask
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

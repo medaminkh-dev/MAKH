@@ -10,6 +10,17 @@
 #include <sched.h>
 #include <irq.h>
 #include <errno.h>
+#include <arch/usermode.h>        /* trapframe_t, copy_to/from_user */
+
+/* The context signal_deliver() saves on the user stack and signal_sigreturn()
+ * restores. Laid out just above the handler's return address so sigreturn finds
+ * it at the user rsp it is entered with. */
+typedef struct {
+    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
+    uint64_t rbp, rdi, rsi, rdx, rcx, rbx, rax;
+    uint64_t rip, rflags, rsp;
+    uint64_t blocked;             /* sig mask to restore (handler masked its sig) */
+} sigcontext_t;
 
 /* Signals whose default action is to terminate the thread. */
 static int is_terminate(int sig) {
@@ -34,6 +45,7 @@ static int uncatchable(int sig) { return sig == SIGKILL || sig == SIGSTOP; }
  * up on a parent that is not catching it. */
 static int effectively_ignored(process_t* t, int sig) {
     if (uncatchable(sig)) return 0;
+    if (t->sig_handlers[sig]) return 0;            /* a handler is installed: deliver */
     if (t->sig_ignore & (1u << sig)) return 1;     /* SIG_IGN disposition */
     return !is_terminate(sig);                     /* SIG_DFL == ignore */
 }
@@ -146,12 +158,116 @@ int signal_take_terminate(void) {
     cur->sig_interrupt = 0;
     for (int sig = 1; sig < NSIG; sig++) {
         if (!(deliverable & sigmask(sig))) continue;
+        /* A signal with a user handler is delivered by signal_deliver() on the
+         * syscall path, which can build the frame; leave it pending here. */
+        if (cur->sig_handlers[sig]) continue;
         cur->sig_pending &= ~sigmask(sig);          /* accept it */
         if (is_terminate(sig)) { local_irq_restore(f); return sig; }
         /* benign default (ignore): already cleared, keep scanning */
     }
     local_irq_restore(f);
     return 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* User-installed handlers: sigaction / delivery / sigreturn (Phase 20-G)     */
+/* -------------------------------------------------------------------------- */
+
+int signal_sigaction(int sig, uint64_t handler, uint64_t restorer) {
+    if (sig <= 0 || sig >= NSIG || uncatchable(sig)) return -EINVAL;
+    process_t* cur = current_process;
+    if (!cur) return -EINVAL;
+    irqflags_t f = local_irq_save();
+    if (handler == SIG_DFL) {
+        cur->sig_handlers[sig] = 0;
+        cur->sig_ignore &= ~(1u << sig);
+    } else if (handler == SIG_IGN) {
+        cur->sig_handlers[sig] = 0;
+        cur->sig_ignore |= (1u << sig);
+        cur->sig_pending &= ~sigmask(sig);          /* discard already-pending */
+    } else {
+        cur->sig_handlers[sig] = handler;
+        cur->sig_ignore &= ~(1u << sig);
+    }
+    if (restorer) cur->sig_restorer = restorer;
+    local_irq_restore(f);
+    return 0;
+}
+
+void signal_reset_handlers(process_t* t) {
+    if (!t) return;
+    for (int s = 0; s < NSIG; s++) t->sig_handlers[s] = 0;
+    t->sig_restorer = 0;
+    /* SIG_IGN dispositions survive execve (POSIX); sig_ignore is left as is. */
+}
+
+/* Build the signal frame on the user stack and point the trapframe at the
+ * handler. On a bad user stack the process is killed (SIGSEGV). */
+static void deliver_to_handler(process_t* cur, trapframe_t* tf, int sig,
+                               uint64_t handler) {
+    sigcontext_t sc;
+    sc.r15 = tf->r15; sc.r14 = tf->r14; sc.r13 = tf->r13; sc.r12 = tf->r12;
+    sc.r11 = tf->r11; sc.r10 = tf->r10; sc.r9 = tf->r9;  sc.r8  = tf->r8;
+    sc.rbp = tf->rbp; sc.rdi = tf->rdi; sc.rsi = tf->rsi; sc.rdx = tf->rdx;
+    sc.rcx = tf->rcx; sc.rbx = tf->rbx; sc.rax = tf->rax;
+    sc.rip = tf->rip; sc.rflags = tf->rflags; sc.rsp = tf->rsp;
+    sc.blocked = cur->sig_blocked;
+
+    /* Skip the 128-byte red zone the interrupted frame may be using, then place
+     * the context 16-aligned; the return address sits just below it so a plain
+     * `ret` from the handler leaves rsp at the context for sigreturn. */
+    uint64_t sc_addr = (tf->rsp - 128 - sizeof(sc)) & ~0xFULL;
+    uint64_t ret_slot = sc_addr - 8;
+    if (!cur->sig_restorer ||
+        copy_to_user((void*)(uintptr_t)sc_addr, &sc, sizeof(sc)) < 0 ||
+        copy_to_user((void*)(uintptr_t)ret_slot, &cur->sig_restorer, 8) < 0) {
+        thread_exit(128 + SIGSEGV);                 /* unusable user stack */
+    }
+
+    cur->sig_blocked |= sigmask(sig);               /* mask sig in its handler */
+    tf->rsp = ret_slot;
+    tf->rip = handler;
+    tf->rdi = (uint64_t)sig;                         /* handler(int signo) */
+    tf->rax = 0;
+}
+
+void signal_deliver(trapframe_t* tf) {
+    process_t* cur = current_process;
+    if (!cur || !cur->is_user) return;
+    irqflags_t f = local_irq_save();
+    uint64_t deliverable = cur->sig_pending & ~cur->sig_blocked;
+    cur->sig_interrupt = 0;
+    for (int sig = 1; sig < NSIG; sig++) {
+        if (!(deliverable & sigmask(sig))) continue;
+        uint64_t h = cur->sig_handlers[sig];
+        cur->sig_pending &= ~sigmask(sig);          /* accept it */
+        if (h) {
+            local_irq_restore(f);
+            deliver_to_handler(cur, tf, sig, h);    /* one handler per return */
+            return;
+        }
+        if (is_terminate(sig)) { local_irq_restore(f); thread_exit(128 + sig); }
+        /* benign default (ignore): cleared, keep scanning */
+    }
+    local_irq_restore(f);
+}
+
+long signal_sigreturn(trapframe_t* tf) {
+    process_t* cur = current_process;
+    sigcontext_t sc;
+    if (copy_from_user(&sc, (const void*)(uintptr_t)tf->rsp, sizeof(sc)) < 0)
+        thread_exit(128 + SIGSEGV);                 /* forged/clobbered frame */
+
+    tf->r15 = sc.r15; tf->r14 = sc.r14; tf->r13 = sc.r13; tf->r12 = sc.r12;
+    tf->r11 = sc.r11; tf->r10 = sc.r10; tf->r9 = sc.r9;  tf->r8  = sc.r8;
+    tf->rbp = sc.rbp; tf->rdi = sc.rdi; tf->rsi = sc.rsi; tf->rdx = sc.rdx;
+    tf->rcx = sc.rcx; tf->rbx = sc.rbx;
+    tf->rip = sc.rip; tf->rsp = sc.rsp;
+    /* Sanitise RFLAGS: keep only the user-settable arithmetic/direction flags,
+     * force IF=1 and the reserved bit, and never let ring 3 raise IOPL. */
+    tf->rflags = (sc.rflags & 0x00000CD5ULL) | 0x202ULL;
+    if (cur) cur->sig_blocked = sc.blocked;         /* restore pre-handler mask */
+    return (long)sc.rax;                            /* dispatcher sets tf->rax */
 }
 
 /* -------------------------------------------------------------------------- */

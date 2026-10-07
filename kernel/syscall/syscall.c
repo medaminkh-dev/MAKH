@@ -289,6 +289,21 @@ static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_us
     }
 }
 
+/* Signal syscalls (Phase 20-G). Our ABI is simplified: sigaction passes the
+ * handler and the user trampoline (sa_restorer) directly in registers, and
+ * sigprocmask passes the 64-bit mask by value (not a sigset_t pointer). */
+static int64_t do_sigaction(uint64_t sig, uint64_t handler, uint64_t restorer) {
+    return signal_sigaction((int)sig, handler, restorer);
+}
+
+static int64_t do_sigprocmask(uint64_t how, uint64_t set, uint64_t uoldset) {
+    uint64_t old = 0;
+    int rc = signal_procmask((int)how, set, &old);
+    if (rc < 0) return rc;
+    if (uoldset && copy_to_user((void*)(uintptr_t)uoldset, &old, 8) < 0) return -EFAULT;
+    return 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -311,6 +326,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_WAIT4:        return do_wait4(a1, a2, from_user);
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_IOCTL:        return do_ioctl(a1, a2, a3, from_user);
+        case SYS_RT_SIGACTION:   return do_sigaction(a1, a2, a3);
+        case SYS_RT_SIGPROCMASK: return do_sigprocmask(a1, a2, a3);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */
@@ -344,14 +361,17 @@ uint64_t syscall_dispatch(trapframe_t* tf) {
     switch (tf->int_no) {
         case SYS_FORK:   rc = proc_fork(tf); break;
         case SYS_EXECVE: rc = proc_execve(tf, tf->rdi, tf->rsi, tf->rdx); break;
+        case SYS_RT_SIGRETURN: rc = signal_sigreturn(tf); break;  /* restores tf */
         default:
             rc = dispatch(tf->int_no, tf->rdi, tf->rsi, tf->rdx, tf->r10,
                           /*from_user*/1);
     }
     tf->rax = (uint64_t)rc;
-    /* Deliver a pending fatal signal (e.g. Ctrl+C) now, before returning to
-     * ring 3. If one is pending this does not return. */
-    signal_check_and_die();
+    /* Return-to-ring-3 signal delivery: run a pending handler (rewriting tf to
+     * enter it) or apply a default action (e.g. Ctrl+C terminates). Has the
+     * trapframe, so unlike the IRQ path it can build a handler frame. If a
+     * default-terminate signal is taken this does not return. */
+    signal_deliver(tf);
     return (uint64_t)rc;
 }
 

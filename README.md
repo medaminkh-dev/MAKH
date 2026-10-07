@@ -196,6 +196,7 @@ CI runs the suite and a stress job on every push.
 | 20-D | Controlling terminal: blocking `read`, Ctrl+C, interactive `/bin/sh` (`makh.sh`) | ✅ [docs](docs/PHASE20D_SHELL.md) |
 | 20-E | `argv`/`envp`/`auxv`: SysV initial stack, `umain(argc, argv)`, shell argument parsing | ✅ [docs](docs/PHASE20E_ARGV.md) |
 | 20-F | Job control: `setpgid`/`getpgid`/`setsid`, `ioctl(TIOCSPGRP)`, Ctrl+C hits the job | ✅ [docs](docs/PHASE20F_JOBCTL.md) |
+| 20-G | User signal handlers: `sigaction`/`sigprocmask`/`sigreturn`, signal frame on the user stack | ✅ [docs](docs/PHASE20G_SIGNALS.md) |
 
 ## 📚 Documentation
 
