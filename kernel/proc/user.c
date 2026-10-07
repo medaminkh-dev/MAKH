@@ -83,6 +83,7 @@ int proc_spawn_user(const char* path) {
     t->context.cr3 = as->pml4_phys;      /* run in its own address space */
     t->brk_start = t->brk_cur = USER_HEAP_BASE;   /* Phase 20-B: empty heap */
     t->mmap_cur  = USER_MMAP_BASE;                /* mmap arena bump pointer */
+    t->cwd[0] = '/'; t->cwd[1] = '\0';            /* Phase 20-C: start at root */
     preempt_enable();
     return (int)t->pid;
 }

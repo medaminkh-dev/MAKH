@@ -36,7 +36,9 @@ typedef enum {
     KFUZZ_T_TTY    = 1u << 9,   /* tty line discipline + signal masks (Phase 19) */
     KFUZZ_T_ELF    = 1u << 10,  /* ELF64 loader on malformed images (Phase 20-A) */
     KFUZZ_T_UVM    = 1u << 11,  /* anonymous mmap/munmap/brk/mprotect (Phase 20-B) */
-    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10) | (1u << 11),
+    KFUZZ_T_PATH   = 1u << 12,  /* path canonicalisation (Phase 20-C)            */
+    KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10) |
+                     (1u << 11) | (1u << 12),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 

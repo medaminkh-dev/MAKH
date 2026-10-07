@@ -21,6 +21,8 @@
 #define SYS_MUNMAP      11
 #define SYS_BRK         12
 #define SYS_CLOSE       3
+#define SYS_GETCWD      79
+#define SYS_CHDIR       80
 #define SYS_GETPID      39
 #define SYS_EXIT        60
 #define SYS_KILL        62

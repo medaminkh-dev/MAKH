@@ -111,25 +111,81 @@ static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user
     return (int64_t)done;
 }
 
-static int64_t do_open(uint64_t upath, uint64_t flags, int from_user) {
-    char path[VFS_PATH_MAX];
+/* Copy a NUL-terminated path from `upath` into dst[dstsz]. Returns 0, -EFAULT
+ * on a bad user address, or -ENAMETOOLONG if it does not fit. */
+static int copy_path(char* dst, size_t dstsz, uint64_t upath, int from_user) {
     if (from_user) {
-        /* Copy the path a byte at a time until NUL or the limit. */
         size_t i = 0;
-        for (; i < sizeof(path) - 1; i++) {
+        for (; i < dstsz; i++) {
             char c;
-            if (copy_from_user(&c, (const void*)(uintptr_t)(upath + i), 1) < 0) return -EFAULT;
-            path[i] = c;
-            if (!c) break;
+            if (copy_from_user(&c, (const void*)(uintptr_t)(upath + i), 1) < 0)
+                return -EFAULT;
+            dst[i] = c;
+            if (!c) return 0;
         }
-        path[i] = '\0';
-    } else {
-        size_t i = 0;
-        const char* p = (const char*)(uintptr_t)upath;
-        for (; i < sizeof(path) - 1 && p[i]; i++) path[i] = p[i];
-        path[i] = '\0';
+        return -ENAMETOOLONG;
     }
-    return vfs_open(path, (int)flags);
+    const char* p = (const char*)(uintptr_t)upath;
+    size_t i = 0;
+    for (; i < dstsz && p[i]; i++) dst[i] = p[i];
+    if (i >= dstsz) return -ENAMETOOLONG;
+    dst[i] = '\0';
+    return 0;
+}
+
+/* Resolve a user-supplied path to an absolute one, relative to the calling
+ * process's cwd (Phase 20-C). Kernel/non-user callers pass the path straight
+ * through (it is expected to be absolute). */
+static int resolve_path(char* abs, size_t abssz, const char* raw) {
+    process_t* cur = current_process;
+    if (cur && cur->is_user)
+        return path_canonicalize(cur->cwd[0] ? cur->cwd : "/", raw, abs, abssz);
+    size_t i = 0;
+    for (; i < abssz - 1 && raw[i]; i++) abs[i] = raw[i];
+    abs[i] = '\0';
+    return 0;
+}
+
+static int64_t do_open(uint64_t upath, uint64_t flags, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_open(abs, (int)flags);
+}
+
+static int64_t do_chdir(uint64_t upath, int from_user) {
+    process_t* cur = current_process;
+    if (!cur || !cur->is_user) return -ENOSYS;
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (path_canonicalize(cur->cwd[0] ? cur->cwd : "/", path, abs, sizeof(abs)) != 0)
+        return -ENAMETOOLONG;
+    vnode_t* vn = vfs_resolve(abs);
+    if (!vn) return -ENOENT;
+    if (vn->type != VNODE_DIR) return -ENOTDIR;
+    size_t i = 0;
+    for (; abs[i] && i < sizeof(cur->cwd) - 1; i++) cur->cwd[i] = abs[i];
+    cur->cwd[i] = '\0';
+    return 0;
+}
+
+static int64_t do_getcwd(uint64_t ubuf, uint64_t size, int from_user) {
+    process_t* cur = current_process;
+    if (!cur || !cur->is_user) return -ENOSYS;
+    const char* c = cur->cwd[0] ? cur->cwd : "/";
+    size_t n = 0;
+    while (c[n]) n++;
+    n++;                                        /* include the NUL */
+    if (size < n) return -ERANGE;
+    if (from_user) {
+        if (copy_to_user((void*)(uintptr_t)ubuf, c, n) < 0) return -EFAULT;
+    } else {
+        char* d = (char*)(uintptr_t)ubuf;
+        for (size_t i = 0; i < n; i++) d[i] = c[i];
+    }
+    return (int64_t)n;                          /* bytes written, incl. NUL */
 }
 
 static int64_t do_getpid(void) {
@@ -176,6 +232,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_WRITE:        return do_write(a1, a2, a3, from_user);
         case SYS_READ:         return do_read(a1, a2, a3, from_user);
         case SYS_OPEN:         return do_open(a1, a2, from_user);
+        case SYS_CHDIR:        return do_chdir(a1, from_user);
+        case SYS_GETCWD:       return do_getcwd(a1, a2, from_user);
         case SYS_CLOSE:        return vfs_close((int)a1);
         case SYS_LSEEK:        return vfs_lseek((int)a1, (long)a2, (int)a3);
         case SYS_MMAP:         return do_mmap(a1, a2, a3, a4);

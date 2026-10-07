@@ -131,6 +131,9 @@ typedef struct process {
     uint64_t brk_cur;             // current program break (grows up)
     uint64_t mmap_cur;            // next anonymous mmap address (bump allocator)
 
+    // -------- Phase 20-C: current working directory --------
+    char     cwd[256];            // canonical absolute cwd (VFS_PATH_MAX); "" => "/"
+
     void** tls;                   // per-thread storage for pthread keys (lazy)
     void* (*pth_start)(void*);    // pthread start routine (real typed pointer)
     void*   retval;               // pthread return / exit value

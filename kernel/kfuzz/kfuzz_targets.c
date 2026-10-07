@@ -623,6 +623,46 @@ static int t_uvm(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 12. Path canonicalisation (Phase 20-C)                                       */
+/* -------------------------------------------------------------------------- */
+/*
+ * path_canonicalize() parses two untrusted strings into a bounded buffer, so a
+ * miscount is a buffer overflow. Build random cwd/path strings from a small
+ * alphabet dense in '/', '.', so "..", "/./" and "//" occur often, run them
+ * into a guarded buffer sized exactly to the declared limit, and check: the
+ * guard bytes just past the limit are never touched, and on success the result
+ * is NUL-terminated in bounds and absolute.
+ */
+static void path_rand_str(kfuzz_rng_t* r, char* s, int cap) {
+    static const char alpha[] = "//../.ab";    /* dense in separators and dots */
+    int n = (int)kfuzz_rand_below(r, (uint32_t)cap);
+    for (int i = 0; i < n; i++) s[i] = alpha[kfuzz_rand_below(r, sizeof(alpha) - 1)];
+    s[n] = '\0';
+}
+
+static int t_path(kfuzz_rng_t* r, uint32_t iters) {
+    for (uint32_t it = 0; it < iters; it++) {
+        char cwd[24], path[24];
+        struct { char buf[40]; uint8_t guard[8]; } o;
+        path_rand_str(r, cwd, 20);
+        path_rand_str(r, path, 20);
+        for (int k = 0; k < 8; k++) o.guard[k] = 0xAB;
+
+        int rc = path_canonicalize(cwd, path, o.buf, sizeof(o.buf));
+
+        for (int k = 0; k < 8; k++)
+            if (o.guard[k] != 0xAB) return -1;         /* wrote past the limit */
+        if (rc == 0) {
+            if (o.buf[0] != '/') return -1;            /* must be absolute */
+            size_t n = 0;
+            while (n < sizeof(o.buf) && o.buf[n]) n++;
+            if (n >= sizeof(o.buf)) return -1;         /* not terminated in bounds */
+        }
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -654,6 +694,7 @@ static const kfuzz_target_t g_targets[] = {
     { "tty",     t_tty,     KFUZZ_T_TTY,     NULL },
     { "elf",     t_elf,     KFUZZ_T_ELF,     NULL },
     { "uvm",     t_uvm,     KFUZZ_T_UVM,     NULL },
+    { "path",    t_path,    KFUZZ_T_PATH,    NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

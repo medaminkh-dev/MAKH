@@ -4,10 +4,14 @@
 #ifndef MAKH_USYS_H
 #define MAKH_USYS_H
 #define SYS_WRITE     1
+#define SYS_OPEN      2
+#define SYS_CLOSE     3
 #define SYS_MMAP      9
 #define SYS_MPROTECT  10
 #define SYS_MUNMAP    11
 #define SYS_BRK       12
+#define SYS_GETCWD    79
+#define SYS_CHDIR     80
 #define SYS_GETPID    39
 #define SYS_EXIT      60
 
@@ -48,5 +52,15 @@ static inline long umprotect(void* addr, unsigned long len, int prot) {
 }
 static inline long ubrk(unsigned long newbrk) {
     return usyscall(SYS_BRK, (long)newbrk, 0, 0);
+}
+static inline long uopen(const char* path, int flags) {
+    return usyscall(SYS_OPEN, (long)path, flags, 0);
+}
+static inline long uclose(int fd) { return usyscall(SYS_CLOSE, fd, 0, 0); }
+static inline long uchdir(const char* path) {
+    return usyscall(SYS_CHDIR, (long)path, 0, 0);
+}
+static inline long ugetcwd(char* buf, unsigned long size) {
+    return usyscall(SYS_GETCWD, (long)buf, (long)size, 0);
 }
 #endif

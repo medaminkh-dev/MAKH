@@ -30,6 +30,7 @@
 #define EFAULT          14   /* Bad address */
 #define EBUSY           16   /* Device or resource busy */
 #define EINVAL          22   /* Invalid argument */
+#define ERANGE          34   /* Result too large for the buffer */
 #define EMFILE          24   /* Too many open descriptors */
 #define EPIPE           32   /* Broken pipe */
 #define EDEADLK         35   /* Resource deadlock would occur */

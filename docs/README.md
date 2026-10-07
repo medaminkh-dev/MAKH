@@ -29,6 +29,7 @@ numbers are navigable rather than mysterious.
 | 19 | Signals, process groups, TTY line discipline | [PHASE19_SIGNALS_TTY](PHASE19_SIGNALS_TTY.md) |
 | 20-A | The user process model: ELF load, preemptible ring 3, `waitpid` | [PHASE20A_PROCESS_MODEL](PHASE20A_PROCESS_MODEL.md) |
 | 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | [PHASE20B_MMAP_BRK](PHASE20B_MMAP_BRK.md) |
+| 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | [PHASE20C_CWD](PHASE20C_CWD.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -49,6 +50,8 @@ is always visible:
 20-A user process .... fork/execve/cwd/tty-read ─▶ 20-A-2        preemptible
 20-B anon memory ..... brk + mmap/munmap/mprotect              user process
                        (what malloc stands on)
+20-C working dir ..... cwd + chdir/getcwd + relative paths     (shell-ready
+                       (what a shell stands on)                 pieces)
 ```
 
 ## Doc conventions (phases 16+)

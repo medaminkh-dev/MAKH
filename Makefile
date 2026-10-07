@@ -107,6 +107,7 @@ C_SOURCES_NET = \
 # C source files - Filesystem (Phase 18)
 C_SOURCES_FS = \
     kernel/fs/vfs.c \
+    kernel/fs/path.c \
     kernel/fs/tmpfs.c \
     kernel/fs/devfs.c \
     kernel/fs/tar.c
@@ -144,7 +145,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_vfs.c \
     kernel/tests/test_signal.c \
     kernel/tests/test_proc.c \
-    kernel/tests/test_uvm.c
+    kernel/tests/test_uvm.c \
+    kernel/tests/test_path.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -180,6 +182,7 @@ COV_SOURCES = \
     kernel/net/tcp.c \
     kernel/net/socket.c \
     kernel/fs/vfs.c \
+    kernel/fs/path.c \
     kernel/fs/tmpfs.c \
     kernel/fs/tar.c \
     kernel/tty/tty.c \
@@ -198,7 +201,7 @@ UCC      = $(CC)
 UCFLAGS  = -ffreestanding -nostdlib -fno-pie -mno-red-zone -mcmodel=large -O2 -Wall -Iuser
 ULDFLAGS = -T user/user.ld -nostdlib -no-pie -z noexecstack
 USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulter \
-            build/user/vmtest build/user/mprotfault
+            build/user/vmtest build/user/mprotfault build/user/cwdtest
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

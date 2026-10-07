@@ -79,6 +79,14 @@ int       vfs_mount(const char* path, vnode_t* root);
 vnode_t*  vfs_root(void);
 
 /* -------- path resolution -------- */
+/* Canonicalise (cwd, path) into an absolute path in out[outsz]: an absolute
+ * `path` ignores cwd; a relative one is taken from cwd. Resolves ".", ".." and
+ * runs of '/'; the result is absolute, has no "." / ".." / "//", and never
+ * climbs above "/". Returns 0, -EINVAL on bad args, or -ERANGE if the result
+ * (or its component count) would overflow. Pure string work — no filesystem. */
+int       path_canonicalize(const char* cwd, const char* path,
+                            char* out, size_t outsz);
+
 vnode_t*  vfs_resolve(const char* path);
 /* Resolve the parent directory of `path` and copy the final component into
  * `leaf` (>= VFS_NAME_MAX+1). Returns the parent vnode or NULL. */
