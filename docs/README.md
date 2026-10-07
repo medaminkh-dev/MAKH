@@ -36,6 +36,7 @@ numbers are navigable rather than mysterious.
 | 20-F | Job control: `setpgid`/`tcsetpgrp`, each command its own group, Ctrl+C hits the job | [PHASE20F_JOBCTL](PHASE20F_JOBCTL.md) |
 | 20-G | User signal handlers: `sigaction`/`sigprocmask`/`sigreturn`, a signal frame on the user stack | [PHASE20G_SIGNALS](PHASE20G_SIGNALS.md) |
 | 20-H | Thread-local storage: `arch_prctl(ARCH_SET_FS)`, per-process FS base | [PHASE20H_TLS](PHASE20H_TLS.md) |
+| 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` | [PHASE20I_TIME_RANDOM](PHASE20I_TIME_RANDOM.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -67,9 +68,11 @@ is always visible:
 20-G signal handlers . sigaction + signal frame + sigreturn ─▶ catch & resume
                        (a process catches its own signals)    (gap #1 complete)
 
-past gap #1 — toward a libc userland:
+past gap #1 — toward a libc userland (Stage 1: the syscall surface):
 20-H TLS base ........ arch_prctl(SET_FS) + per-switch repin ─▶ %fs:0 works
                        (the thread pointer musl needs first)    (musl enabler)
+20-I time + random ... clock_gettime/nanosleep/getrandom     ─▶ libc startup bits
+                       (interruptible sleep; xoshiro256** RNG)  (1.1 of Stage 1)
 ```
 
 ## Doc conventions (phases 16+)

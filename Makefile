@@ -59,6 +59,7 @@ C_SOURCES_ORIG = \
     kernel/ktest.c \
     kernel/panic.c \
     kernel/ktime.c \
+    kernel/krandom.c \
     kernel/pthread/pthread.c \
     kernel/pthread/sem.c \
     kernel/syscall/syscall.c \
@@ -152,7 +153,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_args.c \
     kernel/tests/test_job.c \
     kernel/tests/test_usignal.c \
-    kernel/tests/test_tls.c
+    kernel/tests/test_tls.c \
+    kernel/tests/test_time.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -211,7 +213,8 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/forktest build/user/forkexec build/user/forkcow \
             build/user/readline build/user/sh build/user/echo \
             build/user/execargs build/user/spinner build/user/jobtest \
-            build/user/sigtest build/user/sigmask build/user/tlstest
+            build/user/sigtest build/user/sigmask build/user/tlstest \
+            build/user/timetest
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

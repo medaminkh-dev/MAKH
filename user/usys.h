@@ -27,7 +27,16 @@
 #define SYS_RT_SIGPROCMASK 14
 #define SYS_RT_SIGRETURN   15
 #define SYS_ARCH_PRCTL     158
+#define SYS_NANOSLEEP      35
+#define SYS_GETTIMEOFDAY   96
+#define SYS_CLOCK_GETTIME  228
+#define SYS_GETRANDOM      318
 #define SYS_KILL      62
+
+#define CLOCK_REALTIME   0
+#define CLOCK_MONOTONIC  1
+struct timespec { long tv_sec; long tv_nsec; };
+struct timeval  { long tv_sec; long tv_usec; };
 
 #define ARCH_SET_FS   0x1002
 #define ARCH_GET_FS   0x1003
@@ -154,5 +163,23 @@ static inline long uarch_prctl(int code, unsigned long addr) {
 }
 static inline long uset_fs(void* tls) {
     return uarch_prctl(ARCH_SET_FS, (unsigned long)tls);
+}
+
+/* --- time + randomness (Phase 20-I) --- */
+static inline long uclock_gettime(int clk, struct timespec* ts) {
+    return usyscall(SYS_CLOCK_GETTIME, clk, (long)ts, 0);
+}
+static inline long ugettimeofday(struct timeval* tv) {
+    return usyscall(SYS_GETTIMEOFDAY, (long)tv, 0, 0);
+}
+static inline long unanosleep(const struct timespec* req, struct timespec* rem) {
+    return usyscall(SYS_NANOSLEEP, (long)req, (long)rem, 0);
+}
+static inline long ugetrandom(void* buf, unsigned long len, unsigned int flags) {
+    return usyscall(SYS_GETRANDOM, (long)buf, (long)len, (long)flags);
+}
+static inline long usleep_ms(long ms) {
+    struct timespec r = { ms / 1000, (ms % 1000) * 1000000L };
+    return unanosleep(&r, 0);
 }
 #endif

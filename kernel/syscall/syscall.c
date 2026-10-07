@@ -26,9 +26,14 @@
 #include <signal.h>
 #include <mm/uvm.h>
 #include <tty.h>
+#include <ktime.h>
+#include <krandom.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
+
+/* nanosleep's parking queue — initialised in syscall_init, never woken. */
+static wait_queue_t sleep_wq;
 
 /* -------------------------------------------------------------------------- */
 /* MSR setup                                                                  */
@@ -52,6 +57,8 @@ void syscall_init(void) {
      * forward string direction, and AC off so a stray user access under SMAP
      * still traps until uaccess deliberately raises it. */
     wrmsr(IA32_FMASK, 0x200 | 0x400 | 0x40000);
+
+    wq_init(&sleep_wq);                       /* nanosleep's parking queue */
 
     KLOG_I("SYSCALL", "ring-3 syscall/sysret enabled (STAR=%p)\n",
            (void*)rdmsr(IA32_STAR));
@@ -304,6 +311,66 @@ static int64_t do_sigprocmask(uint64_t how, uint64_t set, uint64_t uoldset) {
     return 0;
 }
 
+/* Time + randomness (Phase 20-I). nanosleep parks on a wait queue nothing ever
+ * wakes, so only its own timeout or a signal ends it (interruptible -> -EINTR).
+ * (sleep_wq is declared near the top so syscall_init can wq_init it.) */
+
+static int64_t do_clock_gettime(uint64_t clk, uint64_t uts) {
+    struct timespec ts;
+    if (clock_gettime((int)clk, &ts) != 0) return -EINVAL;
+    if (copy_to_user((void*)(uintptr_t)uts, &ts, sizeof(ts)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int64_t do_gettimeofday(uint64_t utv, uint64_t utz) {
+    (void)utz;                                   /* obsolete timezone arg */
+    uint64_t ms = clock_now_ms();
+    struct { int64_t tv_sec, tv_usec; } tv = {
+        (int64_t)(ms / 1000), (int64_t)((ms % 1000) * 1000)
+    };
+    if (utv && copy_to_user((void*)(uintptr_t)utv, &tv, sizeof(tv)) < 0) return -EFAULT;
+    return 0;
+}
+
+static int64_t do_nanosleep(uint64_t ureq, uint64_t urem) {
+    struct timespec req;
+    if (copy_from_user(&req, (const void*)(uintptr_t)ureq, sizeof(req)) < 0) return -EFAULT;
+    if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000L) return -EINVAL;
+    uint64_t req_ms = (uint64_t)req.tv_sec * 1000 + (uint64_t)req.tv_nsec / 1000000;
+    if (req_ms == 0) return 0;
+    uint64_t ticks = (req_ms * TIMER_FREQUENCY + 999) / 1000;   /* ceil to ticks */
+    if (ticks == 0) ticks = 1;
+
+    uint64_t start = clock_now_ms();
+    irqflags_t f = local_irq_save();
+    int rc = sched_wait_event(&sleep_wq, ticks, f);             /* restores f */
+    if (rc == 2) {                                              /* signal woke us */
+        uint64_t slept = clock_now_ms() - start;
+        uint64_t rem = req_ms > slept ? req_ms - slept : 0;
+        if (urem) {
+            struct timespec r = { (int64_t)(rem / 1000),
+                                  (int64_t)((rem % 1000) * 1000000) };
+            copy_to_user((void*)(uintptr_t)urem, &r, sizeof(r));   /* best effort */
+        }
+        return -EINTR;
+    }
+    return 0;
+}
+
+static int64_t do_getrandom(uint64_t ubuf, uint64_t len, uint64_t flags) {
+    (void)flags;                                 /* GRND_* ignored: never blocks */
+    uint8_t tmp[256];
+    uint64_t done = 0;
+    while (done < len) {
+        size_t chunk = (len - done) < sizeof(tmp) ? (size_t)(len - done) : sizeof(tmp);
+        krandom_bytes(tmp, chunk);
+        if (copy_to_user((void*)(uintptr_t)(ubuf + done), tmp, chunk) < 0)
+            return done ? (int64_t)done : -EFAULT;
+        done += chunk;
+    }
+    return (int64_t)len;
+}
+
 /* arch_prctl(code, addr): set/get the FS base (the thread pointer for TLS).
  * Only FS is user-owned; GS belongs to the kernel (swapgs), so it is refused.
  * The base is stored in the PCB and re-pinned every context switch. */
@@ -349,6 +416,10 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_RT_SIGACTION:   return do_sigaction(a1, a2, a3);
         case SYS_RT_SIGPROCMASK: return do_sigprocmask(a1, a2, a3);
         case SYS_ARCH_PRCTL:     return do_arch_prctl(a1, a2);
+        case SYS_CLOCK_GETTIME:  return do_clock_gettime(a1, a2);
+        case SYS_GETTIMEOFDAY:   return do_gettimeofday(a1, a2);
+        case SYS_NANOSLEEP:      return do_nanosleep(a1, a2);
+        case SYS_GETRANDOM:      return do_getrandom(a1, a2, a3);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
         case SYS_GETPGRP:      return sys_getpgid(0);           /* caller's group */

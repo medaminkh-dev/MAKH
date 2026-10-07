@@ -20,6 +20,10 @@
 #define SYS_RT_SIGPROCMASK 14
 #define SYS_RT_SIGRETURN   15
 #define SYS_ARCH_PRCTL     158
+#define SYS_NANOSLEEP      35
+#define SYS_GETTIMEOFDAY   96
+#define SYS_CLOCK_GETTIME  228
+#define SYS_GETRANDOM      318
 #define SYS_LSEEK       8
 
 /* arch_prctl codes (Phase 20-H). */

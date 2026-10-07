@@ -198,6 +198,7 @@ CI runs the suite and a stress job on every push.
 | 20-F | Job control: `setpgid`/`getpgid`/`setsid`, `ioctl(TIOCSPGRP)`, Ctrl+C hits the job | ✅ [docs](docs/PHASE20F_JOBCTL.md) |
 | 20-G | User signal handlers: `sigaction`/`sigprocmask`/`sigreturn`, signal frame on the user stack | ✅ [docs](docs/PHASE20G_SIGNALS.md) |
 | 20-H | Thread-local storage: `arch_prctl(ARCH_SET_FS)`, per-process FS base (musl enabler) | ✅ [docs](docs/PHASE20H_TLS.md) |
+| 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` (xoshiro256**) | ✅ [docs](docs/PHASE20I_TIME_RANDOM.md) |
 
 ## 📚 Documentation
 

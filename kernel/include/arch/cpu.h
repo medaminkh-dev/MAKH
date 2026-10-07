@@ -45,6 +45,14 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32)));
 }
 
+/* Read the time-stamp counter (cycles since reset): a cheap high-rate entropy
+ * and timing source. Not a wall clock. */
+static inline uint64_t rdtsc(void) {
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
 /* Set up this CPU's per-CPU block and point IA32_GS_BASE at it. The user-side
  * IA32_KERNEL_GS_BASE starts equal, so the first `swapgs` on syscall entry
  * still yields a valid pointer. */
