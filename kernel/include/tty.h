@@ -40,10 +40,16 @@ typedef struct termios {
 #define TTY_LINE_MAX 256
 
 void      tty_init(void);
+/* When active, the keyboard IRQ feeds the line discipline (user-shell mode). */
+void      tty_set_active(int on);
+int       tty_is_active(void);
 /* Feed one raw input byte through the line discipline. */
 void      tty_input(char c);
 /* Non-blocking read of up to n bytes of completed line data; returns count. */
 long      tty_read(char* buf, size_t n);
+/* Blocking read: sleep until a line (or EOF) arrives. 0 = EOF, -EINTR if a
+ * signal woke the waiter. This is the controlling-terminal read() path. */
+long      tty_read_blocking(char* buf, size_t n);
 /* 1 if a full line (or EOF) is available to read. */
 int       tty_line_ready(void);
 

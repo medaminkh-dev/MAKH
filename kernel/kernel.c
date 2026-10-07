@@ -915,6 +915,24 @@ void kernel_main(void) {
         kernel_halt();  /* unreached if isa-debug-exit is present */
     }
 
+    /*
+     * Interactive user-space shell ("makh.sh" on the kernel command line):
+     * route the keyboard through the terminal line discipline, start /bin/sh as
+     * a ring-3 process, and idle — the scheduler runs the shell, which reads
+     * commands, fork+execve's them and waits. This is init(PID 1)'s job in a
+     * fuller system; here kernel_main (already PID 1) launches it directly.
+     */
+    if (cmdline_has("makh.sh")) {
+        idt_enable_interrupts();
+        tty_init();
+        tty_set_active(1);                        /* keyboard -> line discipline */
+        int pid = proc_spawn_user("/bin/sh");
+        if (pid > 0) tty_set_foreground((uint32_t)pid);
+        else terminal_writestring("[init] ERROR: could not start /bin/sh\n");
+        terminal_writestring("[init] MakhOS user shell — type a command path, Ctrl+D to exit\n");
+        for (;;) __asm__ volatile("hlt");         /* the scheduler runs the shell */
+    }
+
     /* Small delay before context switch test */
     terminal_writestring("\n[MAIN] Waiting before context switch test...\n");
     for (volatile int i = 0; i < 5000000; i++);

@@ -193,6 +193,7 @@ CI runs the suite and a stress job on every push.
 | 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | ✅ [docs](docs/PHASE20B_MMAP_BRK.md) |
 | 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | ✅ [docs](docs/PHASE20C_CWD.md) |
 | 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | ✅ [docs](docs/PHASE20A2_FORK_EXECVE.md) |
+| 20-D | Controlling terminal: blocking `read`, Ctrl+C, interactive `/bin/sh` (`makh.sh`) | ✅ [docs](docs/PHASE20D_SHELL.md) |
 
 ## 📚 Documentation
 

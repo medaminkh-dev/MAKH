@@ -25,6 +25,7 @@
 #include <fs/vfs.h>
 #include <signal.h>
 #include <mm/uvm.h>
+#include <tty.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -89,7 +90,20 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
 }
 
 static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (fd == 0 || fd == 1 || fd == 2) return 0;   /* no console input yet (EOF) */
+    if (fd == 0) {                                 /* stdin -> controlling tty */
+        if (count == 0) return 0;
+        char tmp[256];
+        size_t chunk = count < sizeof(tmp) ? count : sizeof(tmp);
+        long got = tty_read_blocking(tmp, chunk);  /* blocks until a line/EOF */
+        if (got <= 0) return got;                  /* 0 = EOF, <0 = -errno */
+        if (from_user) {
+            if (copy_to_user((void*)(uintptr_t)ubuf, tmp, (size_t)got) < 0) return -EFAULT;
+        } else {
+            memcpy((void*)(uintptr_t)ubuf, tmp, (size_t)got);
+        }
+        return got;
+    }
+    if (fd == 1 || fd == 2) return 0;              /* reading stdout/stderr = EOF */
     if (count == 0) return 0;
     char tmp[256];
     uint64_t done = 0;
@@ -292,6 +306,9 @@ uint64_t syscall_dispatch(trapframe_t* tf) {
                           /*from_user*/1);
     }
     tf->rax = (uint64_t)rc;
+    /* Deliver a pending fatal signal (e.g. Ctrl+C) now, before returning to
+     * ring 3. If one is pending this does not return. */
+    signal_check_and_die();
     return (uint64_t)rc;
 }
 

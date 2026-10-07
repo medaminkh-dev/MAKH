@@ -147,7 +147,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_proc.c \
     kernel/tests/test_uvm.c \
     kernel/tests/test_path.c \
-    kernel/tests/test_fork.c
+    kernel/tests/test_fork.c \
+    kernel/tests/test_term.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -203,7 +204,8 @@ UCFLAGS  = -ffreestanding -nostdlib -fno-pie -mno-red-zone -mcmodel=large -O2 -W
 ULDFLAGS = -T user/user.ld -nostdlib -no-pie -z noexecstack
 USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulter \
             build/user/vmtest build/user/mprotfault build/user/cwdtest \
-            build/user/forktest build/user/forkexec build/user/forkcow
+            build/user/forktest build/user/forkexec build/user/forkcow \
+            build/user/readline build/user/sh
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

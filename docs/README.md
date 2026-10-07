@@ -31,6 +31,7 @@ numbers are navigable rather than mysterious.
 | 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | [PHASE20B_MMAP_BRK](PHASE20B_MMAP_BRK.md) |
 | 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | [PHASE20C_CWD](PHASE20C_CWD.md) |
 | 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | [PHASE20A2_FORK_EXECVE](PHASE20A2_FORK_EXECVE.md) |
+| 20-D | Controlling terminal: blocking `read`, Ctrl+C, a `/bin/sh` shell | [PHASE20D_SHELL](PHASE20D_SHELL.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -53,7 +54,8 @@ is always visible:
                        (what malloc stands on)
 20-C working dir ..... cwd + chdir/getcwd + relative paths     (shell-ready
 20-A-2 fork/execve ... COW clone + replace-image + wait4        pieces)
-                       (the "run a command" sequence)
+20-D controlling tty . blocking read + Ctrl+C + /bin/sh  ─▶ an interactive prompt
+                       (the "run a command" sequence)      (boot: makh.sh)
 ```
 
 ## Doc conventions (phases 16+)

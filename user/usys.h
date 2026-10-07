@@ -3,6 +3,7 @@
 /* Tiny freestanding syscall wrappers for MAKH user programs (Phase 20-A/B). */
 #ifndef MAKH_USYS_H
 #define MAKH_USYS_H
+#define SYS_READ      0
 #define SYS_WRITE     1
 #define SYS_OPEN      2
 #define SYS_CLOSE     3
@@ -42,6 +43,9 @@ static inline long usyscall4(long n, long a, long b, long c, long d) {
 }
 static inline long uwrite(int fd, const void* buf, unsigned long n) {
     return usyscall(SYS_WRITE, fd, (long)buf, (long)n);
+}
+static inline long uread(int fd, void* buf, unsigned long n) {
+    return usyscall(SYS_READ, fd, (long)buf, (long)n);
 }
 static inline long ugetpid(void) { return usyscall(SYS_GETPID, 0, 0, 0); }
 static inline void* umap(unsigned long len, int prot, int flags) {

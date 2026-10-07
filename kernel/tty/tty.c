@@ -7,6 +7,9 @@
 
 #include <tty.h>
 #include <signal.h>
+#include <sched.h>
+#include <irq.h>
+#include <errno.h>
 #include <vga.h>
 #include <lib/string.h>
 
@@ -21,6 +24,12 @@ static size_t    ready_len;
 static int       ready_has;            /* a line (or EOF) is available         */
 static int       ready_eof;
 
+static wait_queue_t tty_wq;            /* readers blocked waiting for a line    */
+static int          tty_active;        /* 1 => keyboard feeds the line discipline */
+
+void tty_set_active(int on) { tty_active = on; }
+int  tty_is_active(void)    { return tty_active; }
+
 void tty_init(void) {
     termios.c_lflag = ICANON | ECHO | ISIG;
     termios.c_cc[VINTR]  = 3;    /* ^C  */
@@ -31,6 +40,7 @@ void tty_init(void) {
     fg_pgid = 0;
     line_len = ready_len = 0;
     ready_has = ready_eof = 0;
+    tty_wq.head = tty_wq.tail = 0;
 }
 
 termios_t* tty_termios(void) { return &termios; }
@@ -47,6 +57,7 @@ static void line_complete(void) {
     ready_len = line_len;
     ready_has = 1;
     line_len = 0;
+    wq_wake_all(&tty_wq);           /* a blocked read() can now proceed */
 }
 
 void tty_input(char c) {
@@ -101,4 +112,20 @@ long tty_read(char* buf, size_t n) {
     ready_len -= k;
     if (ready_len == 0) { ready_has = 0; ready_eof = 0; }
     return (long)k;
+}
+
+/* Blocking read: wait until a line (or EOF) is available, then return it. This
+ * is the path a user process's read() on the controlling terminal takes.
+ * Returns the byte count (0 = EOF), or -EINTR if a signal woke the waiter. */
+long tty_read_blocking(char* buf, size_t n) {
+    for (;;) {
+        irqflags_t f = local_irq_save();
+        if (tty_line_ready()) {
+            long k = tty_read(buf, n);
+            local_irq_restore(f);
+            return k;
+        }
+        int rc = sched_wait_event(&tty_wq, 0, f);   /* sleeps; restores f */
+        if (rc == 2) return -EINTR;                 /* a signal interrupted us */
+    }
 }

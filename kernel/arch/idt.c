@@ -18,6 +18,7 @@
 #include <kfuzz.h>
 #include <arch/usermode.h>
 #include <mm/vmspace.h>
+#include <signal.h>
 
 static void exception_report(registers_t* regs) __attribute__((noreturn));
 
@@ -305,6 +306,13 @@ void irq_handler(registers_t* regs) {
     // Send End of Interrupt to PIC before any reschedule, so the PIC can
     // deliver the next IRQ to whichever thread we switch to.
     pic_send_eoi(irq);
+
+    // Phase 20-D: if this IRQ interrupted a user process in ring 3 and a fatal
+    // signal is now pending (e.g. the keyboard IRQ just turned Ctrl+C into a
+    // SIGINT for the foreground group), terminate it here. This catches even a
+    // CPU-bound program that never makes a syscall. Only when interrupted in
+    // ring 3 — never mid-syscall — so no kernel operation is cut short.
+    if ((regs->cs & 3) == 3) signal_check_and_die();
 
     // IRQ tail: if the timer (or a wakeup) marked the current thread for
     // preemption, switch now. Runs on the interrupted thread's kernel stack;

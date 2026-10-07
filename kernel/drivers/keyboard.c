@@ -12,6 +12,7 @@
  * - Scancode Set 1 support
  */
 
+#include <tty.h>
 #include <drivers/keyboard.h>
 #include <arch/pic.h>
 #include <kernel.h>
@@ -380,7 +381,17 @@ static void keyboard_handle_scancode(uint8_t scancode) {
     
     // Add to buffer if we have a valid character
     if (c) {
-        keyboard_buffer_write(c);
+        if (tty_is_active()) {
+            /* User-shell mode: route keystrokes through the terminal line
+             * discipline. Ctrl+<letter> becomes the control byte (^C=3, ^D=4,
+             * ^Z=26) so ISIG/EOF work. */
+            char t = c;
+            if (ctrl_pressed && (c | 0x20) >= 'a' && (c | 0x20) <= 'z')
+                t = (char)((c | 0x20) - 'a' + 1);
+            tty_input(t);
+        } else {
+            keyboard_buffer_write(c);          /* legacy kernel shell path */
+        }
     }
 }
 

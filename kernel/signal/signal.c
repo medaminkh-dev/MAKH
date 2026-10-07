@@ -125,6 +125,19 @@ int signal_pending(void) {
     return (cur->sig_pending & ~cur->sig_blocked) != 0;
 }
 
+/* Called on the way back to ring 3 (from a syscall, or when the timer preempts
+ * a user process): if a fatal signal is pending and unblocked, terminate the
+ * process with 128 + signo (the shell convention). This is how Ctrl+C actually
+ * kills a running user program. Returns normally when there is nothing to do.
+ * (User-installed handlers via sigaction/sigreturn are a later brick; here only
+ * the default "terminate" action is delivered to a running process.) */
+void signal_check_and_die(void) {
+    process_t* cur = current_process;
+    if (!cur || !cur->is_user) return;
+    int sig = signal_take_terminate();
+    if (sig) thread_exit(128 + sig);        /* noreturn */
+}
+
 int signal_take_terminate(void) {
     process_t* cur = current_process;
     if (!cur) return 0;

@@ -70,6 +70,11 @@ int  signal_pending(void);
  */
 int  signal_take_terminate(void);
 
+/* Return-to-ring-3 hook: terminate the current user process (128+signo) if it
+ * has a pending fatal signal. Called from the syscall-return and timer-preempt
+ * paths; this is what makes Ctrl+C kill a running program. */
+void signal_check_and_die(void);
+
 /* Process-group / session calls. */
 int  sys_setpgid(int pid, int pgid);
 int  sys_getpgid(int pid);
