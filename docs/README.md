@@ -49,6 +49,7 @@ numbers are navigable rather than mysterious.
 | 20-R | **ext2 write path**: create files + write (block/inode alloc, dir entries) (G2-c) | [PHASE20R_EXT2_WRITE](PHASE20R_EXT2_WRITE.md) |
 | 20-S | **Toolchain syscalls**: `execve` envp + the `openat`/`*at` family; musl file I/O on ext2 (G3) | [PHASE20S_G3_SYSCALLS](PHASE20S_G3_SYSCALLS.md) |
 | 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (G2-d) | [PHASE20T_EXT2_DIROPS](PHASE20T_EXT2_DIROPS.md) |
+| 21 | **Higher-half kernel**: kernel → top -2 GiB, HHDM, the low half freed per-process, standard non-PIE binaries at 0x400000 (F21 Path A) | [PHASE21_HIGHERHALF](PHASE21_HIGHERHALF.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
