@@ -62,6 +62,17 @@ def main():
             "-drive", f"file={disk},if=none,id=vblk0,format=raw,snapshot=on",
             "-device", "virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off",
         ]
+    # A second legacy virtio-blk disk holding an ext2 image (Phase 20-Q). The
+    # ext2 driver finds it by scanning units for the ext2 magic, so order is
+    # not load-bearing. snapshot=on keeps it read-only in effect.
+    ext2 = os.path.join(os.path.dirname(iso) or ".", "ext2.img")
+    if not os.path.exists(ext2):
+        ext2 = "build/ext2.img"
+    if os.path.exists(ext2):
+        cmd += [
+            "-drive", f"file={ext2},if=none,id=vblk1,format=raw,snapshot=on",
+            "-device", "virtio-blk-pci,drive=vblk1,disable-modern=on,disable-legacy=off",
+        ]
 
     print("=== MAKH test runner ===")
     print("qemu:", " ".join(cmd))

@@ -910,6 +910,12 @@ void kernel_main(void) {
      * if QEMU attached one; absence is not fatal (the initrd still boots). */
     if (virtio_blk_init() != 0) {
         KLOG_W("VBLK", "no virtio-blk disk; storage tests will skip\n");
+    } else {
+        /* Phase 20-Q (G2-b): mount an ext2 disk (if one is attached) at /mnt,
+         * so programs can open on-disk files through the VFS. */
+        vfs_create("/mnt", VNODE_DIR);
+        if (ext2_mount_any("/mnt") != 0)
+            KLOG_I("EXT2", "no ext2 disk attached\n");
     }
 
     /* -------------------------------------------------------------------

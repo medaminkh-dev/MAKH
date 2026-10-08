@@ -207,6 +207,7 @@ CI runs the suite and a stress job on every push.
 | 20-O | **A real C program on musl libc**: static-PIE loader + full auxv + the lost-FS-base fix | ✅ [docs](docs/PHASE20O_MUSL.md) |
 | 20-O2 | **busybox `sh` runs**: real busybox static-PIE, `getppid`/uid family, spawn-with-argv | ✅ [docs](docs/PHASE20O2_BUSYBOX.md) |
 | 20-P | **Persistent storage**: polled legacy **virtio-blk** disk, read/write sectors (gap #2 begins) | ✅ [docs](docs/PHASE20P_VIRTIO_BLK.md) |
+| 20-Q | **ext2 filesystem** (read-only): mount an on-disk ext2 from virtio-blk into the VFS | ✅ [docs](docs/PHASE20Q_EXT2.md) |
 
 ## 📚 Documentation
 

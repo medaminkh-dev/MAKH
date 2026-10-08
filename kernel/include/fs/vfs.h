@@ -189,5 +189,6 @@ vnode_t*  tmpfs_create_root(void);        /* fs/tmpfs.c */
 vnode_t*  tmpfs_link(vnode_t* dir, const char* name, vnode_t* child);
 void      devfs_mount(const char* dir);   /* fs/devfs.c: populate a dir with devices */
 int       tar_load_initrd(const void* data, size_t len);   /* fs/tar.c */
+int       ext2_mount_any(const char* path);  /* fs/ext2.c: mount an ext2 virtio-blk disk */
 
 #endif /* MAKHOS_FS_VFS_H */

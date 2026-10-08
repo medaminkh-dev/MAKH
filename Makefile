@@ -114,7 +114,8 @@ C_SOURCES_FS = \
     kernel/fs/path.c \
     kernel/fs/tmpfs.c \
     kernel/fs/devfs.c \
-    kernel/fs/tar.c
+    kernel/fs/tar.c \
+    kernel/fs/ext2.c
 
 # C source files - Signals & TTY (Phase 19)
 C_SOURCES_SIG = \
@@ -165,7 +166,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_iov.c \
     kernel/tests/test_musl.c \
     kernel/tests/test_busybox.c \
-    kernel/tests/test_virtio_blk.c
+    kernel/tests/test_virtio_blk.c \
+    kernel/tests/test_ext2.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -366,13 +368,19 @@ $(TEST_ISO): $(KERNEL) grub-test.cfg $(INITRD)
 	@rm -rf isodir-test
 	@echo "Test ISO created: $(TEST_ISO)"
 
-# Phase 20-P: the deterministic disk image the virtio-blk KTEST reads/writes.
+# Phase 20-P/Q: the disk images the storage KTESTs use. testdisk.img is the raw
+# image the virtio-blk test reads/writes; ext2.img is a real ext2 filesystem the
+# ext2 test mounts and reads. Both are attached to QEMU by tools/run_tests.py.
 TESTDISK = build/testdisk.img
+EXT2IMG  = build/ext2.img
 $(TESTDISK): tools/mkdisk.py
 	@mkdir -p build
 	@python3 tools/mkdisk.py $(TESTDISK)
+$(EXT2IMG): tools/mkext2.sh
+	@mkdir -p build
+	@bash tools/mkext2.sh $(EXT2IMG)
 
-test: $(TEST_ISO) $(TESTDISK)
+test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 	@python3 tools/run_tests.py $(TEST_ISO)
 
 # Boot the normal image, type commands through the emulated PS/2 keyboard and
@@ -385,7 +393,7 @@ check-license:
 	@bash tools/check_license.sh
 
 # Run the whole suite many times in parallel to flush out timing bugs.
-stress: $(TEST_ISO) $(TESTDISK)
+stress: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 	@bash tools/stress_tests.sh 24 4 $(TEST_ISO)
 
 run-debug: $(ISO)

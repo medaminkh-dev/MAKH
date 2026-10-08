@@ -13,20 +13,22 @@
 
 #define VIRTIO_BLK_SECTOR 512
 
-/* Probe the PCI bus for a legacy virtio-blk device and bring it up (negotiate,
- * set up one virtqueue). Returns 0 on success, -1 if none / init failed. */
+/* Probe the PCI bus for every legacy virtio-blk device and bring each up
+ * (negotiate, set up one virtqueue). Returns 0 if at least one came up, -1 if
+ * none. Disks are numbered 0..virtio_blk_count()-1. */
 int  virtio_blk_init(void);
 
-/* Is a device present and initialised? */
+/* Number of disks brought up, and whether any is present. */
+int  virtio_blk_count(void);
 int  virtio_blk_present(void);
 
-/* Capacity in 512-byte sectors. */
-uint64_t virtio_blk_capacity(void);
+/* Capacity of `unit` in 512-byte sectors (0 if no such unit). */
+uint64_t virtio_blk_capacity(int unit);
 
-/* Read/write `count` sectors starting at `sector` into/from `buf`. `buf` must be
- * a physically-contiguous, identity-mapped kernel buffer (e.g. a pmm page) of at
- * least count*512 bytes. Polled (no IRQ). Returns 0 on success, -errno. */
-int  virtio_blk_read (uint64_t sector, void* buf, uint32_t count);
-int  virtio_blk_write(uint64_t sector, const void* buf, uint32_t count);
+/* Read/write `count` sectors starting at `sector` on `unit` into/from `buf`.
+ * `buf` must be a physically-contiguous, identity-mapped kernel buffer (e.g. a
+ * pmm page) of at least count*512 bytes. Polled (no IRQ). Returns 0, -errno. */
+int  virtio_blk_read (int unit, uint64_t sector, void* buf, uint32_t count);
+int  virtio_blk_write(int unit, uint64_t sector, const void* buf, uint32_t count);
 
 #endif /* MAKHOS_VIRTIO_BLK_H */
