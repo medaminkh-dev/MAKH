@@ -31,6 +31,10 @@
 #define SYS_CLONE          56
 #define SYS_FUTEX          202
 #define SYS_SET_TID_ADDRESS 218
+#define SYS_READV          19
+#define SYS_WRITEV         20
+#define SYS_MADVISE        28
+#define SYS_EXIT_GROUP     231
 #define SYS_NANOSLEEP      35
 #define SYS_GETTIMEOFDAY   96
 #define SYS_CLOCK_GETTIME  228

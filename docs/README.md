@@ -41,6 +41,7 @@ numbers are navigable rather than mysterious.
 | 20-K | Pipes & redirection: `pipe`/`dup2`, fd inheritance, shell `a \| b` | [PHASE20K_PIPE](PHASE20K_PIPE.md) |
 | 20-L | User threads: `clone`+`futex`+`set_tid_address`, shared VM/fds, join | [PHASE20L_THREADS](PHASE20L_THREADS.md) |
 | 20-M | Wall clock: CMOS RTC → real `CLOCK_REALTIME`/`gettimeofday` epoch | [PHASE20M_RTC](PHASE20M_RTC.md) |
+| 20-N | musl-readiness: `writev`/`readv`/`exit_group`/`madvise` (F20-a) | [PHASE20N_IOV](PHASE20N_IOV.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
@@ -85,6 +86,10 @@ past gap #1 — toward a libc userland (Stage 1: the syscall surface):
                        (aspace/fd refcounted lifetime)          (1.4 of Stage 1)
 20-M wall clock ...... CMOS RTC epoch anchors CLOCK_REALTIME  ─▶ real dates/time()
                        (read once at boot, advance monotonic)   (1.5 — Stage 1 done)
+
+F20 — the musl port:
+20-N iov + exit_group  writev/readv/exit_group/madvise        ─▶ libc stdio path
+                       (crt0 + buffered-stdio gaps)             (F20-a)
 ```
 
 ## Doc conventions (phases 16+)

@@ -40,7 +40,12 @@
 #define SYS_CLONE          56
 #define SYS_FUTEX          202
 #define SYS_SET_TID_ADDRESS 218
+#define SYS_READV          19
+#define SYS_WRITEV         20
+#define SYS_EXIT_GROUP     231
 #define SYS_KILL      62
+
+struct iovec { void* iov_base; unsigned long iov_len; };
 
 /* clone flags + futex ops (match kernel). */
 #define CLONE_VM             0x00000100
@@ -258,6 +263,12 @@ static inline long ufutex(volatile int* uaddr, int op, int val, void* timeout) {
 }
 static inline long uset_tid_address(int* tidptr) {
     return usyscall(SYS_SET_TID_ADDRESS, (long)tidptr, 0, 0);
+}
+static inline long uwritev(int fd, const struct iovec* iov, int n) {
+    return usyscall(SYS_WRITEV, fd, (long)iov, n);
+}
+static inline long ureadv(int fd, const struct iovec* iov, int n) {
+    return usyscall(SYS_READV, fd, (long)iov, n);
 }
 /* Spawn a thread running fn(arg) on stack_top (grows down), sharing memory and
  * fds. ctid is set to the tid now and cleared + futex-woken on exit (join).

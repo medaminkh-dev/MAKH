@@ -145,6 +145,44 @@ static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user
     return (int64_t)done;
 }
 
+/* scatter/gather I/O (Phase F20-a): walk the iovec array, reusing do_read/
+ * do_write per entry. musl's buffered stdio flushes through writev. */
+struct iovec_k { uint64_t base; uint64_t len; };
+
+static int64_t do_writev(uint64_t fd, uint64_t uiov, uint64_t iovcnt, int from_user) {
+    if ((int64_t)iovcnt < 0 || iovcnt > 1024) return -EINVAL;
+    int64_t total = 0;
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        struct iovec_k v;
+        if (copy_from_user(&v, (const void*)(uintptr_t)(uiov + i * sizeof(v)),
+                           sizeof(v)) < 0)
+            return total ? total : -EFAULT;
+        if (v.len == 0) continue;
+        int64_t w = do_write(fd, v.base, v.len, from_user);
+        if (w < 0) return total ? total : w;
+        total += w;
+        if ((uint64_t)w < v.len) break;          /* short write: stop */
+    }
+    return total;
+}
+
+static int64_t do_readv(uint64_t fd, uint64_t uiov, uint64_t iovcnt, int from_user) {
+    if ((int64_t)iovcnt < 0 || iovcnt > 1024) return -EINVAL;
+    int64_t total = 0;
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        struct iovec_k v;
+        if (copy_from_user(&v, (const void*)(uintptr_t)(uiov + i * sizeof(v)),
+                           sizeof(v)) < 0)
+            return total ? total : -EFAULT;
+        if (v.len == 0) continue;
+        int64_t r = do_read(fd, v.base, v.len, from_user);
+        if (r < 0) return total ? total : r;
+        total += r;
+        if ((uint64_t)r < v.len) break;          /* short/EOF: stop */
+    }
+    return total;
+}
+
 /* Copy a NUL-terminated path from `upath` into dst[dstsz]. Returns 0, -EFAULT
  * on a bad user address, or -ENAMETOOLONG if it does not fit. */
 static int copy_path(char* dst, size_t dstsz, uint64_t upath, int from_user) {
@@ -496,6 +534,9 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
     switch (num) {
         case SYS_WRITE:        return do_write(a1, a2, a3, from_user);
         case SYS_READ:         return do_read(a1, a2, a3, from_user);
+        case SYS_WRITEV:       return do_writev(a1, a2, a3, from_user);
+        case SYS_READV:        return do_readv(a1, a2, a3, from_user);
+        case SYS_MADVISE:      return 0;                 /* advisory: no-op */
         case SYS_OPEN:         return do_open(a1, a2, from_user);
         case SYS_CHDIR:        return do_chdir(a1, from_user);
         case SYS_GETCWD:       return do_getcwd(a1, a2, from_user);
@@ -532,6 +573,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_SETSID:       return sys_setsid();
         case SYS_MAKH_GETTICKS:return (int64_t)timer_get_ticks();
         case SYS_EXIT:
+        case SYS_EXIT_GROUP:                         /* no thread groups: same as exit */
             if (from_user) {
                 if (current_process && current_process->is_user)
                     thread_exit((int)(a1 & 0xff));   /* real process: become a zombie */
