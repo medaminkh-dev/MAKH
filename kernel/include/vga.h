@@ -16,8 +16,11 @@
 
 #include "types.h"
 
-/* VGA text buffer address */
-#define VGA_BUFFER_ADDR     0xB8000
+/* VGA text buffer, reached through the higher-half direct map (HHDM_BASE +
+ * 0xB8000). The HHDM is shared into every address space, so the write() syscall
+ * path can touch the screen under a user CR3 that no longer maps the low half.
+ * boot.asm sets up the HHDM early so this is valid from the first putchar. */
+#define VGA_BUFFER_ADDR     0xFFFF8000000B8000ULL
 #define VGA_WIDTH           80
 #define VGA_HEIGHT          25
 

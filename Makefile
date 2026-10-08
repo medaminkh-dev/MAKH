@@ -233,7 +233,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/sigtest build/user/sigmask build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
-            build/user/iovtest
+            build/user/iovtest build/user/lowexec
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user
@@ -243,6 +243,13 @@ build/user/%: user/%.c user/usys.h build/user/start.o user/user.ld
 	@mkdir -p build/user
 	@$(UCC) $(UCFLAGS) -c -o build/user/$*.o $<
 	@$(LD) $(ULDFLAGS) -o $@ build/user/start.o build/user/$*.o
+
+# A standard non-PIE ET_EXEC linked at the conventional low 0x400000 (slot 0),
+# to prove the lower half belongs to the process after the higher-half migration.
+build/user/lowexec: user/lowexec.c user/usys.h build/user/start.o user/user_low.ld
+	@mkdir -p build/user
+	@$(UCC) $(UCFLAGS) -c -o build/user/lowexec.o $<
+	@$(LD) -T user/user_low.ld -nostdlib -no-pie -z noexecstack -o $@ build/user/start.o build/user/lowexec.o
 
 # Phase 20-O (F20): a real-libc program. hello.c is an ordinary C program built
 # against musl as a static-PIE using the pip `ziglang` toolchain, which vendors

@@ -67,10 +67,14 @@ int vmspace_create(address_space_t* as) {
     uint64_t* np = tbl((uint64_t)(uintptr_t)p);
     memset(np, 0, 4096);
 
-    /* Share every kernel PML4 entry by value; leave the user slot empty. */
+    /* Share the kernel's higher-half PML4 entries (slots 256..511: the direct
+     * map, kernel heap and the kernel image) by value. Leave the entire lower
+     * half (slots 0..255) empty — it belongs to this process now, which is what
+     * lets a standard non-PIE binary load at its native low address. The kernel
+     * runs entirely in the higher half (F21 Path A), so it needs nothing here. */
     uint64_t* kp = vmm_kernel_pml4();
-    for (int i = 0; i < 512; i++)
-        if (i != USER_PML4_INDEX && (kp[i] & PAGE_PRESENT))
+    for (int i = 256; i < 512; i++)
+        if (kp[i] & PAGE_PRESENT)
             np[i] = kp[i];
 
     as->pml4_phys = (uint64_t)(uintptr_t)p;
@@ -129,14 +133,18 @@ int vmspace_fork(address_space_t* parent, address_space_t* child) {
     if (vmspace_create(child) != 0) return -1;
 
     uint64_t* pp = tbl(parent->pml4_phys);
-    if (!(pp[USER_PML4_INDEX] & PAGE_PRESENT)) return 0;   /* nothing mapped yet */
-
-    irqflags_t fl = local_irq_save();
-    uint64_t sub = copy_level(pp[USER_PML4_INDEX] & PTE_PHYS_MASK, 3);
-    if (!sub) { local_irq_restore(fl); vmspace_destroy(child); return -1; }
-
     uint64_t* cp = tbl(child->pml4_phys);
-    cp[USER_PML4_INDEX] = (pp[USER_PML4_INDEX] & 0xFFF) | sub;
+
+    /* Deep-copy every populated user slot (the whole lower half, 0..255: a
+     * standard binary lands in slot 0, a PIE in slot 64, with stack/mmap
+     * alongside). Writable leaves become COW in both parent and child. */
+    irqflags_t fl = local_irq_save();
+    for (int i = 0; i < 256; i++) {
+        if (!(pp[i] & PAGE_PRESENT)) continue;
+        uint64_t sub = copy_level(pp[i] & PTE_PHYS_MASK, 3);
+        if (!sub) { local_irq_restore(fl); vmspace_destroy(child); return -1; }
+        cp[i] = (pp[i] & 0xFFF) | sub;
+    }
     local_irq_restore(fl);
 
     /* If the parent is the active space, its leaves just lost write permission,
@@ -235,8 +243,11 @@ static void free_level(uint64_t phys, int level) {
 void vmspace_destroy(address_space_t* as) {
     if (!as || !as->pml4_phys) return;
     uint64_t* pml4 = tbl(as->pml4_phys);
-    if (pml4[USER_PML4_INDEX] & PAGE_PRESENT)
-        free_level(pml4[USER_PML4_INDEX] & PTE_PHYS_MASK, 3);
+    /* Free every user slot this process owns (the lower half, 0..255). Slots
+     * 256..511 are the shared kernel tables — never freed here. */
+    for (int i = 0; i < 256; i++)
+        if (pml4[i] & PAGE_PRESENT)
+            free_level(pml4[i] & PTE_PHYS_MASK, 3);
     pmm_free_page((void*)(uintptr_t)(as->pml4_phys & PTE_PHYS_MASK));
     as->pml4_phys = 0;
 }

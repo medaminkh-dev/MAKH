@@ -61,8 +61,9 @@ static void user_trampoline(void* arg) {
 #define AT_RANDOM 25
 
 /* Write `n` bytes into address space `as` at user virtual address `va`, through
- * the identity map of its frames (so `as` need not be the active CR3). Handles
- * a write that straddles a page boundary. */
+ * the higher-half direct map of its frames (so `as` need not be the active CR3,
+ * and it works under a user CR3 that no longer carries the low identity map).
+ * Handles a write that straddles a page boundary. */
 static void poke(address_space_t* as, uint64_t va, const void* src, size_t n) {
     const uint8_t* s = (const uint8_t*)src;
     while (n) {
@@ -70,7 +71,7 @@ static void poke(address_space_t* as, uint64_t va, const void* src, size_t n) {
         uint64_t off  = va & 0xFFF;
         size_t   chunk = 4096 - (size_t)off;
         if (chunk > n) chunk = n;
-        if (phys) memcpy((void*)(uintptr_t)(phys + off), s, chunk);
+        if (phys) memcpy((uint8_t*)P2V(phys) + off, s, chunk);
         va += chunk; s += chunk; n -= chunk;
     }
 }

@@ -18,12 +18,20 @@ PDPT_ADDR       equ 0x2000         ; Page Directory Pointer Table at 0x2000 (low
 PD_ADDR         equ 0x3000         ; Page Directory at 0x3000 (low identity)
 PDPT_HI_ADDR    equ 0x4000         ; PDPT for the higher-half kernel window
 PD_HI_ADDR      equ 0x5000         ; PD for the higher-half kernel window
+PDPT_HHDM_ADDR  equ 0x6000         ; PDPT for the higher-half direct map
+PD_HHDM_ADDR    equ 0x7000         ; PD for the higher-half direct map
 
 ; Higher-half kernel link base (must match linker.ld KERNEL_VMA and
 ; mm/vmm.h KERNEL_VMA_BASE). 0xFFFFFFFF80000000 is PML4 slot 511, PDPT slot 510.
 KERNEL_VMA      equ 0xFFFFFFFF80000000
 PML4_HI_SLOT    equ 511            ; (KERNEL_VMA >> 39) & 0x1FF
 PDPT_HI_SLOT    equ 510            ; (KERNEL_VMA >> 30) & 0x1FF
+
+; Higher-half direct map base (must match mm/vmm.h HHDM_BASE). 0xFFFF800000000000
+; is PML4 slot 256, PDPT slot 0. Set up early so VGA (reached via the HHDM, so it
+; works under a user CR3 that has no low identity map) is live from kernel_main.
+HHDM_VMA        equ 0xFFFF800000000000
+PML4_HHDM_SLOT  equ 256            ; (HHDM_VMA >> 39) & 0x1FF
 
 ; GDT location (must be identity mapped and accessible in 32-bit mode)
 GDT_ADDR        equ 0x0800         ; GDT at 0x800 (below 1MB, identity mapped)
@@ -139,10 +147,10 @@ start_32bit:
     ; SETUP PAGE TABLES FOR IDENTITY MAPPING (first 2MB using huge pages)
     ; ==========================================================================
     
-    ; Clear page tables (PML4, low PDPT/PD, high PDPT/PD = 5 pages)
+    ; Clear page tables (PML4, low PDPT/PD, high PDPT/PD, HHDM PDPT/PD = 7 pages)
     mov edi, PML4_ADDR
     xor eax, eax
-    mov ecx, 4096 * 5               ; Clear 5 pages (20KB)
+    mov ecx, 4096 * 7               ; Clear 7 pages (28KB)
     rep stosb
     
     ; Setup PML4 (Level 4) - point to PDPT
@@ -185,6 +193,32 @@ start_32bit:
     add eax, 0x200000
     add edi, 8
     loop .fill_hi_pd
+
+    ; ==========================================================================
+    ; HIGHER-HALF DIRECT MAP (early)
+    ; Map HHDM_VMA (0xFFFF800000000000) -> physical 0 so the kernel can reach low
+    ; physical through the higher half before vmm_init builds the full map. VGA
+    ; lives here (0xFFFF8000000B8000) — that is how the write() syscall path
+    ; reaches the screen under a user CR3 once the low identity map is dropped.
+    ;   PML4[256] -> PDPT_HHDM ; PDPT_HHDM[0] -> PD_HHDM ; PD_HHDM[0..31] -> 0..64MB
+    ; vmm_init later replaces slot 256 with the full-RAM direct map.
+    ; ==========================================================================
+    mov edi, PML4_ADDR + PML4_HHDM_SLOT * 8
+    mov eax, PDPT_HHDM_ADDR | 0x03
+    mov [edi], eax
+
+    mov edi, PDPT_HHDM_ADDR          ; PDPT slot 0
+    mov eax, PD_HHDM_ADDR | 0x03
+    mov [edi], eax
+
+    mov edi, PD_HHDM_ADDR
+    mov eax, 0x83                    ; phys 0, Present + Writable + Huge
+    mov ecx, 32
+.fill_hhdm_pd:
+    mov [edi], eax
+    add eax, 0x200000
+    add edi, 8
+    loop .fill_hhdm_pd
 
     ; ==========================================================================
     ; ENABLE SSE (required for optimized code using XMM registers)
@@ -397,6 +431,11 @@ bits 64
 global kernel_high_start
 extern kernel_main
 kernel_high_start:
+    ; Switch off the low boot stack (0x90000, only in the identity map) onto the
+    ; kernel's own stack in .bss (higher half, PML4 slot 511 — shared into every
+    ; address space). This is the initial/idle thread's stack, so it must stay
+    ; mapped even under a user CR3 that no longer carries the low identity map.
+    lea rsp, [rel kernel_stack_top]
     mov [rel multiboot_info_ptr], rdi   ; stash for the C side (kernel.c)
     call kernel_main                    ; never returns
 .hang:

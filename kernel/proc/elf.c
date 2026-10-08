@@ -37,20 +37,24 @@
 #define PF_X      1
 #define PF_W      2
 
-/* The private per-process window is exactly one PML4 slot (index 64):
- * [USER_VA_MIN, USER_VA_END). A PT_LOAD segment must lie wholly inside it, or
- * vmspace_map() would walk into the shared kernel PML4 entries and corrupt
- * them. Everything an untrusted ELF asks for is validated against this range
- * with overflow-safe arithmetic (a malformed ELF is the common case the KFUZZ
- * "elf" target hammers). */
-#define USER_VA_MIN  0x0000200000000000ULL   /* 64 << 39 */
-#define USER_VA_END  0x0000208000000000ULL   /* 65 << 39 */
+/* The per-process window is the entire lower canonical half: [USER_VA_MIN,
+ * USER_VA_END). Since the higher-half migration (F21 Path A) a process owns
+ * PML4 slots 0..255 outright — the kernel lives in slots 256..511 — so a
+ * standard non-PIE executable can load at its native low address (e.g.
+ * 0x400000) just like a PIE at the slot-64 bias. A PT_LOAD segment must still
+ * lie wholly inside this range, or vmspace_map() would walk into the shared
+ * kernel PML4 entries and corrupt them; the ceiling is exactly the kernel
+ * half's first address. Everything an untrusted ELF asks for is validated
+ * against this range with overflow-safe arithmetic (a malformed ELF is the
+ * common case the KFUZZ "elf" target hammers). Page 0 stays reserved so a NULL
+ * deref still faults. */
+#define USER_VA_MIN  0x0000000000001000ULL   /* page 0 reserved for NULL */
+#define USER_VA_END  0x0000800000000000ULL   /* first kernel-half address (slot 256) */
 
-/* A static-PIE loads at the bottom of the window. Its image is a handful of
- * pages; the user stack sits 8 MiB in, the heap 32 MiB in, and the mmap arena
- * 1 GiB in (mm/uvm.h), so the bias leaves generous room below all of them. A
- * program "NULL" stays the unmapped virtual 0, so a null deref still faults. */
-#define USER_PIE_BASE  USER_VA_MIN
+/* A static-PIE still loads at the slot-64 bias (decoupled from the window
+ * floor): its image sits at the bottom, the user stack 8 MiB in, the heap
+ * 32 MiB in, and the mmap arena 1 GiB in (mm/uvm.h, user.c). */
+#define USER_PIE_BASE  0x0000200000000000ULL   /* 64 << 39 */
 
 /* Ceiling on a single PT_LOAD segment. Without it a malformed (or merely
  * greedy) p_memsz that still fits the window drives elf_load into a

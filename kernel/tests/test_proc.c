@@ -26,6 +26,18 @@ KTEST(proc, user_fault_becomes_sigsegv) {
     KEXPECT_EQ(status, 128 + SIGSEGV);      /* killed by SIGSEGV -> 139 */
 }
 
+/* F21 Path A: a standard non-PIE ET_EXEC linked at the conventional low address
+ * 0x400000 (PML4 slot 0) loads and runs. Before the higher-half migration slot 0
+ * was the shared kernel identity map, so a low binary could not load; now the
+ * whole lower canonical half is the process's own. */
+KTEST(proc, standard_low_binary_runs) {
+    int pid = proc_spawn_user("/bin/lowexec");
+    KASSERT_TEST(pid > 0);
+    int status = -1;
+    KEXPECT_EQ(sys_waitpid(pid, &status), pid);
+    KEXPECT_EQ(status, 77);                 /* lowexec returns 77 from 0x400000 */
+}
+
 KTEST(proc, ring3_is_preemptible) {
     uint64_t t0 = timer_get_ticks();
     int pid = proc_spawn_user("/bin/spin");  /* CPU-bound loop in ring 3 */

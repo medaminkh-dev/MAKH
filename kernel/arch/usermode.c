@@ -143,9 +143,10 @@ user_stop_t run_user_program(const void* code, size_t len, long* status) {
         if (status) *status = -1;
         return USER_FAULTED;
     }
-    /* Copy the program in through the kernel's identity mapping of the frame
-     * (supervisor side), so SMAP never gets in the way of the load. */
-    memcpy((void*)(uintptr_t)phys_of(USER_CODE_BASE), code, len);
+    /* Copy the program in through the higher-half direct map of the frame
+     * (supervisor side), so SMAP never gets in the way and it is correct under
+     * any CR3. */
+    memcpy((void*)P2V(phys_of(USER_CODE_BASE)), code, len);
 
     /* Ring-3 traps use the dedicated trap stack, never this thread's live C
      * stack (which holds the frames we longjmp back into). */
