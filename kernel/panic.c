@@ -18,7 +18,9 @@
 /* Symbols from linker.ld bounding the kernel image, used to sanity-check
  * return addresses before printing them. */
 extern char KERNEL_END[];
-#define KERNEL_TEXT_BASE 0x100000ULL
+/* Higher-half kernel: code is linked at KERNEL_VMA_BASE + 0x100000 (see
+ * linker.ld / mm/vmm.h). KERNEL_END is the higher-half end symbol. */
+#define KERNEL_TEXT_BASE 0xFFFFFFFF80100000ULL
 
 static int looks_like_code(uint64_t addr) {
     return addr >= KERNEL_TEXT_BASE && addr < (uint64_t)(uintptr_t)KERNEL_END;

@@ -30,6 +30,9 @@ CFLAGS  = -ffreestanding -fno-pie -O2 -Wall -Wextra
 CFLAGS += -std=gnu99 -fno-stack-protector -nostdinc
 CFLAGS += -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mgeneral-regs-only
 CFLAGS += -fno-omit-frame-pointer
+# Higher-half kernel (F21 Path A): the kernel is linked in the top -2GB
+# (0xFFFFFFFF80000000+, linker.ld KERNEL_VMA), so code uses the kernel model.
+CFLAGS += -mcmodel=kernel
 CFLAGS += -I kernel/include
 ASFLAGS = -f elf64
 LDFLAGS = -T linker.ld -nostdlib -z noexecstack --no-warn-execstack

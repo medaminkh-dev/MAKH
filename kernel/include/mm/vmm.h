@@ -60,6 +60,20 @@ static inline uint64_t V2P(const void* virt){ return (uint64_t)(uintptr_t)virt -
  * so a 1 GiB direct map never collides with it). */
 #define VMM_ALLOC_BASE 0xFFFF808000000000ULL
 
+/*
+ * Higher-half kernel link base. The kernel is linked with -mcmodel=kernel at
+ * KERNEL_VMA_BASE + physical (PML4 slot 511), so a kernel symbol's address is
+ * its physical load address plus this base. KV2P() recovers the physical — for
+ * CR3 and for the HHDM page-table entries that point at kernel-static tables.
+ * This is distinct from the HHDM's V2P(): KV2P undoes the -2 GiB kernel link
+ * bias, V2P undoes the direct-map bias. (Before the high-relink brick the
+ * kernel is identity-mapped low and KERNEL_VMA_BASE is effectively 0.)
+ */
+#define KERNEL_VMA_BASE 0xFFFFFFFF80000000ULL
+static inline uint64_t KV2P(const void* v) {
+    return (uint64_t)(uintptr_t)v - KERNEL_VMA_BASE;
+}
+
 /* Recursive mapping in last PML4 entry */
 #define RECURSIVE_PML4_INDEX 511
 

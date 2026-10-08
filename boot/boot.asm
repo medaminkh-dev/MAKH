@@ -14,8 +14,16 @@ MB2_ARCH        equ 0              ; i386 protected mode architecture
 
 ; Page table constants
 PML4_ADDR       equ 0x1000         ; PML4 at 0x1000
-PDPT_ADDR       equ 0x2000         ; Page Directory Pointer Table at 0x2000
-PD_ADDR         equ 0x3000         ; Page Directory at 0x3000
+PDPT_ADDR       equ 0x2000         ; Page Directory Pointer Table at 0x2000 (low identity)
+PD_ADDR         equ 0x3000         ; Page Directory at 0x3000 (low identity)
+PDPT_HI_ADDR    equ 0x4000         ; PDPT for the higher-half kernel window
+PD_HI_ADDR      equ 0x5000         ; PD for the higher-half kernel window
+
+; Higher-half kernel link base (must match linker.ld KERNEL_VMA and
+; mm/vmm.h KERNEL_VMA_BASE). 0xFFFFFFFF80000000 is PML4 slot 511, PDPT slot 510.
+KERNEL_VMA      equ 0xFFFFFFFF80000000
+PML4_HI_SLOT    equ 511            ; (KERNEL_VMA >> 39) & 0x1FF
+PDPT_HI_SLOT    equ 510            ; (KERNEL_VMA >> 30) & 0x1FF
 
 ; GDT location (must be identity mapped and accessible in 32-bit mode)
 GDT_ADDR        equ 0x0800         ; GDT at 0x800 (below 1MB, identity mapped)
@@ -64,8 +72,11 @@ header_end:
 
 ; ============================================================================
 ; 32-BIT BOOT CODE (GRUB starts us here in protected mode)
+; Linked 1:1 at its physical load address (low .boot section): it runs with
+; paging off and during the switch to long mode, before the jump into the
+; higher half.
 ; ============================================================================
-section .text
+section .boot progbits alloc exec nowrite align=16
 bits 32
 
 global start_32bit
@@ -128,10 +139,10 @@ start_32bit:
     ; SETUP PAGE TABLES FOR IDENTITY MAPPING (first 2MB using huge pages)
     ; ==========================================================================
     
-    ; Clear page tables
+    ; Clear page tables (PML4, low PDPT/PD, high PDPT/PD = 5 pages)
     mov edi, PML4_ADDR
     xor eax, eax
-    mov ecx, 4096 * 3               ; Clear 3 pages (12KB)
+    mov ecx, 4096 * 5               ; Clear 5 pages (20KB)
     rep stosb
     
     ; Setup PML4 (Level 4) - point to PDPT
@@ -150,7 +161,31 @@ start_32bit:
     mov [edi], eax                  ; Map first 2MB
     mov eax, 0x200083               ; Next 2MB at 0x200000
     mov [edi + 8], eax
-    
+
+    ; ==========================================================================
+    ; HIGHER-HALF KERNEL WINDOW
+    ; Map KERNEL_VMA (0xFFFFFFFF80000000) -> physical 0 so the kernel, linked in
+    ; the -2GB region (-mcmodel=kernel), can execute once paging is on.
+    ;   PML4[511] -> PDPT_HI ; PDPT_HI[510] -> PD_HI ; PD_HI[0..31] -> 0..64MB.
+    ; ==========================================================================
+    mov edi, PML4_ADDR + PML4_HI_SLOT * 8
+    mov eax, PDPT_HI_ADDR | 0x03
+    mov [edi], eax
+
+    mov edi, PDPT_HI_ADDR + PDPT_HI_SLOT * 8
+    mov eax, PD_HI_ADDR | 0x03
+    mov [edi], eax
+
+    ; 32 huge pages = 64MB high, covering the kernel image with headroom.
+    mov edi, PD_HI_ADDR
+    mov eax, 0x83                   ; phys 0, Present + Writable + Huge
+    mov ecx, 32
+.fill_hi_pd:
+    mov [edi], eax
+    add eax, 0x200000
+    add edi, 8
+    loop .fill_hi_pd
+
     ; ==========================================================================
     ; ENABLE SSE (required for optimized code using XMM registers)
     ; ==========================================================================
@@ -300,12 +335,10 @@ long_mode_start:
     mov al, 'D'
     mov [rcx + 2], ax
     
-    ; Restore multiboot info pointer
-    pop rdi                         ; RDI = multiboot2 info structure (first arg for C)
-    
-    ; Store multiboot info pointer in global variable for C code
-    mov [multiboot_info_ptr], rdi
-    
+    ; Restore multiboot info pointer. Keep it in RDI across the jump into the
+    ; higher half; the high stub stores it once the kernel's .data is reachable.
+    pop rdi                         ; RDI = multiboot2 info structure
+
     ; Checkpoint: 'P' for Pop done
     mov al, 'P'
     mov [rcx + 4], ax
@@ -337,17 +370,16 @@ long_mode_start:
     mov al, 'K'
     mov [rcx + 12], ax
     
-    ; Additional checkpoint before kernel_main - 'C' for Call
-    mov al, 'C'
+    ; Additional checkpoint before the jump - 'H' for Higher-half
+    mov al, 'H'
     mov [rcx + 14], ax
-    
-    ; Jump to kernel main
-    call kernel_main
-    
-    ; Checkpoint if we return (should not happen) - 'R' for Return
-    mov al, 'R'
-    mov [rcx + 16], ax
-    
+
+    ; Jump into the higher half. kernel_high_start lives in .text at KERNEL_VMA+,
+    ; which is mapped (PML4[511]); an absolute 64-bit jump leaves this low .boot
+    ; trampoline behind for good. RDI (multiboot info) is preserved.
+    mov rax, kernel_high_start
+    jmp rax
+
     ; Should never reach here, but halt if we do
 .halt:
     cli
@@ -355,9 +387,22 @@ long_mode_start:
     jmp .halt
 
 ; ============================================================================
-; EXTERNAL SYMBOLS (defined in C code)
+; HIGHER-HALF ENTRY
+; Linked in .text at KERNEL_VMA+ (-mcmodel=kernel). The low trampoline jumps
+; here with RDI = multiboot info; by now the kernel's own .data/.text are the
+; addresses we execute from, so we can finish setup and enter C.
 ; ============================================================================
+section .text
+bits 64
+global kernel_high_start
 extern kernel_main
+kernel_high_start:
+    mov [rel multiboot_info_ptr], rdi   ; stash for the C side (kernel.c)
+    call kernel_main                    ; never returns
+.hang:
+    cli
+    hlt
+    jmp .hang
 
 ; ============================================================================
 ; GLOBAL SYMBOLS (exported to C code)
@@ -365,12 +410,12 @@ extern kernel_main
 global multiboot_info_ptr
 
 ; ============================================================================
-; DATA SECTION
+; DATA SECTION (higher half: collected into the kernel's .data by linker.ld)
 ; ============================================================================
 section .data
 align 8
 multiboot_info_ptr:
-    dq 0                            ; Will be set to RDI value in long_mode_start
+    dq 0                            ; set by kernel_high_start from RDI
 
 ; ============================================================================
 ; BSS SECTION (uninitialized data)

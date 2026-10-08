@@ -246,19 +246,19 @@ void vmm_init(void) {
     for (uint64_t i = 0; i < entries; i++) {
         hhdm_pd[i] = (i * 0x200000) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
     }
-    hhdm_pdpt[0] = ((uint64_t)(uintptr_t)hhdm_pd) | PAGE_PRESENT | PAGE_WRITABLE;
-    kernel_pml4[VMM_PML4_INDEX(HHDM_BASE)] =
-        ((uint64_t)(uintptr_t)hhdm_pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
+    /* The HHDM tables are kernel statics linked in the higher half, so the
+     * physical address a page-table entry must store is KV2P() of the symbol. */
+    hhdm_pdpt[0] = KV2P(hhdm_pd) | PAGE_PRESENT | PAGE_WRITABLE;
+    kernel_pml4[VMM_PML4_INDEX(HHDM_BASE)] = KV2P(hhdm_pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
     KLOG_I("VMM", "HHDM at %p maps %lu MB\n", (void*)HHDM_BASE, (entries * 2));
 
-    /* 
-     * Set up recursive mapping: PML4[511] = &PML4 | flags
-     * This allows us to access page tables through the higher half
-     * at virtual address 0xFFFFFFFFFFFFF000 + indices
+    /*
+     * PML4 slot 511 now holds the higher-half kernel window (set by boot.asm and
+     * copied in above from the boot PML4), so there is no recursive self-map —
+     * nothing ever used it. CR3 wants the PML4's physical address, and the table
+     * is a kernel static, so KV2P() of its symbol.
      */
-    uint64_t pml4_phys = (uint64_t)(uintptr_t)kernel_pml4;
-    kernel_pml4[RECURSIVE_PML4_INDEX] = pml4_phys | PAGE_PRESENT | PAGE_WRITABLE;
-    terminal_writestring("[VMM] Recursive mapping set (PML4[511])\n");
+    uint64_t pml4_phys = KV2P(kernel_pml4);
     
     /* Store current PML4 physical address */
     current_pml4_phys = pml4_phys;
