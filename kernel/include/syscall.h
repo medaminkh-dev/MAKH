@@ -25,6 +25,13 @@
 #define SYS_LSTAT          6
 #define SYS_FCNTL          72
 #define SYS_GETDENTS64     217
+#define SYS_OPENAT         257
+#define SYS_NEWFSTATAT     262
+#define SYS_UNLINK         87
+#define SYS_UNLINKAT       263
+#define SYS_ACCESS         21
+#define SYS_FACCESSAT      269
+#define AT_FDCWD           (-100)
 #define SYS_PIPE           22
 #define SYS_DUP2           33
 #define SYS_PIPE2          293

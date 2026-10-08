@@ -167,7 +167,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_musl.c \
     kernel/tests/test_busybox.c \
     kernel/tests/test_virtio_blk.c \
-    kernel/tests/test_ext2.c
+    kernel/tests/test_ext2.c \
+    kernel/tests/test_g3.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -246,6 +247,9 @@ build/user/%: user/%.c user/usys.h build/user/start.o user/user.ld
 # normal build (and CI) need no extra toolchain — it ships into the initrd as
 # /bin/muslhello. Regenerate it with `make musl-progs` after editing hello.c.
 MUSL_PREBUILT = user/musl/muslhello
+# Phase 20-S (G3): musl programs for file I/O on ext2 and execve-envp.
+MUSL_FIO = user/musl/fio
+MUSL_ENVTEST = user/musl/envtest
 # Phase 20-O2 (F20-c): a real busybox, built from source as a static-PIE against
 # musl with the ziglang toolchain and checked in (see docs/PHASE20O2_BUSYBOX.md
 # for the exact recipe). It ships into the initrd as /bin/busybox.
@@ -253,12 +257,14 @@ BUSYBOX_PREBUILT = user/musl/busybox
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(BUSYBOX_PREBUILT)
+$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT)
 	@echo "Building initrd.tar (+ user programs)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
 	@cp $(MUSL_PREBUILT) build/initrd/bin/muslhello
+	@cp $(MUSL_FIO) build/initrd/bin/fio
+	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
@@ -267,7 +273,9 @@ musl-progs:
 	@$(ZIGCC) --version >/dev/null 2>&1 || { echo "need the ziglang toolchain: pip install ziglang"; exit 1; }
 	@echo "Building musl programs with zig $$($(ZIGCC) --version)"
 	$(ZIGCC) $(ZIGCFLAGS) user/musl/hello.c -o $(MUSL_PREBUILT)
-	@file $(MUSL_PREBUILT)
+	$(ZIGCC) $(ZIGCFLAGS) user/musl/fio.c -o $(MUSL_FIO)
+	$(ZIGCC) $(ZIGCFLAGS) user/musl/envtest.c -o $(MUSL_ENVTEST)
+	@file $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST)
 
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
 C_OBJECTS   = $(C_SOURCES:.c=.o)

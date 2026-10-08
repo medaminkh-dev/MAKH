@@ -218,12 +218,65 @@ static int resolve_path(char* abs, size_t abssz, const char* raw) {
     return 0;
 }
 
+static int64_t do_stat(uint64_t upath, uint64_t ust, int from_user);   /* below */
+
 static int64_t do_open(uint64_t upath, uint64_t flags, int from_user) {
     char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
     int rc = copy_path(path, sizeof(path), upath, from_user);
     if (rc < 0) return rc;
     if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
     return vfs_open(abs, (int)flags);
+}
+
+/* openat(dirfd, path, flags, mode): a modern libc routes every open() through
+ * this. We serve AT_FDCWD (relative to the cwd, which do_open already honours)
+ * and absolute paths; a real dirfd with a relative path is not yet supported. */
+static int64_t do_openat(uint64_t dirfd, uint64_t upath, uint64_t flags, int from_user) {
+    if ((int64_t)dirfd != AT_FDCWD) {
+        char c;
+        if (copy_from_user(&c, (const void*)(uintptr_t)upath, 1) < 0) return -EFAULT;
+        if (c != '/') return -ENOSYS;              /* relative-to-dirfd: later */
+    }
+    return do_open(upath, flags, from_user);
+}
+
+/* newfstatat(dirfd, path, statbuf, flags): the *at form of stat. Served for
+ * AT_FDCWD / absolute paths by the existing stat path. */
+static int64_t do_newfstatat(uint64_t dirfd, uint64_t upath, uint64_t ust, int from_user) {
+    if ((int64_t)dirfd != AT_FDCWD) {
+        char c;
+        if (copy_from_user(&c, (const void*)(uintptr_t)upath, 1) < 0) return -EFAULT;
+        if (c != '/') return -ENOSYS;
+    }
+    return do_stat(upath, ust, from_user);
+}
+
+/* unlink(path): remove a name. Routes to the filesystem's unlink (tmpfs today;
+ * ext2 unlink lands with G2-d). */
+static int64_t do_unlink(uint64_t upath, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_unlink(abs);
+}
+static int64_t do_unlinkat(uint64_t dirfd, uint64_t upath, int from_user) {
+    if ((int64_t)dirfd != AT_FDCWD) {
+        char c;
+        if (copy_from_user(&c, (const void*)(uintptr_t)upath, 1) < 0) return -EFAULT;
+        if (c != '/') return -ENOSYS;
+    }
+    return do_unlink(upath, from_user);
+}
+
+/* access(path, mode): existence/permission probe. MAKH is single-user with no
+ * permission bits enforced, so a resolvable path is accessible (mode ignored). */
+static int64_t do_access(uint64_t upath, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_resolve(abs) ? 0 : -ENOENT;
 }
 
 static int64_t do_chdir(uint64_t upath, int from_user) {
@@ -555,6 +608,12 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_READV:        return do_readv(a1, a2, a3, from_user);
         case SYS_MADVISE:      return 0;                 /* advisory: no-op */
         case SYS_OPEN:         return do_open(a1, a2, from_user);
+        case SYS_OPENAT:       return do_openat(a1, a2, a3, from_user);
+        case SYS_NEWFSTATAT:   return do_newfstatat(a1, a2, a3, from_user);
+        case SYS_UNLINK:       return do_unlink(a1, from_user);
+        case SYS_UNLINKAT:     return do_unlinkat(a1, a2, from_user);
+        case SYS_ACCESS:       return do_access(a1, from_user);
+        case SYS_FACCESSAT:    return do_access(a2, from_user);   /* (dirfd,path,mode) */
         case SYS_CHDIR:        return do_chdir(a1, from_user);
         case SYS_GETCWD:       return do_getcwd(a1, a2, from_user);
         case SYS_CLOSE:        return vfs_close((int)a1);

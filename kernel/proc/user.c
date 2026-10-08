@@ -412,7 +412,6 @@ long proc_clone(trapframe_t* tf) {
 long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp) {
     process_t* cur = current_process;
     if (!cur || !cur->is_user || !cur->aspace) return -ENOSYS;
-    (void)uenvp;                           /* envp copy is a trivial follow-on */
 
     /* Copy and canonicalise the path against the process cwd. */
     char raw[256], abs[256];
@@ -450,6 +449,30 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
         }
     }
 
+    /* Copy envp the same way (strings live in the soon-to-be-freed image). A
+     * real libc shell/make passes the environment to the program it execs. */
+    char  envstore[U_ARGSTORE];
+    char* envp_k[U_ARGC_MAX];
+    int   envc = 0;
+    size_t eused = 0;
+    if (uenvp) {
+        while (envc < U_ARGC_MAX) {
+            uint64_t ptr;
+            if (copy_from_user(&ptr, (const void*)(uintptr_t)(uenvp + (uint64_t)envc * 8),
+                               8) < 0) return -EFAULT;
+            if (!ptr) break;                        /* NULL terminates envp */
+            envp_k[envc] = &envstore[eused];
+            for (size_t j = 0;; j++) {
+                if (eused >= sizeof(envstore)) return -E2BIG;
+                char c;
+                if (copy_from_user(&c, (const void*)(uintptr_t)(ptr + j), 1) < 0) return -EFAULT;
+                envstore[eused++] = c;
+                if (!c) break;
+            }
+            envc++;
+        }
+    }
+
     vnode_t* vn = vfs_resolve(abs);
     if (!vn) return -ENOENT;
 
@@ -462,8 +485,8 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     elf_aux_t aux;
     int rc = build_user_image(nas, vn, &entry, &aux);
     if (rc != 0) { vmspace_destroy(nas); kfree(nas); return rc; }
-    /* Lay out argc/argv/auxv on the new stack (identity-map writes). */
-    uint64_t ustack = setup_user_stack(nas, argc, argv_k, 0, NULL, entry, &aux);
+    /* Lay out argc/argv/envp/auxv on the new stack (identity-map writes). */
+    uint64_t ustack = setup_user_stack(nas, argc, argv_k, envc, envp_k, entry, &aux);
 
     /* Swap address spaces. We run on the shared kernel stack, so switching CR3
      * and freeing the old space is safe (the kernel half stays mapped). */
