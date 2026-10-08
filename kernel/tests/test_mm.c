@@ -8,6 +8,7 @@
 #include <ktest.h>
 #include <mm/pmm.h>
 #include <mm/kheap.h>
+#include <mm/vmm.h>
 #include <lib/string.h>
 #include <irq.h>
 
@@ -45,6 +46,36 @@ KTEST(pmm, allocated_frame_is_writable) {
     KEXPECT_EQ(p[0], 0xCAFEBABEULL);
     KEXPECT_EQ(p[511], 0x1234ULL);
     pmm_free_page((void*)p);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Higher-half direct map (HHDM) — F21 Path A groundwork                       */
+/* -------------------------------------------------------------------------- */
+
+/* P2V(phys) must address the very same physical frame as an independent
+ * mapping of that frame, and must land in the higher half (never equal the
+ * physical address). Proven without leaning on the legacy low identity map, so
+ * the invariant keeps holding once that map is retired from user spaces. */
+KTEST(vmm, hhdm_aliases_physical_frame) {
+    void* phys = pmm_alloc_page();
+    KASSERT_TEST(phys != (void*)0);
+    uint64_t pa = (uint64_t)(uintptr_t)phys;
+
+    volatile uint64_t* via_hhdm = (volatile uint64_t*)P2V(pa);
+    KEXPECT_NE((uint64_t)(uintptr_t)via_hhdm, pa);       /* higher half, != phys */
+
+    /* An independent scratch mapping of the same frame (slot 260). */
+    uint64_t scratch = 0xFFFF820000000000ULL;
+    KASSERT_TEST(vmm_map_page(scratch, pa, PAGE_PRESENT | PAGE_WRITABLE) == 0);
+    volatile uint64_t* via_scratch = (volatile uint64_t*)(uintptr_t)scratch;
+
+    *via_hhdm = 0xCAFEBABE12345678ULL;                   /* write via HHDM ... */
+    KEXPECT_EQ(*via_scratch, 0xCAFEBABE12345678ULL);     /* ... seen via scratch */
+    *via_scratch = 0x0123456789ABCDEFULL;                /* write via scratch ... */
+    KEXPECT_EQ(*via_hhdm, 0x0123456789ABCDEFULL);        /* ... seen via HHDM */
+
+    vmm_unmap_page(scratch);
+    pmm_free_page(phys);
 }
 
 /* -------------------------------------------------------------------------- */

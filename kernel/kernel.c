@@ -174,8 +174,9 @@ void test_vmm(void) {
         terminal_writestring("  [OK] Physical memory contains correct value\n");
     }
     
-    /* Test fixed mapping */
-    uint64_t fixed_virt = 0xFFFF800000100000ULL;
+    /* Test fixed mapping (slot 259 — clear of the HHDM at slot 256 and the
+     * vmm_alloc_page region at slot 257). */
+    uint64_t fixed_virt = 0xFFFF818000000000ULL;
     uint64_t fixed_phys = (uint64_t)(uintptr_t)pmm_alloc_page();
     
     if (fixed_phys != 0 && vmm_map_page(fixed_virt, fixed_phys, PAGE_PRESENT | PAGE_WRITABLE) == 0) {

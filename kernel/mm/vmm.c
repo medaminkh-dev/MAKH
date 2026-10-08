@@ -16,11 +16,18 @@
 /* Static kernel PML4 table - must be 4KB aligned */
 static uint64_t kernel_pml4[PAGE_TABLE_ENTRIES] __attribute__((aligned(4096)));
 
+/* Higher-half direct map (HHDM) page tables. One PDPT entry + one PD of 2 MiB
+ * huge pages covers up to 1 GiB of RAM at HHDM_BASE. Static so they live in the
+ * kernel image (always reachable) and have fixed addresses the later high relink
+ * can translate with V2P. */
+static uint64_t hhdm_pdpt[PAGE_TABLE_ENTRIES] __attribute__((aligned(4096)));
+static uint64_t hhdm_pd[PAGE_TABLE_ENTRIES]   __attribute__((aligned(4096)));
+
 /* Current PML4 physical address */
 static uint64_t current_pml4_phys = 0;
 
 /* Next available virtual address for vmm_alloc_page (higher half) */
-static uint64_t next_virt_addr = KERNEL_HIGHER_HALF_BASE;
+static uint64_t next_virt_addr = VMM_ALLOC_BASE;
 
 /* Helper function prototypes */
 static uint64_t* get_or_create_pdpt(uint64_t virt_addr);
@@ -224,7 +231,26 @@ void vmm_init(void) {
         }
     }
     KLOG_I("VMM", "identity-mapped %lu MB of RAM\n", (entries * 2));
-    
+
+    /*
+     * Build the higher-half direct map (HHDM) at HHDM_BASE: the same RAM, mapped
+     * 1:1 with 2 MiB huge pages, but in PML4 slot 256. It aliases the low
+     * identity map today; once every physical-frame access goes through P2V()
+     * the low identity map can be dropped from user address spaces, freeing the
+     * entire low canonical half. The HHDM tables are kernel statics, so their
+     * virtual address equals their physical address while the kernel is still
+     * identity-mapped low (that changes with V2P at the high-relink brick).
+     */
+    memset64(hhdm_pdpt, 0, PAGE_TABLE_ENTRIES);
+    memset64(hhdm_pd, 0, PAGE_TABLE_ENTRIES);
+    for (uint64_t i = 0; i < entries; i++) {
+        hhdm_pd[i] = (i * 0x200000) | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
+    }
+    hhdm_pdpt[0] = ((uint64_t)(uintptr_t)hhdm_pd) | PAGE_PRESENT | PAGE_WRITABLE;
+    kernel_pml4[VMM_PML4_INDEX(HHDM_BASE)] =
+        ((uint64_t)(uintptr_t)hhdm_pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
+    KLOG_I("VMM", "HHDM at %p maps %lu MB\n", (void*)HHDM_BASE, (entries * 2));
+
     /* 
      * Set up recursive mapping: PML4[511] = &PML4 | flags
      * This allows us to access page tables through the higher half

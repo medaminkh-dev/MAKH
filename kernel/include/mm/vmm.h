@@ -42,6 +42,24 @@
 /* Higher half kernel mapping base */
 #define KERNEL_HIGHER_HALF_BASE 0xFFFF800000000000ULL
 
+/*
+ * Higher-half direct map (HHDM). Physical frame P is always reachable at
+ * virtual HHDM_BASE + P. This lives in the higher half (PML4 slot 256) so that
+ * the kernel can edit any page table / touch any frame no matter which address
+ * space's CR3 is live — the groundwork for a higher-half kernel that leaves the
+ * whole low canonical half to user programs (F21 Path A). For now it coexists
+ * with the legacy low identity map; code migrates onto it brick by brick.
+ */
+#define HHDM_BASE KERNEL_HIGHER_HALF_BASE
+
+/* phys -> kernel pointer through the HHDM; V2P is its inverse for HHDM ptrs. */
+static inline void*    P2V(uint64_t phys)  { return (void*)(uintptr_t)(phys + HHDM_BASE); }
+static inline uint64_t V2P(const void* virt){ return (uint64_t)(uintptr_t)virt - HHDM_BASE; }
+
+/* Base for vmm_alloc_page()'s bump allocations (slot 257, just above the HHDM
+ * so a 1 GiB direct map never collides with it). */
+#define VMM_ALLOC_BASE 0xFFFF808000000000ULL
+
 /* Recursive mapping in last PML4 entry */
 #define RECURSIVE_PML4_INDEX 511
 
