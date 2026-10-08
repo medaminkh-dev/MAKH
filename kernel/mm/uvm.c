@@ -36,10 +36,11 @@ static int map_anon(address_space_t* as, uint64_t va, uint64_t len, uint64_t fla
     for (uint64_t off = 0; off < len; off += 4096) {
         void* fp = pmm_alloc_page();
         if (!fp) goto rollback;
-        memset(fp, 0, 4096);
-        page_setref((uint64_t)(uintptr_t)fp, 1);
-        if (vmspace_map(as, va + off, (uint64_t)(uintptr_t)fp, flags) != 0) {
-            page_decref((uint64_t)(uintptr_t)fp);   /* unmapped frame: free it */
+        uint64_t pf = (uint64_t)(uintptr_t)fp;
+        memset(P2V(pf), 0, 4096);               /* zero via HHDM (any CR3) */
+        page_setref(pf, 1);
+        if (vmspace_map(as, va + off, pf, flags) != 0) {
+            page_decref(pf);                     /* unmapped frame: free it */
             goto rollback;
         }
         continue;

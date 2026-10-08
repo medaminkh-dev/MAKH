@@ -177,7 +177,7 @@ static int e1000_send(netdev_t* dev, const void* frame, size_t len) {
     }
 
     memcpy(nic.tx_buf[i], frame, len);
-    d->addr = (uint64_t)(uintptr_t)nic.tx_buf[i];
+    d->addr = vmm_get_physical((uint64_t)(uintptr_t)nic.tx_buf[i]);
     d->length = (uint16_t)len;
     d->cmd = TXD_CMD_EOP | TXD_CMD_IFCS | TXD_CMD_RS;
     d->status = 0;
@@ -214,25 +214,31 @@ static void e1000_poll(netdev_t* dev) {
 
 /* ---------------------------------------------------------------- init */
 
+/* Rings and packet buffers are PMM frames: the NIC DMAs to/from their physical
+ * addresses, but the CPU touches them through the higher-half direct map so the
+ * driver is correct under a user CR3 (socket syscalls reach here). Store the
+ * HHDM pointer; translate back to physical with vmm_get_physical() for the NIC. */
 static int alloc_rings(void) {
-    nic.rx = (rx_desc_t*)pmm_alloc_page();     /* 32 * 16 B = 512 B */
-    nic.tx = (tx_desc_t*)pmm_alloc_page();
-    if (!nic.rx || !nic.tx) return -1;
+    void* rxp = pmm_alloc_page();              /* 32 * 16 B = 512 B */
+    void* txp = pmm_alloc_page();
+    if (!rxp || !txp) return -1;
+    nic.rx = (rx_desc_t*)P2V((uint64_t)(uintptr_t)rxp);
+    nic.tx = (tx_desc_t*)P2V((uint64_t)(uintptr_t)txp);
     memset(nic.rx, 0, 4096);
     memset(nic.tx, 0, 4096);
 
     /* Two 2KB buffers per 4KB frame. */
     for (int i = 0; i < NUM_RX; i += 2) {
-        uint8_t* page = pmm_alloc_page();
+        void* page = pmm_alloc_page();
         if (!page) return -1;
-        nic.rx_buf[i] = page;
-        nic.rx_buf[i + 1] = page + BUF_SIZE;
+        nic.rx_buf[i] = (uint8_t*)P2V((uint64_t)(uintptr_t)page);
+        nic.rx_buf[i + 1] = nic.rx_buf[i] + BUF_SIZE;
     }
     for (int i = 0; i < NUM_TX; i += 2) {
-        uint8_t* page = pmm_alloc_page();
+        void* page = pmm_alloc_page();
         if (!page) return -1;
-        nic.tx_buf[i] = page;
-        nic.tx_buf[i + 1] = page + BUF_SIZE;
+        nic.tx_buf[i] = (uint8_t*)P2V((uint64_t)(uintptr_t)page);
+        nic.tx_buf[i + 1] = nic.tx_buf[i] + BUF_SIZE;
     }
     return 0;
 }
@@ -274,11 +280,12 @@ int e1000_init(uint32_t ip, uint32_t netmask, uint32_t gateway) {
 
     /* RX ring: all descriptors owned by the NIC. */
     for (int i = 0; i < NUM_RX; i++) {
-        nic.rx[i].addr = (uint64_t)(uintptr_t)nic.rx_buf[i];
+        nic.rx[i].addr = vmm_get_physical((uint64_t)(uintptr_t)nic.rx_buf[i]);
         nic.rx[i].status = 0;
     }
-    wr(REG_RDBAL, (uint32_t)(uintptr_t)nic.rx);
-    wr(REG_RDBAH, (uint32_t)((uint64_t)(uintptr_t)nic.rx >> 32));
+    uint64_t rx_phys = vmm_get_physical((uint64_t)(uintptr_t)nic.rx);
+    wr(REG_RDBAL, (uint32_t)rx_phys);
+    wr(REG_RDBAH, (uint32_t)(rx_phys >> 32));
     wr(REG_RDLEN, NUM_RX * sizeof(rx_desc_t));
     wr(REG_RDH, 0);
     wr(REG_RDT, NUM_RX - 1);
@@ -287,11 +294,12 @@ int e1000_init(uint32_t ip, uint32_t netmask, uint32_t gateway) {
 
     /* TX ring: mark every descriptor "done" so the first sends find room. */
     for (int i = 0; i < NUM_TX; i++) {
-        nic.tx[i].addr = (uint64_t)(uintptr_t)nic.tx_buf[i];
+        nic.tx[i].addr = vmm_get_physical((uint64_t)(uintptr_t)nic.tx_buf[i]);
         nic.tx[i].status = TXD_STAT_DD;
     }
-    wr(REG_TDBAL, (uint32_t)(uintptr_t)nic.tx);
-    wr(REG_TDBAH, (uint32_t)((uint64_t)(uintptr_t)nic.tx >> 32));
+    uint64_t tx_phys = vmm_get_physical((uint64_t)(uintptr_t)nic.tx);
+    wr(REG_TDBAL, (uint32_t)tx_phys);
+    wr(REG_TDBAH, (uint32_t)(tx_phys >> 32));
     wr(REG_TDLEN, NUM_TX * sizeof(tx_desc_t));
     wr(REG_TDH, 0);
     wr(REG_TDT, 0);

@@ -19,6 +19,7 @@
 #include <drivers/virtio_blk.h>
 #include <drivers/pci.h>
 #include <mm/pmm.h>
+#include <mm/vmm.h>
 #include <lib/string.h>
 #include <kernel.h>
 #include <errno.h>
@@ -126,9 +127,10 @@ static int vblk_init_one(const pci_device_t* p, vblk_dev_t* d) {
     uint64_t used_sz  = 4 + 8 * (uint64_t)qsz + 2;
     d->vq_pages = (used_off + used_sz + 4095) / 4096;
 
-    d->vq = pmm_alloc_pages(d->vq_pages);
-    if (!d->vq) { KLOG_E("VBLK", "vring alloc failed\n");
+    void* vq_phys = pmm_alloc_pages(d->vq_pages);
+    if (!vq_phys) { KLOG_E("VBLK", "vring alloc failed\n");
                   outb(d->io + VPCI_STATUS, VSTAT_FAILED); return -1; }
+    d->vq = (uint8_t*)P2V((uint64_t)(uintptr_t)vq_phys);   /* CPU view through the HHDM */
     memset(d->vq, 0, d->vq_pages * 4096);
     d->desc  = (volatile struct vring_desc*)(d->vq);
     d->avail = (volatile struct vring_avail*)(d->vq + desc_sz);
@@ -137,10 +139,12 @@ static int vblk_init_one(const pci_device_t* p, vblk_dev_t* d) {
     /* Polled: ask the device never to raise a (level-triggered) completion IRQ. */
     d->avail->flags = VRING_AVAIL_F_NO_INTERRUPT;
 
-    outl(d->io + VPCI_QUEUE_PFN, (uint32_t)((uint64_t)(uintptr_t)d->vq >> 12));
+    /* The device takes a physical page frame number for the vring. */
+    outl(d->io + VPCI_QUEUE_PFN, (uint32_t)((uint64_t)(uintptr_t)vq_phys >> 12));
 
-    uint8_t* hp = pmm_alloc_page();              /* request header + status byte */
-    if (!hp) { outb(d->io + VPCI_STATUS, VSTAT_FAILED); return -1; }
+    void* hp_phys = pmm_alloc_page();            /* request header + status byte */
+    if (!hp_phys) { outb(d->io + VPCI_STATUS, VSTAT_FAILED); return -1; }
+    uint8_t* hp = (uint8_t*)P2V((uint64_t)(uintptr_t)hp_phys);
     d->hdr    = (struct virtio_blk_req*)hp;
     d->status = (volatile uint8_t*)(hp + sizeof(struct virtio_blk_req));
 
@@ -178,17 +182,19 @@ static int vblk_rw(int u, uint64_t sector, void* buf, uint32_t count, int type) 
     d->hdr->sector = sector;
     *d->status = 0xFF;                           /* overwritten by the device */
 
-    /* Three-descriptor chain: header (r), data (r or w), status (w). */
-    d->desc[0].addr = (uint64_t)(uintptr_t)d->hdr;
+    /* Three-descriptor chain: header (r), data (r or w), status (w). The device
+     * consumes physical addresses, so translate each kernel pointer (the driver's
+     * own HHDM buffers and the caller's data buffer alike) via the page tables. */
+    d->desc[0].addr = vmm_get_physical((uint64_t)(uintptr_t)d->hdr);
     d->desc[0].len  = sizeof(struct virtio_blk_req);
     d->desc[0].flags = VRING_DESC_F_NEXT; d->desc[0].next = 1;
 
-    d->desc[1].addr = (uint64_t)(uintptr_t)buf;
+    d->desc[1].addr = vmm_get_physical((uint64_t)(uintptr_t)buf);
     d->desc[1].len  = count * VIRTIO_BLK_SECTOR;
     d->desc[1].flags = VRING_DESC_F_NEXT | (type == VIRTIO_BLK_T_IN ? VRING_DESC_F_WRITE : 0);
     d->desc[1].next = 2;
 
-    d->desc[2].addr = (uint64_t)(uintptr_t)d->status;
+    d->desc[2].addr = vmm_get_physical((uint64_t)(uintptr_t)d->status);
     d->desc[2].len  = 1;
     d->desc[2].flags = VRING_DESC_F_WRITE; d->desc[2].next = 0;
 

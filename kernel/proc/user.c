@@ -89,9 +89,10 @@ static int build_user_image(address_space_t* as, vnode_t* vn, uint64_t* entry,
     for (uint64_t va = USTACK_TOP - USTACK_SIZE; va < USTACK_TOP; va += 4096) {
         void* fp = pmm_alloc_page();
         if (!fp) return -ENOMEM;
-        memset(fp, 0, 4096);
-        page_setref((uint64_t)(uintptr_t)fp, 1);
-        vmspace_map(as, va, (uint64_t)(uintptr_t)fp, PAGE_WRITABLE | PAGE_NO_EXECUTE);
+        uint64_t pf = (uint64_t)(uintptr_t)fp;
+        memset(P2V(pf), 0, 4096);               /* zero via HHDM (any CR3) */
+        page_setref(pf, 1);
+        vmspace_map(as, va, pf, PAGE_WRITABLE | PAGE_NO_EXECUTE);
     }
     return 0;
 }

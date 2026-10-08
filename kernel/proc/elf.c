@@ -127,8 +127,9 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
         for (uint64_t va = va_start; va < va_end; va += 4096) {
             void* f = pmm_alloc_page();
             if (!f) return -ENOMEM;
-            memset(f, 0, 4096);
             uint64_t pf = (uint64_t)(uintptr_t)f;
+            uint8_t* fv = (uint8_t*)P2V(pf);     /* CPU view via HHDM (any CR3) */
+            memset(fv, 0, 4096);
             page_setref(pf, 1);
 
             /* Copy the overlapping slice of this page's file content. */
@@ -138,7 +139,7 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
             uint64_t copy_to   = (va + 4096) < pfile_end ? (va + 4096) : pfile_end;
             if (copy_to > copy_from) {
                 uint64_t foff = ph.p_offset + (copy_from - pstart);
-                vfs_read(file, (void*)(uintptr_t)(pf + (copy_from - va)),
+                vfs_read(file, fv + (copy_from - va),
                          (size_t)(copy_to - copy_from), foff);
             }
             if (vmspace_map(as, va, pf, flags) != 0) return -ENOMEM;

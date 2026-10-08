@@ -124,11 +124,12 @@ void usermode_fault(long vector) {
 static int map_user_frame(uint64_t va, int writable, int exec) {
     void* frame = pmm_alloc_page();
     if (!frame) return -1;
-    memset(frame, 0, 4096);                         /* via identity map (supervisor) */
+    uint64_t pf = (uint64_t)(uintptr_t)frame;
+    memset(P2V(pf), 0, 4096);                       /* zero via HHDM (any CR3) */
     uint64_t flags = PAGE_PRESENT;
     if (writable) flags |= PAGE_WRITABLE;
     if (!exec) flags |= PAGE_NO_EXECUTE;        /* W^X: data/stack is non-exec */
-    return vmm_map_user_page(va, (uint64_t)(uintptr_t)frame, flags);
+    return vmm_map_user_page(va, pf, flags);
 }
 
 static uint64_t phys_of(uint64_t va) { return vmm_get_physical(va); }

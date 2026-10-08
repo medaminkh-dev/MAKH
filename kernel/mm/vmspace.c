@@ -18,20 +18,32 @@
 #include <lib/string.h>
 #include <irq.h>
 
-/* A table frame as a kernel pointer (identity map). */
+/* A table frame as a kernel pointer, reached through the higher-half direct
+ * map so it stays valid under any CR3 (and once the low identity map is gone). */
 static inline uint64_t* tbl(uint64_t phys) {
-    return (uint64_t*)(uintptr_t)(phys & PTE_PHYS_MASK);
+    return (uint64_t*)P2V(phys & PTE_PHYS_MASK);
 }
 
-/* Ensure table[idx] points at a present (user) sub-table; create if asked. */
+/* Ensure table[idx] points at a present (user) sub-table; create if asked.
+ *
+ * A PAGE_HUGE entry is a leaf, not a table, so it has no child to descend into:
+ * refuse it. This matters because the kernel's slot-0 identity map is built
+ * from 2 MiB huge pages and is shared (by value) into every process PML4, so a
+ * user fault on a low kernel address (e.g. a stray *(int*)0x1234) walks into a
+ * huge page here. Returning NULL makes leaf_slot() report "not a user page" so
+ * the fault becomes SIGSEGV. (It used to NULL only by the accident that the
+ * identity map put phys 0 at pointer 0; the higher-half direct map removes that
+ * accident, so the guard must be explicit.) User mappings never use huge pages,
+ * so this never rejects a legitimate 4 KiB user table. */
 static uint64_t* ensure(uint64_t* table, int idx, int create) {
     if (!(table[idx] & PAGE_PRESENT)) {
         if (!create) return NULL;
         void* f = pmm_alloc_page();
         if (!f) return NULL;
-        memset(f, 0, 4096);
+        memset(P2V((uint64_t)(uintptr_t)f), 0, 4096);   /* zero via HHDM */
         table[idx] = (uint64_t)(uintptr_t)f | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
     } else {
+        if (table[idx] & PAGE_HUGE) return NULL;        /* a huge page has no sub-table */
         table[idx] |= PAGE_USER;
     }
     return tbl(table[idx]);

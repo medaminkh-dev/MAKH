@@ -57,16 +57,16 @@ static uint64_t* get_or_create_pdpt(uint64_t virt_addr) {
         void* new_pdpt = pmm_alloc_page();
         if (new_pdpt == NULL) return NULL;
         
-        /* Clear the new table */
-        memset64((uint64_t*)new_pdpt, 0, PAGE_TABLE_ENTRIES);
-        
+        /* Clear the new table (through the HHDM) */
+        memset64((uint64_t*)P2V((uint64_t)(uintptr_t)new_pdpt), 0, PAGE_TABLE_ENTRIES);
+
         /* Set PML4 entry: physical address + flags */
         kernel_pml4[pml4_idx] = (uint64_t)(uintptr_t)new_pdpt | PAGE_PRESENT | PAGE_WRITABLE;
     }
-    
-    /* Get physical address of PDPT, convert to virtual (identity mapped) */
+
+    /* Get physical address of PDPT, reach it through the HHDM */
     uint64_t pdpt_phys = kernel_pml4[pml4_idx] & ~0xFFF;
-    return (uint64_t*)(uintptr_t)pdpt_phys;
+    return (uint64_t*)P2V(pdpt_phys);
 }
 
 /**
@@ -86,16 +86,16 @@ static uint64_t* get_or_create_pd(uint64_t virt_addr) {
         void* new_pd = pmm_alloc_page();
         if (new_pd == NULL) return NULL;
         
-        /* Clear the new table */
-        memset64((uint64_t*)new_pd, 0, PAGE_TABLE_ENTRIES);
-        
+        /* Clear the new table (through the HHDM) */
+        memset64((uint64_t*)P2V((uint64_t)(uintptr_t)new_pd), 0, PAGE_TABLE_ENTRIES);
+
         /* Set PDPT entry: physical address + flags */
         pdpt[pdpt_idx] = (uint64_t)(uintptr_t)new_pd | PAGE_PRESENT | PAGE_WRITABLE;
     }
-    
-    /* Get physical address of PD, convert to virtual (identity mapped) */
+
+    /* Get physical address of PD, reach it through the HHDM */
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-    return (uint64_t*)(uintptr_t)pd_phys;
+    return (uint64_t*)P2V(pd_phys);
 }
 
 /**
@@ -115,16 +115,16 @@ static uint64_t* get_or_create_pt(uint64_t virt_addr) {
         void* new_pt = pmm_alloc_page();
         if (new_pt == NULL) return NULL;
         
-        /* Clear the new table */
-        memset64((uint64_t*)new_pt, 0, PAGE_TABLE_ENTRIES);
-        
+        /* Clear the new table (through the HHDM) */
+        memset64((uint64_t*)P2V((uint64_t)(uintptr_t)new_pt), 0, PAGE_TABLE_ENTRIES);
+
         /* Set PD entry: physical address + flags */
         pd[pd_idx] = (uint64_t)(uintptr_t)new_pt | PAGE_PRESENT | PAGE_WRITABLE;
     }
-    
-    /* Get physical address of PT, convert to virtual (identity mapped) */
+
+    /* Get physical address of PT, reach it through the HHDM */
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-    return (uint64_t*)(uintptr_t)pt_phys;
+    return (uint64_t*)P2V(pt_phys);
 }
 
 /**
@@ -303,16 +303,17 @@ uint64_t vmm_create_address_space(void) {
     /* Allocate a new PML4 */
     void* new_pml4 = pmm_alloc_page();
     if (new_pml4 == NULL) return 0;
-    
+    uint64_t* np = (uint64_t*)P2V((uint64_t)(uintptr_t)new_pml4);   /* edit via HHDM */
+
     /* Clear it */
-    memset64((uint64_t*)new_pml4, 0, PAGE_TABLE_ENTRIES);
-    
+    memset64(np, 0, PAGE_TABLE_ENTRIES);
+
     /* Copy kernel mappings (higher half) from current PML4 */
     /* Entry 256-511 are for kernel space */
     for (int i = 256; i < PAGE_TABLE_ENTRIES; i++) {
-        ((uint64_t*)new_pml4)[i] = kernel_pml4[i];
+        np[i] = kernel_pml4[i];
     }
-    
+
     return (uint64_t)(uintptr_t)new_pml4;
 }
 
@@ -401,7 +402,7 @@ int vmm_unmap_page(uint64_t virt_addr) {
     
     /* Get PDPT */
     uint64_t pdpt_phys = kernel_pml4[pml4_idx] & ~0xFFF;
-    uint64_t* pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
+    uint64_t* pdpt = (uint64_t*)P2V(pdpt_phys);
     uint64_t pdpt_idx = VMM_PDPT_INDEX(virt_addr);
     
     /* Check if PDPT entry exists */
@@ -411,7 +412,7 @@ int vmm_unmap_page(uint64_t virt_addr) {
     
     /* Get PD */
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-    uint64_t* pd = (uint64_t*)(uintptr_t)pd_phys;
+    uint64_t* pd = (uint64_t*)P2V(pd_phys);
     uint64_t pd_idx = VMM_PD_INDEX(virt_addr);
     
     /* Check if PD entry exists */
@@ -421,7 +422,7 @@ int vmm_unmap_page(uint64_t virt_addr) {
     
     /* Get PT */
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-    uint64_t* pt = (uint64_t*)(uintptr_t)pt_phys;
+    uint64_t* pt = (uint64_t*)P2V(pt_phys);
     uint64_t pt_idx = VMM_PT_INDEX(virt_addr);
     
     /* Clear the page table entry */
@@ -451,7 +452,7 @@ uint64_t vmm_get_physical(uint64_t virt_addr) {
     
     /* Get PDPT */
     uint64_t pdpt_phys = kernel_pml4[pml4_idx] & ~0xFFF;
-    uint64_t* pdpt = (uint64_t*)(uintptr_t)pdpt_phys;
+    uint64_t* pdpt = (uint64_t*)P2V(pdpt_phys);
     uint64_t pdpt_idx = VMM_PDPT_INDEX(virt_addr);
     
     /* Check if PDPT entry exists */
@@ -468,7 +469,7 @@ uint64_t vmm_get_physical(uint64_t virt_addr) {
     
     /* Get PD */
     uint64_t pd_phys = pdpt[pdpt_idx] & ~0xFFF;
-    uint64_t* pd = (uint64_t*)(uintptr_t)pd_phys;
+    uint64_t* pd = (uint64_t*)P2V(pd_phys);
     uint64_t pd_idx = VMM_PD_INDEX(virt_addr);
     
     /* Check if PD entry exists */
@@ -485,7 +486,7 @@ uint64_t vmm_get_physical(uint64_t virt_addr) {
     
     /* Get PT */
     uint64_t pt_phys = pd[pd_idx] & ~0xFFF;
-    uint64_t* pt = (uint64_t*)(uintptr_t)pt_phys;
+    uint64_t* pt = (uint64_t*)P2V(pt_phys);
     uint64_t pt_idx = VMM_PT_INDEX(virt_addr);
     
     /* Check if page table entry exists */
