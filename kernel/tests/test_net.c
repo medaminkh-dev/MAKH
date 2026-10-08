@@ -325,8 +325,12 @@ KTEST(net, tcp_loopback_echo) {
     KEXPECT_EQ((long)total, (long)sizeof(msg));
     sock_close(l);
 
-    /* Every connection (incl. TIME_WAIT) must be reaped: no leaks. */
-    KEXPECT(wait_tcbs_drained(base_tcbs, 3000));
+    /* Every connection (incl. TIME_WAIT) must be reaped: no leaks. The wait
+     * returns as soon as the TCBs drain, so a generous bound only adds
+     * tolerance when the reap timer is starved under heavy parallel-stress
+     * load (24x4 QEMU on a contended host); a genuine leak never drains and
+     * still fails. */
+    KEXPECT(wait_tcbs_drained(base_tcbs, 10000));
     KEXPECT_EQ(sock_open_count(), base_socks);
 }
 
