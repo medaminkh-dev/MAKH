@@ -264,6 +264,11 @@ static int64_t do_getpid(void) {
     return current_process ? (int64_t)current_process->pid : 0;
 }
 
+/* getppid(): the parent's pid. A shell reads it to know its session leader. */
+static int64_t do_getppid(void) {
+    return current_process ? (int64_t)current_process->parent_pid : 0;
+}
+
 /* wait4(pid, status, options, rusage): reap a child. options/rusage ignored. */
 static int64_t do_wait4(uint64_t pid, uint64_t ustatus, int from_user) {
     int status = 0;
@@ -559,6 +564,13 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_MPROTECT:     return do_mprotect(a1, a2, a3);
         case SYS_BRK:          return do_brk(a1);
         case SYS_GETPID:       return do_getpid();
+        case SYS_GETPPID:      return do_getppid();
+        /* Single-user system: every id is root. A shell/coreutils only reads
+         * these to decide the prompt char and permission shortcuts. */
+        case SYS_GETUID:
+        case SYS_GETEUID:
+        case SYS_GETGID:
+        case SYS_GETEGID:      return 0;
         case SYS_WAIT4:        return do_wait4(a1, a2, from_user);
         case SYS_KILL:         return signal_kill((int)a1, (int)a2);
         case SYS_IOCTL:        return do_ioctl(a1, a2, a3, from_user);

@@ -162,8 +162,9 @@ static uint64_t setup_user_stack(address_space_t* as, int argc, char* const argv
     return rsp;
 }
 
-/* Load `path` and start it as a ring-3 process. Returns the new pid, -errno. */
-int proc_spawn_user(const char* path) {
+/* Load `path` and start it as a ring-3 process with the given argv (argv_k are
+ * kernel pointers; argc entries). Returns the new pid, -errno. */
+static int spawn_user_core(const char* path, int argc, char* const argv_k[]) {
     vnode_t* vn = vfs_resolve(path);
     if (!vn) return -ENOENT;
 
@@ -175,10 +176,7 @@ int proc_spawn_user(const char* path) {
     elf_aux_t aux;
     int rc = build_user_image(as, vn, &entry, &aux);
     if (rc != 0) { vmspace_destroy(as); kfree(as); return rc; }
-    /* A kernel-launched process gets its own path as argv[0] (argc == 1), the
-     * SysV convention a C runtime expects even with no further arguments. */
-    char* argv0[1] = { (char*)path };
-    uint64_t ustack = setup_user_stack(as, 1, argv0, 0, NULL, entry, &aux);
+    uint64_t ustack = setup_user_stack(as, argc, argv_k, 0, NULL, entry, &aux);
 
     /* thread_create() returns the thread already READY and queued, so a timer
      * tick could run user_trampoline before the user fields below are set —
@@ -200,6 +198,21 @@ int proc_spawn_user(const char* path) {
     t->cwd[0] = '/'; t->cwd[1] = '\0';            /* Phase 20-C: start at root */
     preempt_enable();
     return (int)t->pid;
+}
+
+/* Spawn `path` with its own path as argv[0] (argc == 1) — the SysV convention a
+ * C runtime expects even with no arguments. */
+int proc_spawn_user(const char* path) {
+    char* argv0[1] = { (char*)path };
+    return spawn_user_core(path, 1, argv0);
+}
+
+/* Spawn `path` with a caller-supplied, NULL-terminated argv (argv[0] included).
+ * Lets the kernel launch e.g. `busybox sh -c '...'`. */
+int proc_spawn_user_argv(const char* path, char* const argv[]) {
+    int argc = 0;
+    while (argv && argv[argc]) argc++;
+    return spawn_user_core(path, argc, argv);
 }
 
 /* -------------------------------------------------------------------------- */

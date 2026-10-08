@@ -186,6 +186,7 @@ void proc_become_current(void);
 /* Load an ELF and start it as a ring-3 process (Phase 20-A). Public because
  * init (kernel_main) launches the first user process; returns pid or -errno. */
 int proc_spawn_user(const char* path);
+int proc_spawn_user_argv(const char* path, char* const argv[]);
 
 // =============================================================================
 // CONTEXT SWITCH (Assembly)

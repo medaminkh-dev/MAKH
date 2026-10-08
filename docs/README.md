@@ -43,6 +43,7 @@ numbers are navigable rather than mysterious.
 | 20-M | Wall clock: CMOS RTC → real `CLOCK_REALTIME`/`gettimeofday` epoch | [PHASE20M_RTC](PHASE20M_RTC.md) |
 | 20-N | musl-readiness: `writev`/`readv`/`exit_group`/`madvise` (F20-a) | [PHASE20N_IOV](PHASE20N_IOV.md) |
 | 20-O | A real C program on **musl** libc: static-PIE loader, auxv, the TLS-base fix (F20) | [PHASE20O_MUSL](PHASE20O_MUSL.md) |
+| 20-O2 | **busybox `sh`** runs: real busybox static-PIE, `getppid`/uid family, spawn-with-argv (F20-c) | [PHASE20O2_BUSYBOX](PHASE20O2_BUSYBOX.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

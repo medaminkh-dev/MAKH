@@ -162,7 +162,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_thread.c \
     kernel/tests/test_rtc.c \
     kernel/tests/test_iov.c \
-    kernel/tests/test_musl.c
+    kernel/tests/test_musl.c \
+    kernel/tests/test_busybox.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -241,15 +242,20 @@ build/user/%: user/%.c user/usys.h build/user/start.o user/user.ld
 # normal build (and CI) need no extra toolchain — it ships into the initrd as
 # /bin/muslhello. Regenerate it with `make musl-progs` after editing hello.c.
 MUSL_PREBUILT = user/musl/muslhello
+# Phase 20-O2 (F20-c): a real busybox, built from source as a static-PIE against
+# musl with the ziglang toolchain and checked in (see docs/PHASE20O2_BUSYBOX.md
+# for the exact recipe). It ships into the initrd as /bin/busybox.
+BUSYBOX_PREBUILT = user/musl/busybox
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT)
+$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(BUSYBOX_PREBUILT)
 	@echo "Building initrd.tar (+ user programs)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
 	@cp $(MUSL_PREBUILT) build/initrd/bin/muslhello
+	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.
