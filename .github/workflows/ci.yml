@@ -26,7 +26,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential nasm grub-pc-bin grub-common xorriso mtools \
-            qemu-system-x86
+            qemu-system-x86 e2fsprogs
 
       - name: Build kernel + ISOs
         run: make all makhos-test.iso
@@ -45,7 +45,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential nasm grub-pc-bin grub-common xorriso mtools \
-            qemu-system-x86
+            qemu-system-x86 e2fsprogs
 
       - name: Build test ISO
         run: make makhos-test.iso

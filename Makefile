@@ -388,6 +388,12 @@ $(EXT2IMG): tools/mkext2.sh
 	@mkdir -p build
 	@bash tools/mkext2.sh $(EXT2IMG)
 
+# The storage KTESTs need these disks attached, and tools/run_tests.py (run
+# directly by CI as well as by `make test`) attaches whatever exists. Tie them
+# to the test ISO so *any* build of it also produces the disks — CI builds only
+# `makhos-test.iso`, so without this the disk-backed tests boot with no disk.
+$(TEST_ISO): $(TESTDISK) $(EXT2IMG)
+
 test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 	@python3 tools/run_tests.py $(TEST_ISO)
 
