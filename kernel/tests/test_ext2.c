@@ -58,3 +58,44 @@ KTEST(ext2, reads_through_indirect_block) {
 
     kfree(buf);
 }
+
+/* Write path (G2-c). Each write test only touches a file it creates itself, so
+ * it never disturbs the read-only fixtures above (writes are ephemeral under
+ * QEMU snapshot=on, but persist for the lifetime of the boot). */
+KTEST(ext2, create_write_readback) {
+    vnode_t* vn = vfs_create("/mnt/created.txt", VNODE_REG);
+    KASSERT_TEST(vn != NULL);
+
+    const int N = 15000;                        /* >12 KiB: forces single-indirect alloc */
+    char* w = kmalloc(N);
+    char* r = kmalloc(N);
+    KASSERT_TEST(w != NULL && r != NULL);
+    for (int i = 0; i < N; i++) w[i] = (char)('A' + (i % 26));
+
+    KEXPECT_EQ((int)vfs_write(vn, w, N, 0), N);
+
+    /* Re-resolve: a fresh vnode read straight from the on-disk inode/dirent. */
+    vnode_t* vn2 = vfs_resolve("/mnt/created.txt");
+    KASSERT_TEST(vn2 != NULL);
+    KEXPECT_EQ((int)vn2->size, N);
+    memset(r, 0, N);
+    KEXPECT_EQ((int)vfs_read(vn2, r, N, 0), N);
+    KEXPECT_EQ(memcmp(w, r, N), 0);
+
+    kfree(w);
+    kfree(r);
+}
+
+KTEST(ext2, overwrite_in_place) {
+    vnode_t* vn = vfs_create("/mnt/ow.txt", VNODE_REG);
+    KASSERT_TEST(vn != NULL);
+    KEXPECT_EQ((int)vfs_write(vn, "abcdefghij", 10, 0), 10);
+    KEXPECT_EQ((int)vfs_write(vn, "XY", 2, 2), 2);      /* overwrite bytes 2-3 */
+
+    char buf[16];
+    memset(buf, 0, sizeof(buf));
+    vnode_t* vn2 = vfs_resolve("/mnt/ow.txt");
+    KASSERT_TEST(vn2 != NULL);
+    KEXPECT_EQ((int)vfs_read(vn2, buf, 10, 0), 10);
+    KEXPECT_EQ(memcmp(buf, "abXYefghij", 10), 0);
+}

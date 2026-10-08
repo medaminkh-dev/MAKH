@@ -31,6 +31,7 @@
 #define EFAULT          14   /* Bad address */
 #define EBUSY           16   /* Device or resource busy */
 #define ENODEV          19   /* No such device */
+#define ENOSPC          28   /* No space left on device */
 #define EINVAL          22   /* Invalid argument */
 #define ERANGE          34   /* Result too large for the buffer */
 #define EMFILE          24   /* Too many open descriptors */

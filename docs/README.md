@@ -46,6 +46,7 @@ numbers are navigable rather than mysterious.
 | 20-O2 | **busybox `sh`** runs: real busybox static-PIE, `getppid`/uid family, spawn-with-argv (F20-c) | [PHASE20O2_BUSYBOX](PHASE20O2_BUSYBOX.md) |
 | 20-P | **Persistent storage**: a polled legacy **virtio-blk** disk, read/write sectors (G2-a) | [PHASE20P_VIRTIO_BLK](PHASE20P_VIRTIO_BLK.md) |
 | 20-Q | **ext2 filesystem** (read-only): mount an on-disk ext2 from virtio-blk into the VFS (G2-b) | [PHASE20Q_EXT2](PHASE20Q_EXT2.md) |
+| 20-R | **ext2 write path**: create files + write (block/inode alloc, dir entries) (G2-c) | [PHASE20R_EXT2_WRITE](PHASE20R_EXT2_WRITE.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
