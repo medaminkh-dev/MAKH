@@ -161,7 +161,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_pipe.c \
     kernel/tests/test_thread.c \
     kernel/tests/test_rtc.c \
-    kernel/tests/test_iov.c
+    kernel/tests/test_iov.c \
+    kernel/tests/test_musl.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -234,12 +235,29 @@ build/user/%: user/%.c user/usys.h build/user/start.o user/user.ld
 	@$(UCC) $(UCFLAGS) -c -o build/user/$*.o $<
 	@$(LD) $(ULDFLAGS) -o $@ build/user/start.o build/user/$*.o
 
-$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS)
+# Phase 20-O (F20): a real-libc program. hello.c is an ordinary C program built
+# against musl as a static-PIE using the pip `ziglang` toolchain, which vendors
+# the musl source. The linked binary is checked in beside its source so the
+# normal build (and CI) need no extra toolchain — it ships into the initrd as
+# /bin/muslhello. Regenerate it with `make musl-progs` after editing hello.c.
+MUSL_PREBUILT = user/musl/muslhello
+ZIGCC     ?= python3 -m ziglang cc
+ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
+
+$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT)
 	@echo "Building initrd.tar (+ user programs)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
+	@cp $(MUSL_PREBUILT) build/initrd/bin/muslhello
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
+
+# Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.
+musl-progs:
+	@$(ZIGCC) --version >/dev/null 2>&1 || { echo "need the ziglang toolchain: pip install ziglang"; exit 1; }
+	@echo "Building musl programs with zig $$($(ZIGCC) --version)"
+	$(ZIGCC) $(ZIGCFLAGS) user/musl/hello.c -o $(MUSL_PREBUILT)
+	@file $(MUSL_PREBUILT)
 
 ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
 C_OBJECTS   = $(C_SOURCES:.c=.o)
@@ -256,7 +274,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test smoke stress check-license list-sources list-objects check-files size map clean-deps
+.PHONY: all clean run run-debug debug test smoke stress check-license list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 

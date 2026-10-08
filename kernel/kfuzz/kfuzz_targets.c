@@ -557,7 +557,7 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
         address_space_t as;
         if (vmspace_create(&as) != 0) continue;
         uint64_t entry = 0;
-        (void)elf_load(vn, &as, &entry);     /* must return, never fault */
+        (void)elf_load(vn, &as, &entry, NULL); /* must return, never fault */
         vmspace_destroy(&as);
         if (pmm_get_free_memory() != snap) { vfs_unlink(path); return -1; }
     }

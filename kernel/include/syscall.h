@@ -30,6 +30,7 @@
 #define SYS_PIPE2          293
 #define SYS_CLONE          56
 #define SYS_FUTEX          202
+#define SYS_SCHED_GETAFFINITY 204
 #define SYS_SET_TID_ADDRESS 218
 #define SYS_READV          19
 #define SYS_WRITEV         20

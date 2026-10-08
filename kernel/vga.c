@@ -224,10 +224,12 @@ void terminal_putchar(char c) {
  * @len: Number of characters to write
  */
 void terminal_write(const char* str, size_t len) {
-    size_t i;
-    for (i = 0; i < len; i++) {
-        terminal_putchar(str[i]);
-    }
+    if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
+    for (size_t i = 0; i < len; i++)
+        terminal_putchar(str[i]);            /* VGA */
+    serial_write(str, len);                  /* mirror to the serial console so a
+                                                user program's stdout is visible
+                                                where the kernel's own logs go */
 }
 
 /**

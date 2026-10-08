@@ -34,6 +34,7 @@
 #include <ktime.h>
 #include <mm/kheap.h>
 #include <lib/string.h>
+#include <vga.h>
 
 /* From table.c / tree.c - invariant oracles. */
 extern int proc_tree_check(void);
@@ -202,6 +203,8 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
          * Drop any lock it was holding, log the reproducer, and carry on. */
         if (sb.cleanup) sb.cleanup();
         sb.cleanup = NULL;
+        terminal_set_quiet(0);    /* a target that muted the console (t_shell)
+                                     must not leave it muted after a caught fault */
         if (res) {
             res->crashes++;
             res->last_crash_seed   = seed;
@@ -219,6 +222,8 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
     t->fn(&rng, iters);
     sb.active = 0;
     sb.cleanup = NULL;
+    terminal_set_quiet(0);        /* belt-and-suspenders: no target leaves the
+                                     console muted once it has returned */
 
     const char* why = "";
     if (!oracles_ok(&why)) {

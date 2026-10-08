@@ -28,6 +28,7 @@
 #include <mm/uvm.h>
 #include <lib/string.h>
 #include <drivers/timer.h>
+#include <krandom.h>
 #include <errno.h>
 #include <klog.h>
 
@@ -45,11 +46,19 @@ static void user_trampoline(void* arg) {
 #define U_ARGC_MAX   32              /* most argv entries we accept (kernel-stack bound) */
 #define U_ARGSTORE   1024            /* total bytes of argv string data                 */
 
-/* ELF auxiliary-vector types we supply (the subset a freestanding crt needs;
- * AT_PHDR/AT_RANDOM for musl come with the libc brick). */
-#define AT_NULL   0
-#define AT_ENTRY  9
-#define AT_PAGESZ 6
+/* ELF auxiliary-vector types we supply. The first three are what a freestanding
+ * crt needs; the rest a real static-PIE libc (musl) reads at startup (Phase
+ * 20-O): AT_PHDR/PHENT/PHNUM let it find its own program headers (to self-relo-
+ * cate and to locate PT_TLS), AT_BASE is the load bias (0 — there is no interp),
+ * and AT_RANDOM points at 16 bytes of entropy for the stack canary. */
+#define AT_NULL    0
+#define AT_PHDR    3
+#define AT_PHENT   4
+#define AT_PHNUM   5
+#define AT_PAGESZ  6
+#define AT_BASE    7
+#define AT_ENTRY   9
+#define AT_RANDOM 25
 
 /* Write `n` bytes into address space `as` at user virtual address `va`, through
  * the identity map of its frames (so `as` need not be the active CR3). Handles
@@ -72,8 +81,9 @@ static void poke64(address_space_t* as, uint64_t va, uint64_t v) {
 /* Build the ring-3 image of `vn` in the (already created) space `as`: load the
  * ELF segments and map a zeroed user stack. Sets *entry; the caller then lays
  * out the initial stack with setup_user_stack(). Returns 0 or -errno. */
-static int build_user_image(address_space_t* as, vnode_t* vn, uint64_t* entry) {
-    int rc = elf_load(vn, as, entry);
+static int build_user_image(address_space_t* as, vnode_t* vn, uint64_t* entry,
+                            elf_aux_t* aux) {
+    int rc = elf_load(vn, as, entry, aux);
     if (rc != 0) return rc;
 
     for (uint64_t va = USTACK_TOP - USTACK_SIZE; va < USTACK_TOP; va += 4096) {
@@ -93,15 +103,25 @@ static int build_user_image(address_space_t* as, vnode_t* vn, uint64_t* entry) {
  *   ... then the argv/envp string bytes near the top of the stack.
  *
  * argv_k/envp_k are kernel pointers to NUL-terminated strings. */
+#define U_NAUX  8   /* auxv entries written below, AT_NULL included */
+
 static uint64_t setup_user_stack(address_space_t* as, int argc, char* const argv_k[],
-                                 int envc, char* const envp_k[], uint64_t entry) {
+                                 int envc, char* const envp_k[], uint64_t entry,
+                                 const elf_aux_t* aux) {
     uint64_t sp = USTACK_TOP;
     uint64_t argv_va[U_ARGC_MAX], envp_va[U_ARGC_MAX];
 
-    /* Both callers bound these (execve caps its copy loop, spawn passes 0), but
-     * clamp defensively so the va[] arrays can never be overrun by a third one. */
+    /* Both callers bound these (execve caps its copy loop, spawn passes <=1),
+     * but clamp defensively so the va[] arrays can never be overrun. */
     if (argc > U_ARGC_MAX) argc = U_ARGC_MAX;
     if (envc > U_ARGC_MAX) envc = U_ARGC_MAX;
+
+    /* 16 bytes of entropy near the top of the stack for AT_RANDOM — musl seeds
+     * its stack canary and TLS pointer guard from here. */
+    uint8_t rnd[16];
+    krandom_bytes(rnd, sizeof(rnd));
+    sp -= sizeof(rnd); poke(as, sp, rnd, sizeof(rnd));
+    uint64_t rand_va = sp;
 
     for (int i = envc - 1; i >= 0; i--) {              /* env strings */
         size_t len = strlen(envp_k[i]) + 1;
@@ -113,8 +133,8 @@ static uint64_t setup_user_stack(address_space_t* as, int argc, char* const argv
     }
     sp &= ~0xFULL;                                     /* end of the string area */
 
-    /* Reserve the pointer arrays below the strings and 16-align argc. */
-    size_t slots = 1 + (size_t)(argc + 1) + (size_t)(envc + 1) + 3 * 2;
+    /* Reserve the pointer arrays + auxv below the strings and 16-align argc. */
+    size_t slots = 1 + (size_t)(argc + 1) + (size_t)(envc + 1) + U_NAUX * 2;
     uint64_t rsp = (sp - slots * 8) & ~0xFULL;
 
     uint64_t p = rsp;
@@ -123,9 +143,22 @@ static uint64_t setup_user_stack(address_space_t* as, int argc, char* const argv
     poke64(as, p, 0);                           p += 8;      /* argv NULL */
     for (int i = 0; i < envc; i++) { poke64(as, p, envp_va[i]); p += 8; }
     poke64(as, p, 0);                           p += 8;      /* envp NULL */
-    poke64(as, p, AT_PAGESZ); p += 8; poke64(as, p, 4096);  p += 8;
-    poke64(as, p, AT_ENTRY);  p += 8; poke64(as, p, entry); p += 8;
-    poke64(as, p, AT_NULL);   p += 8; poke64(as, p, 0);     p += 8;
+
+    /* auxv (U_NAUX pairs, AT_NULL last). AT_PHDR/PHENT/PHNUM/BASE come from the
+     * loader; a C runtime that does not need them (our own crt) just ignores
+     * entries it does not recognise. */
+    uint64_t at_phdr  = aux ? aux->at_phdr  : 0;
+    uint64_t at_phent = aux ? aux->at_phent : 0;
+    uint64_t at_phnum = aux ? aux->at_phnum : 0;
+    uint64_t at_base  = aux ? aux->at_base  : 0;
+    poke64(as, p, AT_PHDR);   p += 8; poke64(as, p, at_phdr);  p += 8;
+    poke64(as, p, AT_PHENT);  p += 8; poke64(as, p, at_phent); p += 8;
+    poke64(as, p, AT_PHNUM);  p += 8; poke64(as, p, at_phnum); p += 8;
+    poke64(as, p, AT_PAGESZ); p += 8; poke64(as, p, 4096);     p += 8;
+    poke64(as, p, AT_BASE);   p += 8; poke64(as, p, at_base);  p += 8;
+    poke64(as, p, AT_ENTRY);  p += 8; poke64(as, p, entry);    p += 8;
+    poke64(as, p, AT_RANDOM); p += 8; poke64(as, p, rand_va);  p += 8;
+    poke64(as, p, AT_NULL);   p += 8; poke64(as, p, 0);        p += 8;
     return rsp;
 }
 
@@ -139,10 +172,13 @@ int proc_spawn_user(const char* path) {
     if (vmspace_create(as) != 0) { kfree(as); return -ENOMEM; }
 
     uint64_t entry = 0;
-    int rc = build_user_image(as, vn, &entry);
+    elf_aux_t aux;
+    int rc = build_user_image(as, vn, &entry, &aux);
     if (rc != 0) { vmspace_destroy(as); kfree(as); return rc; }
-    /* A kernel-launched process (e.g. the shell) starts with no arguments. */
-    uint64_t ustack = setup_user_stack(as, 0, NULL, 0, NULL, entry);
+    /* A kernel-launched process gets its own path as argv[0] (argc == 1), the
+     * SysV convention a C runtime expects even with no further arguments. */
+    char* argv0[1] = { (char*)path };
+    uint64_t ustack = setup_user_stack(as, 1, argv0, 0, NULL, entry, &aux);
 
     /* thread_create() returns the thread already READY and queued, so a timer
      * tick could run user_trampoline before the user fields below are set —
@@ -410,10 +446,11 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     if (!nas) return -ENOMEM;
     if (vmspace_create(nas) != 0) { kfree(nas); return -ENOMEM; }
     uint64_t entry = 0;
-    int rc = build_user_image(nas, vn, &entry);
+    elf_aux_t aux;
+    int rc = build_user_image(nas, vn, &entry, &aux);
     if (rc != 0) { vmspace_destroy(nas); kfree(nas); return rc; }
     /* Lay out argc/argv/auxv on the new stack (identity-map writes). */
-    uint64_t ustack = setup_user_stack(nas, argc, argv_k, 0, NULL, entry);
+    uint64_t ustack = setup_user_stack(nas, argc, argv_k, 0, NULL, entry, &aux);
 
     /* Swap address spaces. We run on the shared kernel stack, so switching CR3
      * and freeing the old space is safe (the kernel half stays mapped). */

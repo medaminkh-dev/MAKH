@@ -97,7 +97,7 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
             continue;
         }
         if (fd == 1 || fd == 2) {               /* stdout / stderr -> console */
-            for (uint64_t i = 0; i < chunk; i++) terminal_putchar(tmp[i]);
+            terminal_write(tmp, (size_t)chunk); /* VGA + serial console mirror */
             done += chunk;
             continue;
         }
@@ -525,6 +525,18 @@ static int64_t do_arch_prctl(uint64_t code, uint64_t addr) {
     }
 }
 
+/* sched_getaffinity(pid, cpusetsize, mask): report which CPUs the task may run
+ * on. MAKH is single-CPU (SMP is a later track), so the set is exactly {CPU 0}.
+ * musl probes this at startup; we write one online bit and return the byte
+ * count, and musl zero-fills the remainder of its larger cpu_set_t. */
+static int64_t do_sched_getaffinity(uint64_t pid, uint64_t size, uint64_t umask) {
+    (void)pid;
+    if (size < sizeof(unsigned long)) return -EINVAL;   /* can't hold one word */
+    unsigned long m = 1UL;                              /* CPU 0 online */
+    if (copy_to_user((void*)(uintptr_t)umask, &m, sizeof(m)) < 0) return -EFAULT;
+    return (int64_t)sizeof(m);                           /* bytes written */
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -566,6 +578,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_PIPE2:          return do_pipe(a1, a2);
         case SYS_DUP2:           return do_dup2(a1, a2);
         case SYS_FUTEX:          return do_futex(a1, a2, a3, a4);
+        case SYS_SCHED_GETAFFINITY: return do_sched_getaffinity(a1, a2, a3);
         case SYS_SET_TID_ADDRESS:return do_set_tid_address(a1);
         case SYS_SETPGID:      return sys_setpgid((int)a1, (int)a2);
         case SYS_GETPGID:      return sys_getpgid((int)a1);
