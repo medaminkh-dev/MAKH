@@ -213,6 +213,36 @@ void* pmm_alloc_page(void) {
  * pmm_free_page - Free a previously allocated physical page
  * @phys_addr: Physical address of page to free
  */
+void* pmm_alloc_pages(uint64_t n) {
+    if (n == 0) return NULL;
+    if (n == 1) return pmm_alloc_page();
+    irqflags_t f = local_irq_save();
+    /* First-fit over a sliding window of n pages: scan for a run of n free
+     * pages, then claim them all. Used for DMA regions that must be physically
+     * contiguous (e.g. a virtio split-virtqueue spanning >1 page). */
+    for (uint64_t start = 0; start + n <= max_page_num; start++) {
+        uint64_t k = 0;
+        while (k < n && !bitmap_test(start + k)) k++;
+        if (k == n) {
+            for (uint64_t i = 0; i < n; i++) { bitmap_set(start + i); used_pages++; }
+            local_irq_restore(f);
+            return page_to_addr(start);
+        }
+        start += k;          /* skip past the used page that broke the run */
+    }
+    local_irq_restore(f);
+    return NULL;             /* no contiguous run of n pages */
+}
+
+void pmm_free_pages(void* phys_addr, uint64_t n) {
+    if (phys_addr == NULL || ((uintptr_t)phys_addr & (PAGE_SIZE - 1))) return;
+    uint64_t base = addr_to_page(phys_addr);
+    irqflags_t f = local_irq_save();
+    for (uint64_t i = 0; i < n && base + i < max_page_num; i++)
+        if (bitmap_test(base + i)) { bitmap_clear(base + i); used_pages--; }
+    local_irq_restore(f);
+}
+
 void pmm_free_page(void* phys_addr) {
     if (phys_addr == NULL) return;
     

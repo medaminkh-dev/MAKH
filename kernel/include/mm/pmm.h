@@ -40,6 +40,19 @@ void pmm_init(struct multiboot_tag_mmap *mmap_tag);
 void* pmm_alloc_page(void);
 
 /**
+ * pmm_alloc_pages - Allocate n physically-contiguous 4KB pages
+ * @n: number of consecutive pages
+ * Returns: Physical address of the first page, or NULL if no contiguous run.
+ * For DMA regions that must be contiguous (e.g. a virtio virtqueue).
+ */
+void* pmm_alloc_pages(uint64_t n);
+
+/**
+ * pmm_free_pages - Free n contiguous pages allocated by pmm_alloc_pages
+ */
+void pmm_free_pages(void* phys_addr, uint64_t n);
+
+/**
  * pmm_free_page - Free a previously allocated physical page
  * @phys_addr: Physical address of page to free
  */

@@ -36,6 +36,7 @@
 #include "include/ktest.h"
 #include "include/drivers/pci.h"
 #include "include/drivers/e1000.h"
+#include "include/drivers/virtio_blk.h"
 #include "include/net/net.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
@@ -903,6 +904,12 @@ void kernel_main(void) {
     net_init();
     if (e1000_init(IPV4(10, 0, 2, 15), IPV4(255, 255, 255, 0), IPV4(10, 0, 2, 2)) != 0) {
         KLOG_W("NET", "no e1000 NIC found; loopback only\n");
+    }
+
+    /* Phase 20-P (G2-a): persistent storage. Bring up a legacy virtio-blk disk
+     * if QEMU attached one; absence is not fatal (the initrd still boots). */
+    if (virtio_blk_init() != 0) {
+        KLOG_W("VBLK", "no virtio-blk disk; storage tests will skip\n");
     }
 
     /* -------------------------------------------------------------------

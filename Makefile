@@ -94,7 +94,8 @@ C_SOURCES_DRIVERS = \
     kernel/drivers/keyboard.c \
     kernel/drivers/pci.c \
     kernel/drivers/e1000.c \
-    kernel/drivers/rtc.c
+    kernel/drivers/rtc.c \
+    kernel/drivers/virtio_blk.c
 
 # C source files - Network stack (Phase 14)
 C_SOURCES_NET = \
@@ -163,7 +164,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_rtc.c \
     kernel/tests/test_iov.c \
     kernel/tests/test_musl.c \
-    kernel/tests/test_busybox.c
+    kernel/tests/test_busybox.c \
+    kernel/tests/test_virtio_blk.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -364,7 +366,13 @@ $(TEST_ISO): $(KERNEL) grub-test.cfg $(INITRD)
 	@rm -rf isodir-test
 	@echo "Test ISO created: $(TEST_ISO)"
 
-test: $(TEST_ISO)
+# Phase 20-P: the deterministic disk image the virtio-blk KTEST reads/writes.
+TESTDISK = build/testdisk.img
+$(TESTDISK): tools/mkdisk.py
+	@mkdir -p build
+	@python3 tools/mkdisk.py $(TESTDISK)
+
+test: $(TEST_ISO) $(TESTDISK)
 	@python3 tools/run_tests.py $(TEST_ISO)
 
 # Boot the normal image, type commands through the emulated PS/2 keyboard and
@@ -377,7 +385,7 @@ check-license:
 	@bash tools/check_license.sh
 
 # Run the whole suite many times in parallel to flush out timing bugs.
-stress: $(TEST_ISO)
+stress: $(TEST_ISO) $(TESTDISK)
 	@bash tools/stress_tests.sh 24 4 $(TEST_ISO)
 
 run-debug: $(ISO)

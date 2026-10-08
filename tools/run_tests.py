@@ -51,6 +51,18 @@ def main():
         "-accel", "tcg",
     ]
 
+    # Phase 20-P: attach the test disk as a LEGACY virtio-blk device when it
+    # exists (built by `make`). snapshot=on makes writes ephemeral, so the
+    # KTEST can write+read-back and parallel stress runs never corrupt it.
+    disk = os.path.join(os.path.dirname(iso) or ".", "testdisk.img")
+    if not os.path.exists(disk):
+        disk = "build/testdisk.img"
+    if os.path.exists(disk):
+        cmd += [
+            "-drive", f"file={disk},if=none,id=vblk0,format=raw,snapshot=on",
+            "-device", "virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off",
+        ]
+
     print("=== MAKH test runner ===")
     print("qemu:", " ".join(cmd))
     print(f"timeout: {timeout}s\n", flush=True)
