@@ -338,6 +338,81 @@ static uint32_t alloc_inode(ext2_fs_t* fs) {
     return ino;
 }
 
+/* Increment a 16-bit group-descriptor field and a 32-bit superblock field —
+ * the inverse of dec_free_counts, used when freeing a block or inode. */
+static void inc_free_counts(ext2_fs_t* fs, uint32_t gd_off16, uint32_t sb_off32) {
+    uint8_t* b = pmm_alloc_page();
+    if (!b) return;
+    if (bread(fs, fs->gdt_block, b) == 0) {
+        wr16(b + gd_off16, (uint16_t)(rd16(b + gd_off16) + 1));
+        bwrite(fs, fs->gdt_block, b);
+    }
+    if (virtio_blk_read(fs->unit, 2, b, 2) == 0) {
+        wr32(b + sb_off32, rd32(b + sb_off32) + 1);
+        virtio_blk_write(fs->unit, 2, b, 2);
+    }
+    pmm_free_page(b);
+}
+
+/* Clear a bit in a group-0 bitmap block. */
+static void bitmap_free(ext2_fs_t* fs, uint32_t bmp_block, uint32_t bit) {
+    uint8_t* bm = pmm_alloc_page();
+    if (!bm) return;
+    if (bread(fs, bmp_block, bm) == 0) {
+        bm[bit / 8] &= ~(1u << (bit % 8));
+        bwrite(fs, bmp_block, bm);
+    }
+    pmm_free_page(bm);
+}
+
+static void free_block(ext2_fs_t* fs, uint32_t bn) {
+    if (bn < fs->first_data_block) return;
+    uint8_t* gd = pmm_alloc_page();
+    if (!gd) return;
+    if (bread(fs, fs->gdt_block, gd) != 0) { pmm_free_page(gd); return; }
+    uint32_t bbmp = rd32(gd + 0);
+    pmm_free_page(gd);
+    bitmap_free(fs, bbmp, bn - fs->first_data_block);    /* group 0 */
+    inc_free_counts(fs, 12, 12);
+}
+
+static void free_inode_num(ext2_fs_t* fs, uint32_t ino) {
+    if (ino == 0) return;
+    uint8_t* gd = pmm_alloc_page();
+    if (!gd) return;
+    if (bread(fs, fs->gdt_block, gd) != 0) { pmm_free_page(gd); return; }
+    uint32_t ibmp = rd32(gd + 4);
+    pmm_free_page(gd);
+    bitmap_free(fs, ibmp, ino - 1);                      /* group 0 */
+    inc_free_counts(fs, 14, 16);
+}
+
+/* Free every data block of `vi` with file-relative index >= `from`, plus the
+ * single-indirect block itself when nothing past the direct blocks remains. */
+static void free_from(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t from) {
+    uint32_t nblocks = (vi->size + fs->block_size - 1) / fs->block_size;
+    for (uint32_t b = from; b < nblocks; b++) {
+        uint32_t disk = map_block(fs, vi, b);
+        if (disk) { free_block(fs, disk); vi->blocks512 -= fs->spb; }
+        if (b < EXT2_NDIR) vi->i_block[b] = 0;
+    }
+    uint32_t per = fs->block_size / 4;
+    if (from <= EXT2_NDIR && vi->i_block[EXT2_IND]) {    /* indirect no longer needed */
+        /* zero the pointers we freed above inside the indirect block is moot —
+         * we are releasing the whole indirect block. */
+        free_block(fs, vi->i_block[EXT2_IND]);
+        vi->blocks512 -= fs->spb;
+        vi->i_block[EXT2_IND] = 0;
+    } else if (vi->i_block[EXT2_IND] && from > EXT2_NDIR && from < EXT2_NDIR + per) {
+        uint8_t* ind = pmm_alloc_page();                 /* clear freed slots */
+        if (ind && bread(fs, vi->i_block[EXT2_IND], ind) == 0) {
+            for (uint32_t i = from - EXT2_NDIR; i < per; i++) wr32(ind + i * 4, 0);
+            bwrite(fs, vi->i_block[EXT2_IND], ind);
+        }
+        if (ind) pmm_free_page(ind);
+    }
+}
+
 /* Allocate the file-relative block `fblk` for inode `vi`, wiring it into the
  * block map (direct or single-indirect). Returns the disk block, or 0. */
 static uint32_t alloc_file_block(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t fblk) {
@@ -447,22 +522,180 @@ static int dir_add_entry(vnode_t* dir, const char* name, uint32_t ino, uint8_t f
     return write_inode(fs, vi);
 }
 
+/* Remove the entry `name` from `dir` and return its inode in *out_ino, WITHOUT
+ * touching the target's link count (that is the caller's job: unlink frees,
+ * rename re-homes). Merges the slot into the previous entry, or voids it. */
+static int dir_remove_entry(vnode_t* dir, const char* name, uint32_t* out_ino) {
+    ext2_vinfo_t* vi = (ext2_vinfo_t*)dir->priv;
+    ext2_fs_t* fs = vi->fs;
+    uint32_t nlen = (uint32_t)strlen(name);
+    uint8_t* blk = pmm_alloc_page();
+    if (!blk) return -ENOMEM;
+    uint32_t nblocks = (vi->size + fs->block_size - 1) / fs->block_size;
+    for (uint32_t b = 0; b < nblocks; b++) {
+        uint32_t disk = map_block(fs, vi, b);
+        if (!disk || bread(fs, disk, blk) != 0) continue;
+        uint32_t o = 0, prev = 0; int have_prev = 0;
+        while (o + 8 <= fs->block_size) {
+            uint32_t e_ino = rd32(blk + o);
+            uint16_t rlen  = rd16(blk + o + 4);
+            uint8_t  e_nl  = blk[o + 6];
+            if (rlen < 8 || o + rlen > fs->block_size) break;
+            if (e_ino != 0 && e_nl == nlen && memcmp(blk + o + 8, name, nlen) == 0) {
+                if (out_ino) *out_ino = e_ino;
+                if (have_prev) wr16(blk + prev + 4, (uint16_t)(rd16(blk + prev + 4) + rlen));
+                else           wr32(blk + o, 0);          /* first in block: void it */
+                int rc = bwrite(fs, disk, blk);
+                pmm_free_page(blk);
+                return rc;
+            }
+            prev = o; have_prev = 1; o += rlen;
+        }
+    }
+    pmm_free_page(blk);
+    return -ENOENT;
+}
+
+/* True if `dir` holds only "." and "..". */
+static int dir_is_empty(vnode_t* dir) {
+    char nm[256]; uint32_t ino; uint8_t ft; uint32_t idx = 0, real = 0;
+    while (dir_walk(dir, NULL, idx, &ino, &ft, nm) == 0) {
+        if (!(nm[0] == '.' && (nm[1] == '\0' || (nm[1] == '.' && nm[2] == '\0')))) real++;
+        idx++;
+    }
+    return real == 0;
+}
+
 static vnode_t* ext2_create(vnode_t* dir, const char* name, vtype_t t) {
-    if (t != VNODE_REG) return NULL;                     /* mkdir deferred to G2-d */
     ext2_vinfo_t* dvi = (ext2_vinfo_t*)dir->priv;
     if (!dvi || dir->type != VNODE_DIR) return NULL;
+    if (t != VNODE_REG && t != VNODE_DIR) return NULL;
     ext2_fs_t* fs = dvi->fs;
 
     uint32_t ino = alloc_inode(fs);
     if (!ino) return NULL;
 
-    ext2_vinfo_t nw;                                     /* fresh inode: zeroed map */
-    memset(&nw, 0, sizeof(nw));
-    nw.fs = fs; nw.ino = ino; nw.mode = 0x81A4 /* regular, 0644 */; nw.links = 1;
-    if (write_inode(fs, &nw) != 0) return NULL;
+    if (t == VNODE_DIR) {
+        /* A new directory: one data block holding "." and "..". */
+        uint32_t dblk = alloc_block(fs);
+        if (!dblk) { free_inode_num(fs, ino); return NULL; }
+        uint8_t* blk = pmm_alloc_page();
+        if (!blk) { free_block(fs, dblk); free_inode_num(fs, ino); return NULL; }
+        memset(blk, 0, fs->block_size);
+        wr32(blk + 0, ino);  wr16(blk + 4, 12); blk[6] = 1; blk[7] = 2; blk[8] = '.';
+        wr32(blk + 12, dvi->ino); wr16(blk + 16, (uint16_t)(fs->block_size - 12));
+        blk[18] = 2; blk[19] = 2; blk[20] = '.'; blk[21] = '.';
+        int wr = bwrite(fs, dblk, blk);
+        pmm_free_page(blk);
+        if (wr != 0) { free_block(fs, dblk); free_inode_num(fs, ino); return NULL; }
 
+        ext2_vinfo_t nw;
+        memset(&nw, 0, sizeof(nw));
+        nw.fs = fs; nw.ino = ino; nw.mode = 0x41ED /* dir, 0755 */;
+        nw.size = fs->block_size; nw.links = 2; nw.blocks512 = fs->spb;
+        nw.i_block[0] = dblk;
+        if (write_inode(fs, &nw) != 0) return NULL;
+
+        if (dir_add_entry(dir, name, ino, 2 /* EXT2_FT_DIR */) != 0) return NULL;
+        dvi->links++;                                    /* the new dir's ".." */
+        write_inode(fs, dvi);
+        return make_vnode(fs, ino);
+    }
+
+    ext2_vinfo_t nw;                                     /* fresh regular file */
+    memset(&nw, 0, sizeof(nw));
+    nw.fs = fs; nw.ino = ino; nw.mode = 0x81A4 /* 0644 */; nw.links = 1;
+    if (write_inode(fs, &nw) != 0) return NULL;
     if (dir_add_entry(dir, name, ino, 1 /* EXT2_FT_REG_FILE */) != 0) return NULL;
     return make_vnode(fs, ino);
+}
+
+static int ext2_truncate(vnode_t* vn, uint64_t len) {
+    ext2_vinfo_t* vi = (ext2_vinfo_t*)vn->priv;
+    if (!vi) return -EINVAL;
+    ext2_fs_t* fs = vi->fs;
+    if (len < vi->size) {
+        uint32_t keep = (uint32_t)((len + fs->block_size - 1) / fs->block_size);
+        free_from(fs, vi, keep);
+    }
+    vi->size = (uint32_t)len; vn->size = len;            /* growth is lazy (write allocs) */
+    return write_inode(fs, vi);
+}
+
+static int ext2_unlink(vnode_t* dir, const char* name) {
+    ext2_vinfo_t* dvi = (ext2_vinfo_t*)dir->priv;
+    if (!dvi || dir->type != VNODE_DIR) return -EINVAL;
+    ext2_fs_t* fs = dvi->fs;
+
+    /* Find the child first so we can handle a directory (rmdir) vs a file. */
+    uint32_t ino = 0; uint8_t ft = 0;
+    if (dir_walk(dir, name, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    ext2_vinfo_t cvi;
+    if (read_inode(fs, ino, &cvi) != 0) return -EIO;
+
+    if ((cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR) {      /* rmdir path */
+        vnode_t* cv = make_vnode(fs, ino);
+        if (!cv) return -EIO;
+        int empty = dir_is_empty(cv);
+        kfree(cv->priv); kfree(cv);
+        if (!empty) return -ENOTEMPTY;
+    }
+
+    uint32_t removed = 0;
+    int rc = dir_remove_entry(dir, name, &removed);
+    if (rc != 0) return rc;
+
+    if ((cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR) {
+        free_from(fs, &cvi, 0);                          /* the dir's single block */
+        free_inode_num(fs, ino);
+        if (dvi->links > 0) dvi->links--;                /* the child's ".." is gone */
+        write_inode(fs, dvi);
+    } else {
+        if (cvi.links > 0) cvi.links--;
+        if (cvi.links == 0) { free_from(fs, &cvi, 0); free_inode_num(fs, ino); }
+        else                 write_inode(fs, &cvi);
+    }
+    return 0;
+}
+
+/* rename within the same ext2 mount: re-home `oldname` in olddir to `newname`
+ * in newdir, replacing an existing target. A moved directory's ".." and the two
+ * parents' link counts are fixed up for a cross-directory move. */
+static int ext2_rename(vnode_t* olddir, const char* oldname,
+                       vnode_t* newdir, const char* newname) {
+    ext2_vinfo_t* ovi = (ext2_vinfo_t*)olddir->priv;
+    ext2_vinfo_t* nvi = (ext2_vinfo_t*)newdir->priv;
+    if (!ovi || !nvi || ovi->fs != nvi->fs) return -EINVAL;
+    ext2_fs_t* fs = ovi->fs;
+
+    uint32_t ino = 0; uint8_t ft = 0;
+    if (dir_walk(olddir, oldname, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    ext2_vinfo_t cvi;
+    if (read_inode(fs, ino, &cvi) != 0) return -EIO;
+    int is_dir = (cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR;
+
+    uint32_t existing = 0;                                /* replace a target if present */
+    if (dir_walk(newdir, newname, 0, &existing, &ft, NULL) == 0) {
+        if (ext2_unlink(newdir, newname) != 0) return -EEXIST;
+    }
+
+    if (dir_add_entry(newdir, newname, ino, is_dir ? 2 : 1) != 0) return -ENOSPC;
+    if (dir_remove_entry(olddir, oldname, NULL) != 0) return -EIO;
+
+    if (is_dir && ovi->ino != nvi->ino) {                /* cross-dir: fix ".." + links */
+        uint8_t* blk = pmm_alloc_page();
+        if (blk && bread(fs, cvi.i_block[0], blk) == 0) {
+            /* entry 1 is ".." (after "." at offset 0, rec_len 12) */
+            wr32(blk + 12, nvi->ino);
+            bwrite(fs, cvi.i_block[0], blk);
+        }
+        if (blk) pmm_free_page(blk);
+        if (ovi->links > 0) ovi->links--;
+        write_inode(fs, ovi);
+        nvi->links++;
+        write_inode(fs, nvi);
+    }
+    return 0;
 }
 
 static vfs_ops_t ext2_ops = {
@@ -471,8 +704,9 @@ static vfs_ops_t ext2_ops = {
     .lookup = ext2_lookup,
     .create = ext2_create,
     .readdir = ext2_readdir,
-    .unlink = NULL,
-    .truncate = NULL,
+    .unlink = ext2_unlink,
+    .truncate = ext2_truncate,
+    .rename = ext2_rename,
 };
 
 /* Mount the ext2 filesystem on virtio-blk `unit`; returns its root vnode or

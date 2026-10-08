@@ -99,3 +99,62 @@ KTEST(ext2, overwrite_in_place) {
     KEXPECT_EQ((int)vfs_read(vn2, buf, 10, 0), 10);
     KEXPECT_EQ(memcmp(buf, "abXYefghij", 10), 0);
 }
+
+/* G2-d: mkdir, a file inside it, unlink the file, rmdir the directory. */
+KTEST(ext2, mkdir_create_unlink_rmdir) {
+    KEXPECT_EQ(vfs_mkdir("/mnt/d1"), 0);
+    vnode_t* dv = vfs_resolve("/mnt/d1");
+    KASSERT_TEST(dv != NULL);
+    KEXPECT_EQ((int)dv->type, (int)VNODE_DIR);
+
+    vnode_t* f = vfs_create("/mnt/d1/inside.txt", VNODE_REG);
+    KASSERT_TEST(f != NULL);
+    KEXPECT_EQ((int)vfs_write(f, "hi", 2, 0), 2);
+    vnode_t* f2 = vfs_resolve("/mnt/d1/inside.txt");
+    KASSERT_TEST(f2 != NULL);
+    char b[4]; memset(b, 0, sizeof(b));
+    KEXPECT_EQ((int)vfs_read(f2, b, 2, 0), 2);
+    KEXPECT_EQ(memcmp(b, "hi", 2), 0);
+
+    KEXPECT_EQ(vfs_unlink("/mnt/d1/inside.txt"), 0);
+    KASSERT_TEST(vfs_resolve("/mnt/d1/inside.txt") == 0);
+    KEXPECT_EQ(vfs_unlink("/mnt/d1"), 0);               /* now-empty dir (rmdir) */
+    KASSERT_TEST(vfs_resolve("/mnt/d1") == 0);
+}
+
+/* G2-d: rename replaces the destination; the source name disappears. */
+KTEST(ext2, rename_replaces) {
+    vnode_t* a = vfs_create("/mnt/ra.txt", VNODE_REG);
+    KASSERT_TEST(a != NULL);
+    KEXPECT_EQ((int)vfs_write(a, "AAAA", 4, 0), 4);
+    vnode_t* b = vfs_create("/mnt/rb.txt", VNODE_REG);
+    KASSERT_TEST(b != NULL);
+    KEXPECT_EQ((int)vfs_write(b, "B", 1, 0), 1);
+
+    KEXPECT_EQ(vfs_rename("/mnt/ra.txt", "/mnt/rb.txt"), 0);
+    KASSERT_TEST(vfs_resolve("/mnt/ra.txt") == 0);       /* source gone */
+    vnode_t* r = vfs_resolve("/mnt/rb.txt");
+    KASSERT_TEST(r != NULL);
+    char rb[8]; memset(rb, 0, sizeof(rb));
+    KEXPECT_EQ((int)vfs_read(r, rb, 7, 0), 4);           /* holds the moved bytes */
+    KEXPECT_EQ(memcmp(rb, "AAAA", 4), 0);
+}
+
+/* G2-d: truncate frees blocks and resets the size. */
+KTEST(ext2, truncate_to_zero) {
+    vnode_t* v = vfs_create("/mnt/tr.txt", VNODE_REG);
+    KASSERT_TEST(v != NULL);
+    char* buf = kmalloc(5000);
+    KASSERT_TEST(buf != NULL);
+    memset(buf, 'Z', 5000);
+    KEXPECT_EQ((int)vfs_write(v, buf, 5000, 0), 5000);
+    KEXPECT_EQ((int)v->size, 5000);
+
+    KASSERT_TEST(v->ops && v->ops->truncate);
+    KEXPECT_EQ(v->ops->truncate(v, 0), 0);
+    KEXPECT_EQ((int)v->size, 0);
+    vnode_t* v2 = vfs_resolve("/mnt/tr.txt");
+    KASSERT_TEST(v2 != NULL);
+    KEXPECT_EQ((int)v2->size, 0);
+    kfree(buf);
+}

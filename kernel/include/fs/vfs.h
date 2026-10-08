@@ -43,6 +43,8 @@ typedef struct vfs_ops {
     int  (*readdir)(struct vnode* dir, uint32_t index, char* name_out);     /* 0 / -1 at end */
     int  (*unlink)(struct vnode* dir, const char* name);
     int  (*truncate)(struct vnode* vn, uint64_t len);
+    int  (*rename)(struct vnode* olddir, const char* oldname,
+                   struct vnode* newdir, const char* newname);     /* same fs */
 } vfs_ops_t;
 
 typedef struct vnode {
@@ -158,6 +160,7 @@ long      vfs_write(vnode_t* vn, const void* buf, size_t n, uint64_t off);
 vnode_t*  vfs_create(const char* path, vtype_t type);   /* create file/dir at path */
 int       vfs_mkdir(const char* path);
 int       vfs_unlink(const char* path);
+int       vfs_rename(const char* oldpath, const char* newpath);
 
 /* -------- descriptor layer (uses the current process's table) -------- */
 int       vfs_open(const char* path, int flags);

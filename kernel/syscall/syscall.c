@@ -279,6 +279,25 @@ static int64_t do_access(uint64_t upath, int from_user) {
     return vfs_resolve(abs) ? 0 : -ENOENT;
 }
 
+/* mkdir(path, mode): create a directory (mode ignored — single-user). */
+static int64_t do_mkdir(uint64_t upath, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_mkdir(abs);
+}
+
+/* rename(old, new): re-home a name (atomic-replace within one filesystem). */
+static int64_t do_rename(uint64_t uold, uint64_t unew, int from_user) {
+    char op[VFS_PATH_MAX], np[VFS_PATH_MAX], oabs[VFS_PATH_MAX], nabs[VFS_PATH_MAX];
+    int rc = copy_path(op, sizeof(op), uold, from_user); if (rc < 0) return rc;
+    rc     = copy_path(np, sizeof(np), unew, from_user); if (rc < 0) return rc;
+    if (resolve_path(oabs, sizeof(oabs), op) != 0) return -ENAMETOOLONG;
+    if (resolve_path(nabs, sizeof(nabs), np) != 0) return -ENAMETOOLONG;
+    return vfs_rename(oabs, nabs);
+}
+
 static int64_t do_chdir(uint64_t upath, int from_user) {
     process_t* cur = current_process;
     if (!cur || !cur->is_user) return -ENOSYS;
@@ -612,6 +631,12 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_NEWFSTATAT:   return do_newfstatat(a1, a2, a3, from_user);
         case SYS_UNLINK:       return do_unlink(a1, from_user);
         case SYS_UNLINKAT:     return do_unlinkat(a1, a2, from_user);
+        case SYS_RMDIR:        return do_unlink(a1, from_user);   /* ext2 unlink does rmdir */
+        case SYS_MKDIR:        return do_mkdir(a1, from_user);
+        case SYS_MKDIRAT:      return do_mkdir(a2, from_user);    /* (dirfd, path, mode) */
+        case SYS_RENAME:       return do_rename(a1, a2, from_user);
+        case SYS_RENAMEAT:     return do_rename(a2, a4, from_user);   /* (ofd,old,nfd,new) */
+        case SYS_RENAMEAT2:    return do_rename(a2, a4, from_user);   /* flags ignored */
         case SYS_ACCESS:       return do_access(a1, from_user);
         case SYS_FACCESSAT:    return do_access(a2, from_user);   /* (dirfd,path,mode) */
         case SYS_CHDIR:        return do_chdir(a1, from_user);

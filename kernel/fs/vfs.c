@@ -129,6 +129,17 @@ int vfs_unlink(const char* path) {
     return dir->ops->unlink(dir, leaf);
 }
 
+int vfs_rename(const char* oldpath, const char* newpath) {
+    char oleaf[VFS_NAME_MAX + 1], nleaf[VFS_NAME_MAX + 1];
+    vnode_t* od = vfs_resolve_parent(oldpath, oleaf);
+    vnode_t* nd = vfs_resolve_parent(newpath, nleaf);
+    if (!od || !nd || oleaf[0] == '\0' || nleaf[0] == '\0') return -EINVAL;
+    /* Same filesystem only (same ops table); cross-fs rename is a copy+unlink
+     * the caller must do itself. */
+    if (!od->ops || !od->ops->rename || od->ops != nd->ops) return -EINVAL;
+    return od->ops->rename(od, oleaf, nd, nleaf);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Descriptor layer (per-process fd table in process_t.fd_table)              */
 /* -------------------------------------------------------------------------- */

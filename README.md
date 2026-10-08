@@ -210,6 +210,7 @@ CI runs the suite and a stress job on every push.
 | 20-Q | **ext2 filesystem** (read-only): mount an on-disk ext2 from virtio-blk into the VFS | ✅ [docs](docs/PHASE20Q_EXT2.md) |
 | 20-R | **ext2 write path**: create + write on-disk files (block/inode alloc, dir entries) | ✅ [docs](docs/PHASE20R_EXT2_WRITE.md) |
 | 20-S | **Toolchain syscalls**: `execve` envp + `openat`/`*at` family; musl file I/O on ext2 | ✅ [docs](docs/PHASE20S_G3_SYSCALLS.md) |
+| 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (ext2 now read/write) | ✅ [docs](docs/PHASE20T_EXT2_DIROPS.md) |
 
 ## 📚 Documentation
 

@@ -29,6 +29,12 @@
 #define SYS_NEWFSTATAT     262
 #define SYS_UNLINK         87
 #define SYS_UNLINKAT       263
+#define SYS_RENAME         82
+#define SYS_RENAMEAT       264
+#define SYS_RENAMEAT2      316
+#define SYS_MKDIR          83
+#define SYS_MKDIRAT        258
+#define SYS_RMDIR          84
 #define SYS_ACCESS         21
 #define SYS_FACCESSAT      269
 #define AT_FDCWD           (-100)
