@@ -270,11 +270,16 @@ BUSYBOX_PREBUILT = user/musl/busybox
 # docs/PHASE21_HIGHERHALF.md). It runs on MAKH and compiles C to a standard
 # non-PIE ET_EXEC at 0x400000 — which the higher-half kernel now loads.
 TCC_PREBUILT = user/tcc/tcc
+# Phase 21-C (F21, self-hosting): GNU make built as a static-PIE against musl
+# with the ziglang toolchain and checked in (see user/make/README.md). It runs
+# on MAKH and drives tcc across a multi-file build. Ships as /bin/make, with its
+# demo project under /share/mkproj.
+MAKE_PREBUILT = user/make/make
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd user/sysroot -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) user/tcc/hello.c user/tcc/full.c
-	@echo "Building initrd.tar (+ user programs + tcc sysroot)"
+$(INITRD): $(shell find initrd user/sysroot user/make/proj -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c
+	@echo "Building initrd.tar (+ user programs + tcc sysroot + make)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
@@ -283,9 +288,11 @@ $(INITRD): $(shell find initrd user/sysroot -type f 2>/dev/null) $(USER_BINS) $(
 	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
+	@cp $(MAKE_PREBUILT) build/initrd/bin/make
 	@cp user/tcc/hello.c build/initrd/share/tcc-hello.c
 	@cp user/tcc/full.c build/initrd/share/tcc-full.c
 	@cp -r user/sysroot/usr build/initrd/usr          # musl headers + libc.a + crt + libtcc1.a
+	@cp -r user/make/proj build/initrd/share/mkproj   # the multi-file demo make builds
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.

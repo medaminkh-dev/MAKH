@@ -498,8 +498,19 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
     cur->context.cr3 = nas->pml4_phys;
     vmspace_switch(nas);                    /* load the new CR3 now */
     local_irq_restore(f);
-    vmspace_destroy(old);
-    kfree(old);
+    /* The old space may be SHARED: musl's posix_spawn (what a libc shell/make
+     * uses) clones with CLONE_VM, so the child execs out of the parent's very
+     * address space (vfork semantics, refcount > 1). Freeing it here would pull
+     * the live page tables out from under the still-running parent — a
+     * use-after-free that triple-faults the moment the parent is next scheduled.
+     * Tear it down only when this was the last reference; otherwise just drop
+     * ours, exactly as reap() does. */
+    if (old->refcount <= 1) {
+        vmspace_destroy(old);
+        kfree(old);
+    } else {
+        old->refcount--;
+    }
 
     /* Fresh heap/mmap; cwd and pgid/sid are preserved across exec. */
     cur->brk_start = cur->brk_cur = USER_HEAP_BASE;

@@ -240,7 +240,17 @@ static void file_put(file_t* f) {
 
 int vfs_close(int fd) {
     file_t** t = fd_table();
-    if (!t || fd < 0 || fd >= VFS_MAX_FDS || !t[fd]) return -EBADF;
+    if (!t || fd < 0 || fd >= VFS_MAX_FDS) return -EBADF;
+    if (!t[fd]) {
+        /* An empty slot for fd 0/1/2 is the implicit console (the read/write
+         * fast path in syscall.c): it holds no open description, so closing it
+         * frees nothing and succeeds. Reporting EBADF here breaks careful libc
+         * programs — GNU make's close_stdout does fflush+fclose(stdout) at exit
+         * and treats EBADF from the close as a fatal "write error", so make
+         * exits non-zero even after a successful build. Any other empty slot is
+         * a genuine bad descriptor. */
+        return (fd <= 2) ? 0 : -EBADF;
+    }
     file_t* f = t[fd];
     t[fd] = NULL;
     file_put(f);

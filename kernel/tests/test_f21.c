@@ -10,9 +10,13 @@
  *          linked against a musl sysroot (headers + libc.a + crt + libtcc1.a)
  *          staged in the initrd — MAKH compiling and running a program that
  *          rides a full C library, on itself.
- * /bin/tcc, /share/tcc-*.c and /usr (the sysroot) ship in the initrd; tcc
- * writes its output into the root tmpfs. This is the proof that MAKH can build
- * and run programs with a real compiler, on itself.
+ *   F21-c: GNU make (a static-musl prebuilt) drives tcc across a multi-file
+ *          project (/share/mkproj) — two objects compiled and linked into one
+ *          executable, a real build system running on MAKH.
+ * /bin/tcc, /bin/make, /share/tcc-*.c, /share/mkproj and /usr (the sysroot)
+ * ship in the initrd; the tools write their output into the root tmpfs. This is
+ * the proof that MAKH can build and run programs with a real toolchain, on
+ * itself.
  */
 #include <ktest.h>
 #include <proc_internal.h>
@@ -70,4 +74,24 @@ KTEST(f21, tcc_compiles_libc_program_on_makh) {
     int st2 = -1;
     sys_waitpid(pid2, &st2);
     KEXPECT_EQ(st2, 42);                /* the libc program ran on MAKH */
+}
+
+KTEST(f21, make_builds_multifile_project_on_makh) {
+    /* F21-c: GNU make drives tcc across the /share/mkproj project — two
+     * translation units (main.c + greet.c) compiled to objects and linked with
+     * musl's crt + libc into one executable. The Makefile's recipes are plain
+     * absolute-path tcc commands, so make runs them directly (no /bin/sh). */
+    char* const argv[] = { "make", "-C", "/share/mkproj", 0 };
+    int pid = proc_spawn_user_argv("/bin/make", argv);
+    KASSERT_TEST(pid > 0);
+    int st = -1;
+    sys_waitpid(pid, &st);
+    KEXPECT_EQ(st, 0);                  /* make built the project (tcc exit 0) */
+
+    /* Run what make just built: it prints its line via musl and exits 42. */
+    int pid2 = proc_spawn_user("/share/mkproj/app");
+    KASSERT_TEST(pid2 > 0);
+    int st2 = -1;
+    sys_waitpid(pid2, &st2);
+    KEXPECT_EQ(st2, 42);               /* the make-built multi-file binary ran */
 }

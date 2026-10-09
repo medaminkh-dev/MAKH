@@ -52,6 +52,7 @@ numbers are navigable rather than mysterious.
 | 21 | **Higher-half kernel**: kernel → top -2 GiB, HHDM, the low half freed per-process, standard non-PIE binaries at 0x400000 (F21 Path A) | [PHASE21_HIGHERHALF](PHASE21_HIGHERHALF.md) |
 | 21-A | **tcc self-hosts**: a real C compiler runs on MAKH, compiles C to a native executable, and MAKH runs it (F21) | [PHASE21A_SELFHOST_TCC](PHASE21A_SELFHOST_TCC.md) |
 | 21-B | **libc compile on MAKH**: tcc links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot, on MAKH, and MAKH runs it (F21) | [PHASE21B_LIBC_COMPILE](PHASE21B_LIBC_COMPILE.md) |
+| 21-C | **make on MAKH**: GNU make drives tcc across a multi-file project (fork/exec/wait), on MAKH, and MAKH runs the result (F21) | [PHASE21C_MAKE](PHASE21C_MAKE.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
