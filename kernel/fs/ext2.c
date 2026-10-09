@@ -6,7 +6,8 @@
  *
  * Just enough of ext2 to mount a real on-disk image into the VFS and read
  * files from it: parse the superblock and the block-group descriptors, fetch
- * inodes, follow a file's block map (direct + single-indirect), walk directory
+ * inodes, follow a file's block map (direct + single/double/triple-indirect),
+ * walk directory
  * entries, and expose it all through vfs_ops so programs open on-disk files the
  * same way they open tmpfs ones. Writing is deferred — this is the read path.
  *
@@ -28,6 +29,8 @@
 #define EXT2_ROOT_INO    2
 #define EXT2_NDIR        12          /* direct block pointers */
 #define EXT2_IND         12          /* index of the single-indirect pointer */
+#define EXT2_DIND        13          /* index of the double-indirect pointer */
+#define EXT2_TIND        14          /* index of the triple-indirect pointer */
 
 /* Little-endian field reads from a raw buffer (x86 is LE, so just load). */
 static uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -118,22 +121,48 @@ static int read_inode(ext2_fs_t* fs, uint32_t ino, ext2_vinfo_t* vi) {
     return 0;
 }
 
+/* per^(level-1): how many file blocks a single pointer at `level` spans. */
+static uint32_t span_of(uint32_t per, int level) {
+    uint32_t s = 1;
+    for (int i = 1; i < level; i++) s *= per;
+    return s;
+}
+
+/* Follow an indirect tree rooted at the pointer block `ptr_blk` (level 1 =
+ * single, 2 = double, 3 = triple) to the on-disk block for `idx`, the file
+ * block index WITHIN this level's span. 0 = hole or missing tree. */
+static uint32_t map_indirect(ext2_fs_t* fs, uint32_t ptr_blk, int level, uint32_t idx) {
+    if (!ptr_blk) return 0;
+    uint32_t per = fs->block_size / 4;
+    uint8_t* blk = blk_alloc();
+    if (!blk) return 0;
+    uint32_t out = 0;
+    if (bread(fs, ptr_blk, blk) == 0) {
+        if (level == 1) {
+            out = rd32(blk + idx * 4);
+        } else {
+            uint32_t span = span_of(per, level);               /* per^(level-1) */
+            uint32_t child = rd32(blk + (idx / span) * 4);
+            out = map_indirect(fs, child, level - 1, idx % span);
+        }
+    }
+    blk_free(blk);
+    return out;
+}
+
 /* Map file block index `fblk` to an on-disk block number (0 = sparse/hole).
- * Direct blocks and the single-indirect block are supported. */
+ * Direct, single-, double- and triple-indirect blocks are all supported. */
 static uint32_t map_block(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t fblk) {
     if (fblk < EXT2_NDIR) return vi->i_block[fblk];
     uint32_t per = fs->block_size / 4;                            /* pointers per block */
-    if (fblk < EXT2_NDIR + per) {
-        uint32_t ind = vi->i_block[EXT2_IND];
-        if (!ind) return 0;
-        uint8_t* blk = blk_alloc();
-        if (!blk) return 0;
-        uint32_t out = 0;
-        if (bread(fs, ind, blk) == 0) out = rd32(blk + (fblk - EXT2_NDIR) * 4);
-        blk_free(blk);
-        return out;
-    }
-    return 0;    /* double/triple indirect: deferred */
+    fblk -= EXT2_NDIR;
+    if (fblk < per)        return map_indirect(fs, vi->i_block[EXT2_IND],  1, fblk);
+    fblk -= per;
+    if (fblk < per * per)  return map_indirect(fs, vi->i_block[EXT2_DIND], 2, fblk);
+    fblk -= per * per;
+    if (fblk < per * per * per)
+                           return map_indirect(fs, vi->i_block[EXT2_TIND], 3, fblk);
+    return 0;    /* beyond the triple-indirect reach (> ~16 GiB at 4 KiB blocks) */
 }
 
 /* Build a vnode for inode `ino`. The type comes from the inode's i_mode, which
@@ -399,54 +428,121 @@ static void free_inode_num(ext2_fs_t* fs, uint32_t ino) {
     inc_free_counts(fs, 14, 16);
 }
 
-/* Free every data block of `vi` with file-relative index >= `from`, plus the
- * single-indirect block itself when nothing past the direct blocks remains. */
-static void free_from(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t from) {
-    uint32_t nblocks = (vi->size + fs->block_size - 1) / fs->block_size;
-    for (uint32_t b = from; b < nblocks; b++) {
-        uint32_t disk = map_block(fs, vi, b);
-        if (disk) { free_block(fs, disk); vi->blocks512 -= fs->spb; }
-        if (b < EXT2_NDIR) vi->i_block[b] = 0;
-    }
+/* Free entries with within-span index >= `start` in the indirect tree rooted at
+ * *rootp (level 1/2/3). A child subtree wholly past `start` is freed outright
+ * (its pointer slot cleared); the one child that straddles `start` is recursed
+ * into and kept. The root pointer block itself is freed (and *rootp cleared)
+ * only when start == 0, i.e. nothing in this tree survives. Updates i_blocks. */
+static void free_indirect_from(ext2_fs_t* fs, ext2_vinfo_t* vi,
+                               uint32_t* rootp, int level, uint32_t start) {
+    if (!*rootp) return;
     uint32_t per = fs->block_size / 4;
-    if (from <= EXT2_NDIR && vi->i_block[EXT2_IND]) {    /* indirect no longer needed */
-        /* zero the pointers we freed above inside the indirect block is moot —
-         * we are releasing the whole indirect block. */
-        free_block(fs, vi->i_block[EXT2_IND]);
-        vi->blocks512 -= fs->spb;
-        vi->i_block[EXT2_IND] = 0;
-    } else if (vi->i_block[EXT2_IND] && from > EXT2_NDIR && from < EXT2_NDIR + per) {
-        uint8_t* ind = blk_alloc();                 /* clear freed slots */
-        if (ind && bread(fs, vi->i_block[EXT2_IND], ind) == 0) {
-            for (uint32_t i = from - EXT2_NDIR; i < per; i++) wr32(ind + i * 4, 0);
-            bwrite(fs, vi->i_block[EXT2_IND], ind);
+    uint8_t* b = blk_alloc();
+    if (!b) return;
+    int dirty = 0;
+    if (bread(fs, *rootp, b) == 0) {
+        if (level == 1) {                            /* leaves: data-block pointers */
+            for (uint32_t i = start; i < per; i++) {
+                uint32_t d = rd32(b + i * 4);
+                if (d) { free_block(fs, d); vi->blocks512 -= fs->spb;
+                         wr32(b + i * 4, 0); dirty = 1; }
+            }
+        } else {                                     /* interior: child pointer blocks */
+            uint32_t span = span_of(per, level);
+            for (uint32_t s = 0; s < per; s++) {
+                uint32_t child = rd32(b + s * 4);
+                if (!child) continue;
+                uint32_t base = s * span;            /* first file index this slot covers */
+                if (base >= start) {                 /* whole child subtree is gone */
+                    free_indirect_from(fs, vi, &child, level - 1, 0);
+                    wr32(b + s * 4, 0); dirty = 1;
+                } else if (base + span > start) {    /* the straddling child: recurse, keep */
+                    free_indirect_from(fs, vi, &child, level - 1, start - base);
+                }
+            }
         }
-        if (ind) blk_free(ind);
     }
+    if (start == 0) {                                /* the entire tree is released */
+        free_block(fs, *rootp); vi->blocks512 -= fs->spb; *rootp = 0;
+    } else if (dirty) {
+        bwrite(fs, *rootp, b);
+    }
+    blk_free(b);
+}
+
+/* Free every data block of `vi` with file-relative index >= `from`, releasing
+ * the direct slots and any single-/double-/triple-indirect subtrees that fall
+ * entirely past `from` (and trimming the one that straddles it). */
+static void free_from(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t from) {
+    uint32_t per = fs->block_size / 4;
+    for (uint32_t b = from; b < EXT2_NDIR; b++) {        /* direct blocks */
+        if (vi->i_block[b]) { free_block(fs, vi->i_block[b]);
+                              vi->blocks512 -= fs->spb; vi->i_block[b] = 0; }
+    }
+    uint32_t ibase = EXT2_NDIR;                          /* single-indirect region */
+    if (from < ibase + per)
+        free_indirect_from(fs, vi, &vi->i_block[EXT2_IND], 1,
+                           from <= ibase ? 0 : from - ibase);
+    uint32_t dbase = ibase + per;                        /* double-indirect region */
+    if (from < dbase + per * per)
+        free_indirect_from(fs, vi, &vi->i_block[EXT2_DIND], 2,
+                           from <= dbase ? 0 : from - dbase);
+    uint32_t tbase = dbase + per * per;                  /* triple-indirect region */
+    free_indirect_from(fs, vi, &vi->i_block[EXT2_TIND], 3,
+                       from <= tbase ? 0 : from - tbase);
+}
+
+/* Allocate the data block for `idx` within the indirect tree whose root pointer
+ * is *rootp (a slot in the inode, or in a parent indirect block). `level` is
+ * 1/2/3. Missing indirect blocks along the path are allocated and *rootp /
+ * parent slots updated. Every newly allocated block (data or indirect) bumps
+ * i_blocks. Returns the data block, or 0 on failure. */
+static uint32_t alloc_indirect(ext2_fs_t* fs, ext2_vinfo_t* vi,
+                               uint32_t* rootp, int level, uint32_t idx) {
+    if (!*rootp) {                                   /* create this pointer block */
+        uint32_t nb = alloc_block(fs); if (!nb) return 0;   /* alloc_block zeroes it */
+        *rootp = nb; vi->blocks512 += fs->spb;
+    }
+    if (level == 1) {                                /* *rootp holds data pointers */
+        uint32_t data = alloc_block(fs); if (!data) return 0;
+        vi->blocks512 += fs->spb;
+        uint8_t* b = blk_alloc(); if (!b) return 0;
+        int ok = (bread(fs, *rootp, b) == 0);
+        if (ok) { wr32(b + idx * 4, data); ok = (bwrite(fs, *rootp, b) == 0); }
+        blk_free(b);
+        return ok ? data : 0;
+    }
+    /* Interior level: pick the child slot, recurse, write the slot back if the
+     * recursion created the child block. */
+    uint32_t per  = fs->block_size / 4;
+    uint32_t span = span_of(per, level);
+    uint32_t slot = idx / span;
+    uint8_t* b = blk_alloc(); if (!b) return 0;
+    if (bread(fs, *rootp, b) != 0) { blk_free(b); return 0; }
+    uint32_t child = rd32(b + slot * 4), before = child;
+    uint32_t data = alloc_indirect(fs, vi, &child, level - 1, idx % span);
+    if (child != before) { wr32(b + slot * 4, child); bwrite(fs, *rootp, b); }
+    blk_free(b);
+    return data;
 }
 
 /* Allocate the file-relative block `fblk` for inode `vi`, wiring it into the
- * block map (direct or single-indirect). Returns the disk block, or 0. */
+ * block map (direct, single-, double- or triple-indirect). Returns the disk
+ * block, or 0. */
 static uint32_t alloc_file_block(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t fblk) {
     if (fblk < EXT2_NDIR) {
         uint32_t b = alloc_block(fs); if (!b) return 0;
         vi->i_block[fblk] = b; vi->blocks512 += fs->spb; return b;
     }
     uint32_t per = fs->block_size / 4;
-    if (fblk < EXT2_NDIR + per) {
-        if (!vi->i_block[EXT2_IND]) {                    /* need the indirect block */
-            uint32_t ib = alloc_block(fs); if (!ib) return 0;
-            vi->i_block[EXT2_IND] = ib; vi->blocks512 += fs->spb;
-        }
-        uint32_t b = alloc_block(fs); if (!b) return 0;
-        vi->blocks512 += fs->spb;
-        uint8_t* ind = blk_alloc(); if (!ind) return 0;
-        int ok = (bread(fs, vi->i_block[EXT2_IND], ind) == 0);
-        if (ok) { wr32(ind + (fblk - EXT2_NDIR) * 4, b); ok = (bwrite(fs, vi->i_block[EXT2_IND], ind) == 0); }
-        blk_free(ind);
-        return ok ? b : 0;
-    }
-    return 0;                                            /* double-indirect deferred */
+    fblk -= EXT2_NDIR;
+    if (fblk < per)        return alloc_indirect(fs, vi, &vi->i_block[EXT2_IND],  1, fblk);
+    fblk -= per;
+    if (fblk < per * per)  return alloc_indirect(fs, vi, &vi->i_block[EXT2_DIND], 2, fblk);
+    fblk -= per * per;
+    if (fblk < per * per * per)
+                           return alloc_indirect(fs, vi, &vi->i_block[EXT2_TIND], 3, fblk);
+    return 0;                                            /* beyond triple-indirect */
 }
 
 static long ext2_write(vnode_t* vn, const void* buf, size_t n, uint64_t off) {

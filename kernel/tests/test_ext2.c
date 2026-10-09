@@ -86,6 +86,54 @@ KTEST(ext2, create_write_readback) {
     kfree(r);
 }
 
+/* G2-e: a file large enough to spill past the single-indirect block (12 direct
+ * + 256 single = 268 blocks = 268 KiB at 1 KiB blocks) into the DOUBLE-indirect
+ * tree. Exercises alloc_indirect at depth 2, map_block's double-indirect walk on
+ * read-back, and free_indirect_from when truncated. (Triple-indirect uses the
+ * same recursion one level deeper; it only engages past ~64 MiB, too large for
+ * the test image, so it is covered by construction rather than directly.) */
+KTEST(ext2, double_indirect_large_file) {
+    vnode_t* vn = vfs_create("/mnt/huge.txt", VNODE_REG);
+    KASSERT_TEST(vn != NULL);
+
+    const int N = 300000;                   /* ~293 blocks: blocks 268.. are double-indirect */
+    char* w = kmalloc(N);
+    char* r = kmalloc(N);
+    KASSERT_TEST(w != NULL && r != NULL);
+    for (int i = 0; i < N; i++) w[i] = (char)('A' + (i % 26));
+
+    KEXPECT_EQ((int)vfs_write(vn, w, N, 0), N);
+
+    /* Re-resolve and read straight from the on-disk inode: the double-indirect
+     * map must be reconstructed from disk, not from any cached state. */
+    vnode_t* vn2 = vfs_resolve("/mnt/huge.txt");
+    KASSERT_TEST(vn2 != NULL);
+    KEXPECT_EQ((int)vn2->size, N);
+    memset(r, 0, N);
+    KEXPECT_EQ((int)vfs_read(vn2, r, N, 0), N);
+
+    int ok = 1;
+    for (int off = 0; off < N; off += 997)
+        if (r[off] != (char)('A' + (off % 26))) ok = 0;
+    if (r[274432] != (char)('A' + (274432 % 26))) ok = 0;   /* first double-indirect byte */
+    if (r[N - 1]  != (char)('A' + ((N - 1) % 26))) ok = 0;  /* last byte */
+    KEXPECT_EQ(ok, 1);
+
+    /* Truncate back below the double-indirect region: free_indirect_from must
+     * release the whole double-indirect tree (and the single-indirect tail). */
+    KASSERT_TEST(vn2->ops && vn2->ops->truncate);
+    KEXPECT_EQ(vn2->ops->truncate(vn2, 5000), 0);
+    vnode_t* vn3 = vfs_resolve("/mnt/huge.txt");
+    KASSERT_TEST(vn3 != NULL);
+    KEXPECT_EQ((int)vn3->size, 5000);
+    memset(r, 0, 5000);
+    KEXPECT_EQ((int)vfs_read(vn3, r, 5000, 0), 5000);
+    KEXPECT_EQ((int)r[4999], (int)('A' + (4999 % 26)));      /* surviving data intact */
+
+    kfree(w);
+    kfree(r);
+}
+
 KTEST(ext2, overwrite_in_place) {
     vnode_t* vn = vfs_create("/mnt/ow.txt", VNODE_REG);
     KASSERT_TEST(vn != NULL);
