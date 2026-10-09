@@ -118,7 +118,7 @@ KTEST(net, route_selection) {
 KTEST(net, ping_loopback) {
     for (uint16_t seq = 1; seq <= 5; seq++) {
         net_lock();
-        int rtt = icmp_ping(IPV4(127, 0, 0, 1), seq, 1000);
+        int rtt = icmp_ping(IPV4(127, 0, 0, 1), seq, 1000, 0);
         net_unlock();
         KEXPECT(rtt >= 0);
     }
@@ -555,7 +555,7 @@ KTEST(net_hw, ping_gateway) {
     int ok = 0;
     for (uint16_t seq = 1; seq <= 4; seq++) {
         net_lock();
-        int rtt = icmp_ping(IPV4(10, 0, 2, 2), seq, 1000);
+        int rtt = icmp_ping(IPV4(10, 0, 2, 2), seq, 1000, 0);
         net_unlock();
         if (rtt >= 0) ok++;
     }
@@ -573,7 +573,7 @@ KTEST(net_hw, nic_counters_move) {
     uint64_t irq0 = irq_get_count(e1000_irq_line());
 
     net_lock();
-    int rtt = icmp_ping(IPV4(10, 0, 2, 2), 77, 1000);
+    int rtt = icmp_ping(IPV4(10, 0, 2, 2), 77, 1000, 0);
     net_unlock();
     KEXPECT(rtt >= 0);
 

@@ -58,6 +58,12 @@ void fb_console_draw_cell(uint32_t col, uint32_t row, char c, uint8_t vga_color)
 void fb_console_clear_row(uint32_t row, uint8_t vga_color);
 void fb_console_draw_cursor(uint32_t col, uint32_t row, uint8_t vga_fg);
 
+/* --- boot splash (FB-2) --- */
+/* Paint the dark field + centered fennec logo + caption + spinner frame 0. */
+void fb_splash_show(void);
+/* Redraw the spinner at animation `frame` (advance it by 1 each tick). */
+void fb_splash_tick(int frame);
+
 /* --- raw drawing primitives (also used by the boot splash, FB-2) --- */
 /* Pack an (r,g,b) triple into the framebuffer's native pixel format. */
 uint32_t fb_rgb(uint8_t r, uint8_t g, uint8_t b);

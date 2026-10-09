@@ -25,12 +25,14 @@ typedef struct ping_slot {
     int      done;
     uint64_t sent_ms;
     uint64_t rtt_ms;
+    uint8_t  ttl;
 } ping_slot_t;
 
 static ping_slot_t pings[PING_SLOTS];
 static pthread_cond_t ping_cond = PTHREAD_COND_INITIALIZER;
 
-void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, const uint8_t* pkt, size_t len) {
+void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, uint8_t ttl,
+                const uint8_t* pkt, size_t len) {
     (void)dev; (void)dst;
     if (len < sizeof(icmp_hdr_t)) return;
     if (inet_checksum(pkt, len) != 0) return;
@@ -59,6 +61,7 @@ void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, const uint8_t* pkt, s
             if (pings[i].used && !pings[i].done && pings[i].seq == seq &&
                 pings[i].dst == src) {
                 pings[i].rtt_ms = clock_now_ms() - pings[i].sent_ms;
+                pings[i].ttl = ttl;
                 pings[i].done = 1;
                 pthread_cond_broadcast(&ping_cond);
                 break;
@@ -68,7 +71,7 @@ void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, const uint8_t* pkt, s
 }
 
 /* Call with net_lock held. Returns RTT in ms (>= 0) or a negative errno. */
-int icmp_ping(uint32_t dst, uint16_t seq, uint64_t timeout_ms) {
+int icmp_ping(uint32_t dst, uint16_t seq, uint64_t timeout_ms, uint8_t* ttl_out) {
     ping_slot_t* slot = NULL;
     for (int i = 0; i < PING_SLOTS; i++) {
         if (!pings[i].used) { slot = &pings[i]; break; }
@@ -102,6 +105,7 @@ int icmp_ping(uint32_t dst, uint16_t seq, uint64_t timeout_ms) {
     }
 
     int result = slot->done ? (int)slot->rtt_ms : -ETIMEDOUT;
+    if (slot->done && ttl_out) *ttl_out = slot->ttl;
     slot->used = 0;
     return result;
 }

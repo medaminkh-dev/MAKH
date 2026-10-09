@@ -816,6 +816,8 @@ void kernel_main(void) {
     tty_init();                 /* Phase 19: terminal line discipline */
     multiboot_parse(multiboot_info_ptr);
 
+    int splash = 0;   /* set when the fennec boot splash is showing (quiet boot) */
+
     /* Bring up the framebuffer graphics console if GRUB gave us one (requested
      * in boot/boot.asm). From here terminal_* renders antialiased text on the
      * framebuffer; with no usable framebuffer it stays on 80x25 VGA text. The
@@ -824,8 +826,16 @@ void kernel_main(void) {
      * still runs, exercising the mapping and tag parsing. */
     if (fb_init((struct multiboot_tag_framebuffer*)
                 multiboot_find_tag(MULTIBOOT_TAG_TYPE_FRAMEBUFFER))) {
-        if (cmdline_has("makh.test"))
+        if (cmdline_has("makh.test")) {
             fb_console_set_enabled(0);
+        } else if (!verbose) {
+            /* Quiet boot: hide the log console and show the fennec splash while
+             * the kernel finishes init; it is wiped to a clean terminal just
+             * before the shell starts (a clear boot -> terminal transition). */
+            fb_console_set_enabled(0);
+            fb_splash_show();
+            splash = 1;
+        }
     }
 
     struct multiboot_tag_module* mod =
@@ -922,6 +932,17 @@ void kernel_main(void) {
      * self-test; it is init, so it runs every interactive boot.) Interrupts are
      * already enabled above. */
     keyboard_init();
+
+    /* Finish the splash: spin the loader a moment (the timer is up now), then
+     * wipe to a clean terminal — a clear boot -> terminal handoff. */
+    if (splash) {
+        for (int f = 0; f < 22; f++) {
+            fb_splash_tick(f);
+            timer_sleep(80);
+        }
+        fb_console_set_enabled(1);   /* re-select the pixel console ... */
+        terminal_clear();            /* ... and clear it to a fresh screen  */
+    }
 
     /*
      * Default interactive boot: the USER-SPACE shell — /bin/sh plus the busybox

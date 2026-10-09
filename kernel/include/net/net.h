@@ -205,9 +205,11 @@ int  ipv4_send(uint32_t dst, uint8_t proto, const void* payload, size_t len);
 netdev_t* ipv4_route(uint32_t dst, uint32_t* next_hop);
 
 /* icmp.c */
-void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, const uint8_t* pkt, size_t len);
-/* Send an echo request and wait for the reply. Returns RTT in ms, or -errno. */
-int  icmp_ping(uint32_t dst, uint16_t seq, uint64_t timeout_ms);
+void icmp_input(netdev_t* dev, uint32_t src, uint32_t dst, uint8_t ttl,
+                const uint8_t* pkt, size_t len);
+/* Send an echo request and wait for the reply. Returns RTT in ms, or -errno.
+ * If ttl_out is non-NULL, it receives the reply packet's IP TTL. */
+int  icmp_ping(uint32_t dst, uint16_t seq, uint64_t timeout_ms, uint8_t* ttl_out);
 
 /* udp.c */
 void udp_input(netdev_t* dev, uint32_t src, uint32_t dst, const uint8_t* pkt, size_t len);

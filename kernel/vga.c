@@ -163,8 +163,89 @@ void terminal_newline(void) {
  * Supports '\n' for newline, '\b' for simple backspace (no shift)
  * Insert mode: typing in middle of line shifts characters right
  */
+/*
+ * A small ANSI/VT escape handler so programs can clear the screen, move the
+ * cursor and set colours (e.g. `clear`, a coloured prompt, `ls` with colour).
+ * It drives the existing terminal_clear/setcursor/setcolor, which already route
+ * to the framebuffer console or the VGA text buffer, so both backends benefit.
+ * Supported: CSI J (clear), CSI H/f (cursor position), CSI m (SGR colours).
+ */
+/* ANSI colour index (0..7) -> VGA colour code; |8 gives the bright variant. */
+static const uint8_t ansi_to_vga[8] = {
+    VGA_COLOR_BLACK, VGA_COLOR_RED, VGA_COLOR_GREEN, VGA_COLOR_BROWN,
+    VGA_COLOR_BLUE,  VGA_COLOR_MAGENTA, VGA_COLOR_CYAN, VGA_COLOR_LIGHT_GREY,
+};
+enum { A_NORM = 0, A_ESC, A_CSI };
+static int     ansi_state = A_NORM;
+static int     ansi_params[8];
+static int     ansi_curparam;
+static int     ansi_nparam;
+static uint8_t ansi_fg = VGA_COLOR_LIGHT_GREY;
+static uint8_t ansi_bg = VGA_COLOR_BLACK;
+
+static void ansi_dispatch(char f) {
+    switch (f) {
+    case 'J':                                 /* erase display: clear it all */
+        terminal_clear();
+        break;
+    case 'H': case 'f': {                      /* cursor position (1-based)   */
+        int row = ansi_params[0] ? ansi_params[0] - 1 : 0;
+        int col = (ansi_nparam > 1 && ansi_params[1]) ? ansi_params[1] - 1 : 0;
+        terminal_setcursor((size_t)row, (size_t)col);
+        break;
+    }
+    case 'm': {                                /* select graphic rendition    */
+        int bold = 0;
+        for (int i = 0; i < ansi_nparam; i++) {
+            int p = ansi_params[i];
+            if (p == 0)      { ansi_fg = VGA_COLOR_LIGHT_GREY; ansi_bg = VGA_COLOR_BLACK; bold = 0; }
+            else if (p == 1) bold = 1;
+            else if (p >= 30 && p <= 37)  ansi_fg = ansi_to_vga[p - 30] | (bold ? 8 : 0);
+            else if (p >= 90 && p <= 97)  ansi_fg = ansi_to_vga[p - 90] | 8;
+            else if (p >= 40 && p <= 47)  ansi_bg = ansi_to_vga[p - 40];
+            else if (p >= 100 && p <= 107) ansi_bg = ansi_to_vga[p - 100] | 8;
+        }
+        terminal_setcolor(vga_entry_color((enum vga_color)ansi_fg,
+                                          (enum vga_color)ansi_bg));
+        break;
+    }
+    default:
+        break;                                 /* unsupported final byte       */
+    }
+}
+
+/* Returns 1 if the byte was part of an escape sequence (so don't print it). */
+static int ansi_consume(char c) {
+    switch (ansi_state) {
+    case A_NORM:
+        if (c == 0x1B) { ansi_state = A_ESC; return 1; }
+        return 0;
+    case A_ESC:
+        if (c == '[') {
+            ansi_state = A_CSI;
+            ansi_curparam = 0;
+            for (int i = 0; i < 8; i++) ansi_params[i] = 0;
+            return 1;
+        }
+        ansi_state = A_NORM;                    /* unsupported ESC x: swallow   */
+        return 1;
+    case A_CSI:
+        if (c >= '0' && c <= '9') {
+            ansi_params[ansi_curparam] = ansi_params[ansi_curparam] * 10 + (c - '0');
+            return 1;
+        }
+        if (c == ';') { if (ansi_curparam < 7) ansi_curparam++; return 1; }
+        ansi_nparam = ansi_curparam + 1;
+        ansi_dispatch(c);
+        ansi_state = A_NORM;
+        return 1;
+    }
+    return 0;
+}
+
 void terminal_putchar(char c) {
     if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
+    if (ansi_consume(c)) return;             /* ANSI escape handling (clear/colours) */
     if (fb_active()) {                       /* pixel console renders the glyph */
         fb_console_putchar(c, terminal.color);
         return;

@@ -12,6 +12,7 @@
 #include <lib/string.h>
 #include <klog.h>
 #include <fb_font.h>
+#include <fb_logo.h>
 
 /* A small gutter around the text area so glyphs don't hug the bezel. */
 #define FB_MARGIN_X 8
@@ -109,12 +110,9 @@ void fb_clear(uint32_t native) {
     fb_fill_rect(0, 0, fb.width, fb.height, native);
 }
 
-/* Blend one glyph into cell (col,row). fg/bg are 0xRRGGBB (not native). */
-static void draw_glyph(uint32_t col, uint32_t row, unsigned char ch,
+/* Blend one glyph at pixel origin (px0,py0). fg/bg are 0xRRGGBB (not native). */
+static void blit_glyph(uint32_t px0, uint32_t py0, unsigned char ch,
                        uint32_t fg, uint32_t bg) {
-    uint32_t px0 = FB_MARGIN_X + col * FB_FONT_W;
-    uint32_t py0 = FB_MARGIN_Y + row * FB_FONT_H;
-
     int fr = (fg >> 16) & 0xFF, fg_ = (fg >> 8) & 0xFF, fb_ = fg & 0xFF;
     int br = (bg >> 16) & 0xFF, bg_ = (bg >> 8) & 0xFF, bb_ = bg & 0xFF;
     uint32_t bg_native = fb_rgb((uint8_t)br, (uint8_t)bg_, (uint8_t)bb_);
@@ -139,6 +137,13 @@ static void draw_glyph(uint32_t col, uint32_t row, unsigned char ch,
             putpx(px0 + xx, py0 + yy, native);
         }
     }
+}
+
+/* Blend one glyph into text cell (col,row). */
+static void draw_glyph(uint32_t col, uint32_t row, unsigned char ch,
+                       uint32_t fg, uint32_t bg) {
+    blit_glyph(FB_MARGIN_X + col * FB_FONT_W, FB_MARGIN_Y + row * FB_FONT_H,
+               ch, fg, bg);
 }
 
 /* Scroll the text area up one row and clear the freed line to the background.
@@ -243,6 +248,91 @@ void fb_console_putchar(char c, uint8_t vga_color) {
     draw_glyph(fb.cx, fb.cy, (unsigned char)c, fg, bg);
     if (++fb.cx >= fb.cols)
         fb_console_newline();
+}
+
+/* ---------------------------------------------------------------------------
+ * Boot splash (FB-2): the fennec logo over the dark field, a mellow spinning
+ * loader, and a caption — shown while the kernel finishes bringing itself up,
+ * then wiped so the terminal starts on a clean screen. All integer math (no
+ * FPU/SSE in the kernel); the spinner's dot directions are a fixed /1000 table.
+ * ------------------------------------------------------------------------- */
+
+/* cos,sin * 1000 at 30-degree steps (screen y grows downward -> clockwise). */
+static const int spin_dx[12] = { 1000, 866, 500, 0, -500, -866,
+                                 -1000, -866, -500, 0, 500, 866 };
+static const int spin_dy[12] = { 0, 500, 866, 1000, 866, 500,
+                                 0, -500, -866, -1000, -866, -500 };
+
+/* Blend (r,g,b) over the charcoal background at coverage a (0..255). */
+static uint32_t cream_over_bg(int r, int g, int b, unsigned a) {
+    int br = 0x1b, bg = 0x18, bb = 0x16;
+    a += a >> 7;
+    int rr = br + (((r - br) * (int)a) >> 8);
+    int gg = bg + (((g - bg) * (int)a) >> 8);
+    int bb2 = bb + (((b - bb) * (int)a) >> 8);
+    return fb_rgb((uint8_t)rr, (uint8_t)gg, (uint8_t)bb2);
+}
+
+static void fill_disc(int cx, int cy, int r, uint32_t native) {
+    for (int dy = -r; dy <= r; dy++)
+        for (int dx = -r; dx <= r; dx++)
+            if (dx * dx + dy * dy <= r * r)
+                fb_put_pixel((uint32_t)(cx + dx), (uint32_t)(cy + dy), native);
+}
+
+/* Centre of the spinner, just below the logo. */
+static void splash_spinner_center(int* cx, int* cy) {
+    *cx = (int)fb.width / 2;
+    *cy = (int)fb.height / 2 + FB_LOGO_H / 2 + 34;
+}
+
+void fb_splash_tick(int frame) {
+    if (!fb.active) return;
+    int cx, cy;
+    splash_spinner_center(&cx, &cy);
+    int R = 26;
+    fb_fill_rect((uint32_t)(cx - R - 6), (uint32_t)(cy - R - 6),
+                 (uint32_t)((R + 6) * 2), (uint32_t)((R + 6) * 2),
+                 fb.pal_native[0]);
+    int head = ((frame % 12) + 12) % 12;
+    for (int i = 0; i < 12; i++) {
+        int k = (head - i + 12) % 12;
+        int level = 255 - k * 20;
+        if (level < 36) level = 36;
+        int x = cx + spin_dx[i] * R / 1000;
+        int y = cy + spin_dy[i] * R / 1000;
+        fill_disc(x, y, 3, cream_over_bg(0xfd, 0xf8, 0xf0, (unsigned)level));
+    }
+}
+
+/* Clear to the dark field and paint the logo + caption + first spinner frame. */
+void fb_splash_show(void) {
+    if (!fb.active) return;
+    fb_clear(fb.pal_native[0]);
+
+    int lx = ((int)fb.width - FB_LOGO_W) / 2;
+    int ly = (int)fb.height / 2 - FB_LOGO_H / 2 - 36;
+    for (int y = 0; y < FB_LOGO_H; y++) {
+        for (int x = 0; x < FB_LOGO_W; x++) {
+            unsigned a = fb_logo[y * FB_LOGO_W + x];
+            if (!a) continue;
+            fb_put_pixel((uint32_t)(lx + x), (uint32_t)(ly + y),
+                         cream_over_bg(0xfd, 0xf8, 0xf0, a));
+        }
+    }
+
+    /* Dim caption, centred below the spinner. */
+    static const char cap[] = "starting MAKH";
+    int n = (int)(sizeof(cap) - 1);
+    int tx = ((int)fb.width - n * FB_FONT_W) / 2;
+    int cx, cy;
+    splash_spinner_center(&cx, &cy);
+    int ty = cy + 34;
+    for (int i = 0; i < n; i++)
+        blit_glyph((uint32_t)(tx + i * FB_FONT_W), (uint32_t)ty,
+                   (unsigned char)cap[i], 0x8a8378, 0x1b1816);
+
+    fb_splash_tick(0);
 }
 
 int fb_init(const struct multiboot_tag_framebuffer* tag) {
