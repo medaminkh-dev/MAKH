@@ -56,6 +56,7 @@ numbers are navigable rather than mysterious.
 | 21-B | **libc compile on MAKH**: tcc links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot, on MAKH, and MAKH runs it (F21) | [PHASE21B_LIBC_COMPILE](PHASE21B_LIBC_COMPILE.md) |
 | 21-C | **make on MAKH**: GNU make drives tcc across a multi-file project (fork/exec/wait), on MAKH, and MAKH runs the result (F21) | [PHASE21C_MAKE](PHASE21C_MAKE.md) |
 | 21-D | **self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with make+tcc, and the rebuilt binary behaves identically (F21) | [PHASE21D_SELFHOST](PHASE21D_SELFHOST.md) |
+| 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space — reachable under any CR3 | [PHASE22_MMIO_WINDOW](PHASE22_MMIO_WINDOW.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

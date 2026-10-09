@@ -278,6 +278,14 @@ void vmm_init(void) {
     terminal_writestring("\n");
     vmm_load_pml4(pml4_phys);
     terminal_writestring("[VMM] CR3 loaded successfully\n");
+
+    /* Reserve the MMIO window's PML4 slot (258) now that the HHDM is live (so
+     * get_or_create_pdpt can zero the new table through P2V). Creating the
+     * top-level entry here — before any user address space exists — means every
+     * vmspace_create() copies it, so later vmm_map_mmio() calls fill PDs/PTs
+     * under a PDPT that is already shared, and device registers are reachable
+     * under any CR3. */
+    (void)get_or_create_pdpt(MMIO_WINDOW_BASE);
     
     /* Phase 17: enable No-Execute (EFER.NXE, bit 11) so leaf PTEs may set the
      * NX bit and W^X can be enforced. CPUID leaf 0x80000001 EDX bit 20 reports
@@ -545,25 +553,34 @@ void vmm_free_page(void* virt_addr) {
 }
 
 /**
- * vmm_map_mmio - Identity-map a device MMIO region, uncached.
+ * vmm_map_mmio - Map a device MMIO region uncached into the MMIO window.
  * @phys: physical base (need not be page aligned)
  * @size: length in bytes
- * Returns: 0 on success, -1 on failure.
+ * Returns: the virtual base address, or 0 on failure.
  *
- * Phase 14: PCI BARs usually live above RAM (e.g. ~0xFEB80000 in QEMU), outside
- * the RAM identity map, and device registers must never be cached, so each page
- * is mapped virt == phys with PCD|PWT. Pages already mapped (e.g. inside the RAM
- * identity map) are left alone.
- */
-int vmm_map_mmio(uint64_t phys, uint64_t size) {
-    uint64_t start = phys & ~0xFFFULL;
-    uint64_t end = (phys + size + 0xFFF) & ~0xFFFULL;
-    for (uint64_t p = start; p < end; p += 0x1000) {
-        if (vmm_get_physical(p) == p) continue;   /* already identity-mapped */
-        if (vmm_map_page(p, p, PAGE_PRESENT | PAGE_WRITABLE |
-                               PAGE_CACHE_DISABLE | PAGE_WRITETHROUGH) != 0) {
-            return -1;
-        }
+ * PCI BARs live above RAM (e.g. ~0xFEB80000 in QEMU) and must never be cached.
+ * Earlier this identity-mapped them (virt == phys), which put the mapping in the
+ * low canonical half — fine while the kernel owned all of memory, but after the
+ * higher-half migration that half belongs to user processes and is NOT shared
+ * into their address spaces, so the kernel could not touch a device register
+ * while a user CR3 was live (e.g. a NIC IRQ mid-syscall). Instead we hand out a
+ * virtual range from the higher-half MMIO window (PML4 slot 258, reserved at
+ * vmm_init and shared into every space), map each page there with PCD|PWT, and
+ * return the window address the driver should use. */
+static uint64_t mmio_next = MMIO_WINDOW_BASE;   /* bump allocator within the window */
+
+uint64_t vmm_map_mmio(uint64_t phys, uint64_t size) {
+    uint64_t pstart = phys & ~0xFFFULL;
+    uint64_t pend   = (phys + size + 0xFFF) & ~0xFFFULL;
+    uint64_t npages = (pend - pstart) / 0x1000;
+    uint64_t vbase  = mmio_next;
+    if (npages == 0 || vbase + npages * 0x1000 > MMIO_WINDOW_END) return 0;
+    for (uint64_t i = 0; i < npages; i++) {
+        if (vmm_map_page(vbase + i * 0x1000, pstart + i * 0x1000,
+                         PAGE_PRESENT | PAGE_WRITABLE |
+                         PAGE_CACHE_DISABLE | PAGE_WRITETHROUGH) != 0)
+            return 0;
     }
-    return 0;
+    mmio_next = vbase + npages * 0x1000;
+    return vbase + (phys & 0xFFF);        /* keep the sub-page offset of `phys` */
 }

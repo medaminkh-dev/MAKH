@@ -252,8 +252,9 @@ int e1000_init(uint32_t ip, uint32_t netmask, uint32_t gateway) {
     int is_io = 0;
     uint64_t bar0 = pci_bar_address(p, 0, &is_io);
     if (is_io || bar0 == 0) { KLOG_E("E1000", "BAR0 is not MMIO\n"); return -1; }
-    if (vmm_map_mmio(bar0, 128 * 1024) != 0) { KLOG_E("E1000", "MMIO map failed\n"); return -1; }
-    nic.mmio = (uintptr_t)bar0;
+    uint64_t mmio_va = vmm_map_mmio(bar0, 128 * 1024);   /* higher-half, shared */
+    if (mmio_va == 0) { KLOG_E("E1000", "MMIO map failed\n"); return -1; }
+    nic.mmio = (uintptr_t)mmio_va;
 
     pci_enable_bus_mastering(p);
 

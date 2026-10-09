@@ -93,3 +93,36 @@ KTEST(vm, fork_many_times_without_leak) {
     vmspace_destroy(&parent);
     KEXPECT_EQ(pmm_get_free_memory(), free_before);  /* 1000 forks, no leak */
 }
+
+/* The device-MMIO window (vmm_map_mmio): a BAR must map into the higher half so
+ * the mapping is shared into every address space — the kernel services a device
+ * IRQ even while a user CR3 is live. Uses a real RAM frame as a stand-in BAR
+ * (the test QEMU attaches no NIC), which is enough to exercise the window. */
+KTEST(mmio, window_is_high_and_shared) {
+    void* f = pmm_alloc_page();
+    KASSERT_TEST(f != NULL);
+    uint64_t phys = (uint64_t)(uintptr_t)f & PTE_PHYS_MASK;
+
+    uint64_t va = vmm_map_mmio(phys, 4096);
+    KASSERT_TEST(va != 0);
+    /* Lands in the higher-half MMIO window (PML4 slot 258), not the user half. */
+    KEXPECT_EQ(va >= MMIO_WINDOW_BASE && va < MMIO_WINDOW_END, 1);
+    /* Resolves to exactly the frame requested, keeping the sub-page offset. */
+    KEXPECT_EQ(vmm_get_physical(va & ~0xFFFULL), phys);
+
+    /* A write through the window reaches that frame (checked via the HHDM alias). */
+    *(volatile uint32_t*)(uintptr_t)va = 0xC0FFEE42u;
+    KEXPECT_EQ(*(volatile uint32_t*)P2V(phys), 0xC0FFEE42u);
+
+    /* The key property: a freshly created address space shares the window's
+     * top-level PML4 entry, so the mapping is reachable under its CR3 too. */
+    address_space_t as;
+    KASSERT_TEST(vmspace_create(&as) == 0);
+    uint64_t* kp = vmm_kernel_pml4();
+    uint64_t* ap = (uint64_t*)P2V(as.pml4_phys & PTE_PHYS_MASK);
+    KEXPECT_EQ(ap[VMM_PML4_INDEX(va)], kp[VMM_PML4_INDEX(va)]);   /* slot 258 shared */
+    KASSERT_TEST(ap[VMM_PML4_INDEX(va)] & PAGE_PRESENT);
+    vmspace_destroy(&as);
+
+    pmm_free_page(f);
+}

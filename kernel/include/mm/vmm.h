@@ -56,6 +56,15 @@
 static inline void*    P2V(uint64_t phys)  { return (void*)(uintptr_t)(phys + HHDM_BASE); }
 static inline uint64_t V2P(const void* virt){ return (uint64_t)(uintptr_t)virt - HHDM_BASE; }
 
+/* Device-MMIO window (PML4 slot 258): BARs are mapped uncached here, in the
+ * higher half, so the mapping is shared into every address space (vmspace_create
+ * copies slots 256..511) and device registers stay reachable under any CR3 — a
+ * NIC IRQ is serviced even while a user process is the active space. The slot's
+ * top-level entry is reserved at vmm_init so spaces created later still share
+ * it. 512 GiB of window, far more than any device BAR set needs. */
+#define MMIO_WINDOW_BASE 0xFFFF810000000000ULL
+#define MMIO_WINDOW_END  0xFFFF818000000000ULL
+
 /* Base for vmm_alloc_page()'s bump allocations (slot 257, just above the HHDM
  * so a 1 GiB direct map never collides with it). */
 #define VMM_ALLOC_BASE 0xFFFF808000000000ULL
@@ -107,8 +116,10 @@ void* vmm_alloc_page(uint64_t flags);
 /* Free virtual page */
 void vmm_free_page(void* virt_addr);
 
-/* Identity-map a device MMIO region, uncached (Phase 14). */
-int vmm_map_mmio(uint64_t phys, uint64_t size);
+/* Map a device MMIO region uncached into the higher-half MMIO window and return
+ * its virtual base (0 on failure). The mapping is shared into every address
+ * space, so the returned address is valid under any CR3. */
+uint64_t vmm_map_mmio(uint64_t phys, uint64_t size);
 
 /* The kernel's master PML4 (virtual pointer; its entries are shared by every
  * address space so the kernel half stays mapped under any CR3). */
