@@ -278,8 +278,8 @@ MAKE_PREBUILT = user/make/make
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd user/sysroot user/make/proj -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c
-	@echo "Building initrd.tar (+ user programs + tcc sysroot + make)"
+$(INITRD): $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
+	@echo "Building initrd.tar (+ user programs + tcc sysroot + make + selfhost)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
@@ -293,6 +293,9 @@ $(INITRD): $(shell find initrd user/sysroot user/make/proj -type f 2>/dev/null) 
 	@cp user/tcc/full.c build/initrd/share/tcc-full.c
 	@cp -r user/sysroot/usr build/initrd/usr          # musl headers + libc.a + crt + libtcc1.a
 	@cp -r user/make/proj build/initrd/share/mkproj   # the multi-file demo make builds
+	@mkdir -p build/initrd/share/selfhost             # F21-d: MAKH rebuilds its own userland
+	@cp user/selfhost/Makefile build/initrd/share/selfhost/Makefile
+	@cp user/musl/hello.c build/initrd/share/selfhost/muslhello.c   # the shipped source, verbatim
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.

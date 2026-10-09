@@ -215,6 +215,7 @@ CI runs the suite and a stress job on every push.
 | 21-A | **Self-hosting begins**: `tcc` runs *on MAKH*, compiles C to a native `0x400000` executable, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21A_SELFHOST_TCC.md) |
 | 21-B | **libc compile on MAKH**: `tcc` links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot *on MAKH*, and MAKH runs it (F21) | ✅ [docs](docs/PHASE21B_LIBC_COMPILE.md) |
 | 21-C | **make on MAKH**: GNU make drives `tcc` across a multi-file project (fork/exec/wait) *on MAKH*, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21C_MAKE.md) |
+| 21-D | **Self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with `make`+`tcc` *on MAKH*, and the rebuilt binary behaves identically (F21) | ✅ [docs](docs/PHASE21D_SELFHOST.md) |
 
 ## 📚 Documentation
 

@@ -13,10 +13,13 @@
  *   F21-c: GNU make (a static-musl prebuilt) drives tcc across a multi-file
  *          project (/share/mkproj) — two objects compiled and linked into one
  *          executable, a real build system running on MAKH.
- * /bin/tcc, /bin/make, /share/tcc-*.c, /share/mkproj and /usr (the sysroot)
- * ship in the initrd; the tools write their output into the root tmpfs. This is
- * the proof that MAKH can build and run programs with a real toolchain, on
- * itself.
+ *   F21-d: the summit — make + tcc rebuild a program MAKH SHIPS (/bin/muslhello)
+ *          from its own source (/share/selfhost), and the rebuilt binary behaves
+ *          identically (exit 42): MAKH regenerating its own userland.
+ * /bin/tcc, /bin/make, /share/tcc-*.c, /share/mkproj, /share/selfhost and /usr
+ * (the sysroot) ship in the initrd; the tools write their output into the root
+ * tmpfs. This is the proof that MAKH can build and run programs with a real
+ * toolchain, on itself.
  */
 #include <ktest.h>
 #include <proc_internal.h>
@@ -94,4 +97,34 @@ KTEST(f21, make_builds_multifile_project_on_makh) {
     int st2 = -1;
     sys_waitpid(pid2, &st2);
     KEXPECT_EQ(st2, 42);               /* the make-built multi-file binary ran */
+}
+
+KTEST(f21, make_rebuilds_makh_userland_on_makh) {
+    /* F21-d, the summit: MAKH rebuilds a program it SHIPS — /bin/muslhello —
+     * from its own source, with the on-MAKH toolchain (make + tcc + the musl
+     * sysroot). The shipped binary was cross-built on a host; the rebuilt one is
+     * compiled on MAKH. Both exercise the full libc ABI (TLS, heap, stdio, argv)
+     * and exit 42, so a matching run proves MAKH can regenerate its userland. */
+
+    /* Baseline: the program MAKH ships runs and exits 42. */
+    int pid0 = proc_spawn_user("/bin/muslhello");
+    KASSERT_TEST(pid0 > 0);
+    int st0 = -1;
+    sys_waitpid(pid0, &st0);
+    KEXPECT_EQ(st0, 42);               /* the shipped (host-built) binary */
+
+    /* Rebuild that same source on MAKH: make -> tcc -> /share/selfhost/muslhello. */
+    char* const argv[] = { "make", "-C", "/share/selfhost", 0 };
+    int pid = proc_spawn_user_argv("/bin/make", argv);
+    KASSERT_TEST(pid > 0);
+    int st = -1;
+    sys_waitpid(pid, &st);
+    KEXPECT_EQ(st, 0);                 /* make rebuilt it with tcc + musl */
+
+    /* The MAKH-rebuilt binary behaves identically: same ABI, same exit 42. */
+    int pid2 = proc_spawn_user("/share/selfhost/muslhello");
+    KASSERT_TEST(pid2 > 0);
+    int st2 = -1;
+    sys_waitpid(pid2, &st2);
+    KEXPECT_EQ(st2, 42);               /* MAKH regenerated its own userland */
 }
