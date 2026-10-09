@@ -86,6 +86,14 @@ int tar_load_initrd(const void* data, size_t len) {
             vnode_t* vn = vfs_create(path, VNODE_REG);
             if (vn && fsize) vfs_write(vn, base + off, (size_t)fsize, 0);
             files++;
+        } else if (h->typeflag == '2') {                  /* symbolic link */
+            char target[101];                             /* linkname is <= 100 bytes */
+            int t = 0;
+            for (; h->linkname[t] && t < 100; t++) target[t] = h->linkname[t];
+            target[t] = '\0';
+            make_parents(path);
+            if (target[0]) vfs_symlink(target, path);
+            files++;
         }
 
         off += (fsize + 511) & ~(uint64_t)511;     /* advance past padded content */

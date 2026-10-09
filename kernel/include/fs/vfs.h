@@ -29,6 +29,7 @@ typedef enum vtype {
     VNODE_DIR,          /* directory        */
     VNODE_CHR,          /* character device */
     VNODE_FIFO,         /* pipe (Phase 20-K) */
+    VNODE_LNK,          /* symbolic link (U1-a) */
 } vtype_t;
 
 struct vnode;
@@ -45,6 +46,11 @@ typedef struct vfs_ops {
     int  (*truncate)(struct vnode* vn, uint64_t len);
     int  (*rename)(struct vnode* olddir, const char* oldname,
                    struct vnode* newdir, const char* newname);     /* same fs */
+    /* Create a symlink `name` in `dir` pointing at `target`; returns the new
+     * vnode or NULL. Read a symlink's target into `buf` (NUL-terminated),
+     * returning its length or -1. (U1-a) */
+    struct vnode* (*symlink)(struct vnode* dir, const char* name, const char* target);
+    int  (*readlink)(struct vnode* vn, char* buf, size_t sz);
 } vfs_ops_t;
 
 typedef struct vnode {
@@ -149,10 +155,18 @@ vnode_t*  vfs_root(void);
 int       path_canonicalize(const char* cwd, const char* path,
                             char* out, size_t outsz);
 
-vnode_t*  vfs_resolve(const char* path);
+vnode_t*  vfs_resolve(const char* path);          /* follows a trailing symlink */
+/* Like vfs_resolve but a trailing symlink is returned as the link itself, not
+ * followed — for readlink / lstat (U1-a). */
+vnode_t*  vfs_resolve_nofollow(const char* path);
 /* Resolve the parent directory of `path` and copy the final component into
  * `leaf` (>= VFS_NAME_MAX+1). Returns the parent vnode or NULL. */
 vnode_t*  vfs_resolve_parent(const char* path, char* leaf);
+
+/* Create a symlink at `path` pointing at `target`; 0 or -errno (U1-a). */
+int       vfs_symlink(const char* target, const char* path);
+/* Read the target of the symlink at `path` into `buf`; length or -errno. */
+long      vfs_readlink(const char* path, char* buf, size_t sz);
 
 /* -------- vnode-level helpers -------- */
 long      vfs_read(vnode_t* vn, void* buf, size_t n, uint64_t off);

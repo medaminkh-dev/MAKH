@@ -43,12 +43,17 @@ int vfs_mount(const char* path, vnode_t* mroot) {
 /* Path resolution                                                            */
 /* -------------------------------------------------------------------------- */
 
-/* Walk `path`; if want_parent, stop at the last component and return its
- * directory, copying the final name into `leaf`. */
-static vnode_t* walk(const char* path, int want_parent, char* leaf) {
-    if (!path || path[0] != '/') return NULL;      /* absolute paths only */
-    vnode_t* cur = cross_mount(root_vnode);
-    if (!cur) return NULL;
+#define VFS_SYMLINK_MAX 8      /* resolution loop/depth guard (ELOOP) */
+
+/* Resolve `path` relative to `start`, following symlinks. want_parent stops at
+ * the parent of the last component (copying it into `leaf`); follow_last follows
+ * a trailing symlink; `depth` bounds symlink recursion. A symlink target is
+ * re-resolved from the root (absolute) or from the link's own directory
+ * (relative). Returns the vnode, or NULL. */
+static vnode_t* resolve_from(vnode_t* start, const char* path, int want_parent,
+                             char* leaf, int follow_last, int depth) {
+    if (!start || depth > VFS_SYMLINK_MAX) return NULL;
+    vnode_t* cur = start;
 
     const char* p = path;
     while (*p) {
@@ -76,7 +81,21 @@ static vnode_t* walk(const char* path, int want_parent, char* leaf) {
         if (name[0] == '.' && name[1] == '\0') continue;     /* "." */
         vnode_t* child = cur->ops->lookup(cur, name);
         if (!child) return NULL;
-        cur = cross_mount(child);
+        child = cross_mount(child);
+
+        /* Follow a symlink: always for an interior component, and for the final
+         * one unless the caller wants the link itself (readlink/lstat). The
+         * target resolves from root if absolute, else from `cur` (the directory
+         * holding the link). */
+        if (child->type == VNODE_LNK && (!last || follow_last)) {
+            char tgt[VFS_PATH_MAX];
+            if (!child->ops || !child->ops->readlink ||
+                child->ops->readlink(child, tgt, sizeof tgt) <= 0) return NULL;
+            vnode_t* base = (tgt[0] == '/') ? cross_mount(root_vnode) : cur;
+            child = resolve_from(base, tgt, 0, NULL, 1, depth + 1);
+            if (!child) return NULL;
+        }
+        cur = child;
     }
 
     if (want_parent) {                              /* path was "/" */
@@ -86,13 +105,24 @@ static vnode_t* walk(const char* path, int want_parent, char* leaf) {
     return cur;
 }
 
+/* Walk an absolute `path` from the root. */
+static vnode_t* walk(const char* path, int want_parent, char* leaf, int follow_last) {
+    if (!path || path[0] != '/') return NULL;       /* absolute paths only */
+    return resolve_from(cross_mount(root_vnode), path, want_parent, leaf, follow_last, 0);
+}
+
 vnode_t* vfs_resolve(const char* path) {
     if (path && path[0] == '/' && path[1] == '\0') return cross_mount(root_vnode);
-    return walk(path, 0, NULL);
+    return walk(path, 0, NULL, 1);
+}
+
+vnode_t* vfs_resolve_nofollow(const char* path) {
+    if (path && path[0] == '/' && path[1] == '\0') return cross_mount(root_vnode);
+    return walk(path, 0, NULL, 0);
 }
 
 vnode_t* vfs_resolve_parent(const char* path, char* leaf) {
-    return walk(path, 1, leaf);
+    return walk(path, 1, leaf, 1);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -138,6 +168,22 @@ int vfs_rename(const char* oldpath, const char* newpath) {
      * the caller must do itself. */
     if (!od->ops || !od->ops->rename || od->ops != nd->ops) return -EINVAL;
     return od->ops->rename(od, oleaf, nd, nleaf);
+}
+
+int vfs_symlink(const char* target, const char* path) {
+    char leaf[VFS_NAME_MAX + 1];
+    vnode_t* dir = vfs_resolve_parent(path, leaf);
+    if (!dir || leaf[0] == '\0' || !dir->ops || !dir->ops->symlink) return -EINVAL;
+    if (dir->ops->lookup && dir->ops->lookup(dir, leaf)) return -EEXIST;
+    return dir->ops->symlink(dir, leaf, target) ? 0 : -EIO;
+}
+
+long vfs_readlink(const char* path, char* buf, size_t sz) {
+    vnode_t* vn = vfs_resolve_nofollow(path);       /* the link itself, not its target */
+    if (!vn) return -ENOENT;
+    if (vn->type != VNODE_LNK || !vn->ops || !vn->ops->readlink) return -EINVAL;
+    int r = vn->ops->readlink(vn, buf, sz);
+    return r < 0 ? -EINVAL : (long)r;
 }
 
 /* -------------------------------------------------------------------------- */

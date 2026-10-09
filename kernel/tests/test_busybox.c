@@ -23,3 +23,29 @@ KTEST(busybox, ash_runs_a_script) {
     sys_waitpid(pid, &status);
     KEXPECT_EQ(status, 42);
 }
+
+/* U1-b: busybox applets reached as /bin/<name> symlinks. The kernel resolves
+ * the symlink to /bin/busybox during execve, while argv[0]'s basename selects
+ * the applet (multi-call dispatch) — a user types `ls`, not `busybox ls`. */
+KTEST(busybox, applets_via_symlink) {
+    /* /bin/true and /bin/false -> busybox: the applet decides the exit status. */
+    char* at[] = { "true",  0 };
+    int p1 = proc_spawn_user_argv("/bin/true", at);
+    KASSERT_TEST(p1 > 0);
+    int s1 = -1; sys_waitpid(p1, &s1);
+    KEXPECT_EQ(s1, 0);
+
+    char* af[] = { "false", 0 };
+    int p2 = proc_spawn_user_argv("/bin/false", af);
+    KASSERT_TEST(p2 > 0);
+    int s2 = -1; sys_waitpid(p2, &s2);
+    KEXPECT_EQ(s2, 1);
+
+    /* /bin/ash -> busybox: busybox's shell reached by a conventional path
+     * (MAKH keeps its own /bin/sh). */
+    char* ash[] = { "ash", "-c", "exit $((5+2))", 0 };
+    int p3 = proc_spawn_user_argv("/bin/ash", ash);
+    KASSERT_TEST(p3 > 0);
+    int s3 = -1; sys_waitpid(p3, &s3);
+    KEXPECT_EQ(s3, 7);
+}

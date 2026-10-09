@@ -154,3 +154,45 @@ KTEST(vfs, syscalls_route_to_filesystem) {
     KEXPECT(syscall_handler(SYS_READ, (uint64_t)fd, (uint64_t)b, 6) == 6);
     syscall_handler(SYS_CLOSE, (uint64_t)fd, 0, 0);
 }
+
+/* U1-a: symbolic links. Resolution follows a link to its target (so e.g.
+ * /bin/ls -> /bin/busybox loads busybox), readlink reads the link itself, and a
+ * cycle is bounded instead of hanging. */
+KTEST(vfs, symlink_follow_readlink_and_loop) {
+    /* target file + a symlink to it */
+    vnode_t* tgt = vfs_create("/sltarget.txt", VNODE_REG);
+    KASSERT_TEST(tgt != NULL);
+    KEXPECT_EQ((int)vfs_write(tgt, "linkee", 6, 0), 6);
+    KEXPECT_EQ(vfs_symlink("/sltarget.txt", "/sllink.txt"), 0);
+
+    /* resolve() follows the link to the regular file */
+    vnode_t* via = vfs_resolve("/sllink.txt");
+    KASSERT_TEST(via != NULL);
+    KEXPECT_EQ((int)via->type, (int)VNODE_REG);
+    char buf[16]; memset(buf, 0, sizeof buf);
+    KEXPECT_EQ((int)vfs_read(via, buf, 6, 0), 6);
+    KEXPECT_EQ(memcmp(buf, "linkee", 6), 0);
+
+    /* no-follow returns the link itself; readlink gives the target string */
+    vnode_t* lnk = vfs_resolve_nofollow("/sllink.txt");
+    KASSERT_TEST(lnk != NULL);
+    KEXPECT_EQ((int)lnk->type, (int)VNODE_LNK);
+    char t[32]; memset(t, 0, sizeof t);
+    KEXPECT_EQ((int)vfs_readlink("/sllink.txt", t, sizeof t), 13);
+    KEXPECT_EQ(strcmp(t, "/sltarget.txt"), 0);
+
+    /* a symlink to a directory is walked through to reach a child */
+    KASSERT_TEST(vfs_mkdir("/slrealdir") == 0);
+    vnode_t* inner = vfs_create("/slrealdir/inner.txt", VNODE_REG);
+    KASSERT_TEST(inner != NULL);
+    KEXPECT_EQ((int)vfs_write(inner, "X", 1, 0), 1);
+    KEXPECT_EQ(vfs_symlink("/slrealdir", "/sldir"), 0);
+    vnode_t* thru = vfs_resolve("/sldir/inner.txt");
+    KASSERT_TEST(thru != NULL);
+    KEXPECT_EQ((int)thru->type, (int)VNODE_REG);
+
+    /* a cycle resolves to NULL (ELOOP) rather than looping forever */
+    KEXPECT_EQ(vfs_symlink("/loopb", "/loopa"), 0);
+    KEXPECT_EQ(vfs_symlink("/loopa", "/loopb"), 0);
+    KEXPECT_EQ(vfs_resolve("/loopa") == NULL, 1);
+}

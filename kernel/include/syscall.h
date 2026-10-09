@@ -32,6 +32,10 @@
 #define SYS_RENAME         82
 #define SYS_RENAMEAT       264
 #define SYS_RENAMEAT2      316
+#define SYS_SYMLINK        88
+#define SYS_SYMLINKAT      266
+#define SYS_READLINK       89
+#define SYS_READLINKAT     267
 #define SYS_MKDIR          83
 #define SYS_MKDIRAT        258
 #define SYS_RMDIR          84

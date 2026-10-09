@@ -278,7 +278,7 @@ MAKE_PREBUILT = user/make/make
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
+$(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
 	@echo "Building initrd.tar (+ user programs + tcc sysroot + make + selfhost)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
@@ -287,6 +287,15 @@ $(INITRD): $(shell find initrd user/sysroot user/make/proj user/selfhost -type f
 	@cp $(MUSL_FIO) build/initrd/bin/fio
 	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
+	@# U1-b: expose busybox applets as /bin/<name> symlinks (relative to busybox),
+	@# so the kernel resolves the symlink to busybox while argv[0]'s basename picks
+	@# the applet (multi-call dispatch). busybox's shell is /bin/ash (MAKH keeps
+	@# its own /bin/sh and /bin/echo, so those names are not symlinked here). Plain
+	@# `ln -s` (no -f) deliberately fails the build if a name ever collides with a
+	@# real program already copied into /bin.
+	@for a in ash ls cat grep mkdir rmdir rm cp mv pwd true false head tail \
+	          wc touch ln env uname sleep date clear sort cut; do \
+	    ln -s busybox build/initrd/bin/$$a; done
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
 	@cp $(MAKE_PREBUILT) build/initrd/bin/make
 	@cp user/tcc/hello.c build/initrd/share/tcc-hello.c

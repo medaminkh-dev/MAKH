@@ -31,8 +31,8 @@ static vnode_t* mk_vnode(vtype_t type) {
     vn->ops = &tmpfs_ops;
     if (type == VNODE_DIR) {
         vn->priv = kcalloc(1, sizeof(tmpfs_dir_t));
-    } else if (type == VNODE_REG) {
-        vn->priv = kcalloc(1, sizeof(tmpfs_file_t));
+    } else if (type == VNODE_REG || type == VNODE_LNK) {
+        vn->priv = kcalloc(1, sizeof(tmpfs_file_t));   /* a symlink stores its target here */
     }
     if (type != VNODE_CHR && !vn->priv) { kfree(vn); return NULL; }
     return vn;
@@ -116,9 +116,37 @@ static int tmpfs_truncate(vnode_t* vn, uint64_t len) {
     return 0;
 }
 
+/* Symlinks (U1-a): the target string is kept in the same buffer a regular file
+ * uses, so it reclaims through the VNODE_REG/VNODE_LNK path in free_vnode. */
+static vnode_t* tmpfs_symlink(vnode_t* dir, const char* name, const char* target) {
+    if (tmpfs_lookup(dir, name)) return NULL;
+    vnode_t* vn = mk_vnode(VNODE_LNK);
+    if (!vn) return NULL;
+    size_t len = strlen(target);
+    tmpfs_file_t* f = (tmpfs_file_t*)vn->priv;
+    f->data = kmalloc(len + 1);
+    if (!f->data) { kfree(vn->priv); kfree(vn); return NULL; }
+    memcpy(f->data, target, len + 1);
+    f->cap = len + 1;
+    vn->size = len;
+    if (!tmpfs_link(dir, name, vn)) { kfree(f->data); kfree(vn->priv); kfree(vn); return NULL; }
+    return vn;
+}
+
+static int tmpfs_readlink(vnode_t* vn, char* buf, size_t sz) {
+    if (vn->type != VNODE_LNK || !vn->priv || sz == 0) return -1;
+    tmpfs_file_t* f = (tmpfs_file_t*)vn->priv;
+    if (!f->data) return -1;
+    size_t len = vn->size;
+    if (len >= sz) len = sz - 1;            /* truncate to fit, keep NUL-terminated */
+    memcpy(buf, f->data, len);
+    buf[len] = '\0';
+    return (int)len;
+}
+
 static void free_vnode(vnode_t* vn) {
     if (!vn) return;
-    if (vn->type == VNODE_REG && vn->priv) {
+    if ((vn->type == VNODE_REG || vn->type == VNODE_LNK) && vn->priv) {
         kfree(((tmpfs_file_t*)vn->priv)->data);
         kfree(vn->priv);
     } else if (vn->type == VNODE_DIR && vn->priv) {
@@ -155,6 +183,8 @@ static const vfs_ops_t tmpfs_ops = {
     .readdir = tmpfs_readdir,
     .unlink = tmpfs_unlink,
     .truncate = tmpfs_truncate,
+    .symlink = tmpfs_symlink,
+    .readlink = tmpfs_readlink,
 };
 
 vnode_t* tmpfs_create_root(void) {

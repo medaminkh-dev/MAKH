@@ -298,6 +298,30 @@ static int64_t do_rename(uint64_t uold, uint64_t unew, int from_user) {
     return vfs_rename(oabs, nabs);
 }
 
+/* symlink(target, linkpath): the target is stored verbatim (it may be relative
+ * and need not exist); only linkpath is made absolute against the cwd (U1-a). */
+static int64_t do_symlink(uint64_t utarget, uint64_t upath, int from_user) {
+    char tgt[VFS_PATH_MAX], path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(tgt, sizeof(tgt), utarget, from_user); if (rc < 0) return rc;
+    rc     = copy_path(path, sizeof(path), upath, from_user); if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_symlink(tgt, abs);
+}
+
+/* readlink(path, buf, size): copy up to `size` bytes of the link target out to
+ * user space (no NUL terminator, POSIX-style); returns the byte count. */
+static int64_t do_readlink(uint64_t upath, uint64_t ubuf, uint64_t size, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX], tgt[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user); if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    long n = vfs_readlink(abs, tgt, sizeof(tgt));
+    if (n < 0) return n;
+    if ((uint64_t)n > size) n = (long)size;          /* caller's buffer bounds it */
+    if (from_user) { if (copy_to_user((void*)(uintptr_t)ubuf, tgt, (size_t)n) < 0) return -EFAULT; }
+    else           memcpy((void*)(uintptr_t)ubuf, tgt, (size_t)n);
+    return n;
+}
+
 static int64_t do_chdir(uint64_t upath, int from_user) {
     process_t* cur = current_process;
     if (!cur || !cur->is_user) return -ENOSYS;
@@ -637,6 +661,10 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_RENAME:       return do_rename(a1, a2, from_user);
         case SYS_RENAMEAT:     return do_rename(a2, a4, from_user);   /* (ofd,old,nfd,new) */
         case SYS_RENAMEAT2:    return do_rename(a2, a4, from_user);   /* flags ignored */
+        case SYS_SYMLINK:      return do_symlink(a1, a2, from_user);          /* (target, linkpath) */
+        case SYS_SYMLINKAT:    return do_symlink(a1, a3, from_user);          /* (target, dirfd, linkpath) */
+        case SYS_READLINK:     return do_readlink(a1, a2, a3, from_user);     /* (path, buf, size) */
+        case SYS_READLINKAT:   return do_readlink(a2, a3, a4, from_user);     /* (dirfd, path, buf, size) */
         case SYS_ACCESS:       return do_access(a1, from_user);
         case SYS_FACCESSAT:    return do_access(a2, from_user);   /* (dirfd,path,mode) */
         case SYS_CHDIR:        return do_chdir(a1, from_user);

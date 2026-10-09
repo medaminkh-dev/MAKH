@@ -219,6 +219,7 @@ CI runs the suite and a stress job on every push.
 | 21-C | **make on MAKH**: GNU make drives `tcc` across a multi-file project (fork/exec/wait) *on MAKH*, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21C_MAKE.md) |
 | 21-D | **Self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with `make`+`tcc` *on MAKH*, and the rebuilt binary behaves identically (F21) | ✅ [docs](docs/PHASE21D_SELFHOST.md) |
 | 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space, reachable under any CR3 | ✅ [docs](docs/PHASE22_MMIO_WINDOW.md) |
+| 23 | **Symlinks + shell commands**: VFS symbolic links (`readlink`/`symlink` syscalls), and busybox applets as `/bin/<name>` so MAKH has real commands | ✅ [docs](docs/PHASE23_SYMLINKS_SHELL.md) |
 
 ## 📚 Documentation
 
