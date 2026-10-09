@@ -190,6 +190,29 @@ void pmm_init(struct multiboot_tag_mmap *mmap_tag) {
 }
 
 /**
+ * pmm_reserve_region - Mark a physical range as used so it is never allocated
+ * @phys_addr: start of the range (need not be page-aligned)
+ * @len:       length in bytes
+ *
+ * The bootloader places modules (our initrd) wherever RAM is free, which can be
+ * well above the fixed low-memory reservation. Unless those frames are reserved,
+ * the allocator hands them out for the heap / struct-page array / tmpfs buffers
+ * and corrupts the archive while tar_load_initrd() is still reading it. Rounds
+ * outward to whole pages, is bounds-checked and idempotent; call it right after
+ * pmm_init(), before any allocation that could land inside the range.
+ */
+void pmm_reserve_region(uint64_t phys_addr, uint64_t len) {
+    if (len == 0) return;
+    uint64_t start = phys_addr / PAGE_SIZE;                         /* round down */
+    uint64_t end   = (phys_addr + len + PAGE_SIZE - 1) / PAGE_SIZE; /* round up   */
+    if (end > max_page_num) end = max_page_num;
+    irqflags_t f = local_irq_save();
+    for (uint64_t p = start; p < end; p++)
+        if (!bitmap_test(p)) { bitmap_set(p); used_pages++; }
+    local_irq_restore(f);
+}
+
+/**
  * pmm_alloc_page - Allocate a single physical page (4KB)
  * Uses first-fit algorithm
  * Returns: Physical address of allocated page, or NULL if out of memory

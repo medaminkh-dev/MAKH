@@ -774,25 +774,33 @@ void kernel_main(void) {
     print_check();
     terminal_writestring("Initializing Physical Memory Manager...\n");
     
-    /* Find mmap tag from multiboot info */
+    /* Find the mmap tag (for PMM) and the first module tag (the initrd) in one
+     * pass. We need the module's extent before PMM hands out any frame: GRUB
+     * places the module in free RAM that can sit above the fixed low-memory
+     * reservation, so those frames must be reserved or the heap / struct-page
+     * array / tmpfs buffers overwrite the archive while it is still being read. */
     struct multiboot_tag_mmap* mmap_tag = NULL;
+    struct multiboot_tag_module* mod_tag = NULL;
     if (multiboot_info_ptr != 0) {
         struct multiboot_info* mb_info = (struct multiboot_info*)(uintptr_t)multiboot_info_ptr;
         struct multiboot_tag* tag = (struct multiboot_tag*)((uintptr_t)mb_info + 8);
-        
+
         while (tag->type != MULTIBOOT_TAG_TYPE_END) {
-            if (tag->type == MULTIBOOT_TAG_TYPE_MMAP) {
+            if (tag->type == MULTIBOOT_TAG_TYPE_MMAP)
                 mmap_tag = (struct multiboot_tag_mmap*)tag;
-                break;
-            }
+            else if (tag->type == MULTIBOOT_TAG_TYPE_MODULE && !mod_tag)
+                mod_tag = (struct multiboot_tag_module*)tag;
             /* Move to next tag (8-byte aligned) */
             uintptr_t next_addr = ((uintptr_t)tag + ((tag->size + 7) & ~7));
             tag = (struct multiboot_tag*)next_addr;
         }
     }
-    
-    /* Initialize PMM */
+
+    /* Initialize PMM, then immediately reserve the initrd module's frames. */
     pmm_init(mmap_tag);
+    if (mod_tag)
+        pmm_reserve_region(mod_tag->mod_start,
+                           (uint64_t)mod_tag->mod_end - mod_tag->mod_start);
     
     /* PMM Tests */
     print_ok();

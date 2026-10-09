@@ -34,6 +34,15 @@
 void pmm_init(struct multiboot_tag_mmap *mmap_tag);
 
 /**
+ * pmm_reserve_region - Mark a physical byte range as permanently used
+ * @phys_addr: start of the range (need not be page-aligned)
+ * @len:       length in bytes
+ * Rounds outward to whole pages. Call right after pmm_init() for bootloader
+ * modules (the initrd) so the allocator never hands out and clobbers them.
+ */
+void pmm_reserve_region(uint64_t phys_addr, uint64_t len);
+
+/**
  * pmm_alloc_page - Allocate a single physical page (4KB)
  * Returns: Physical address of allocated page, or NULL if out of memory
  */

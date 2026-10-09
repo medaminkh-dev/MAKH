@@ -213,6 +213,7 @@ CI runs the suite and a stress job on every push.
 | 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (ext2 now read/write) | ✅ [docs](docs/PHASE20T_EXT2_DIROPS.md) |
 | 21 | **Higher-half kernel**: kernel relinked to the top -2 GiB + HHDM; the lower canonical half is freed per-process, so a standard non-PIE binary runs at `0x400000` | ✅ [docs](docs/PHASE21_HIGHERHALF.md) |
 | 21-A | **Self-hosting begins**: `tcc` runs *on MAKH*, compiles C to a native `0x400000` executable, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21A_SELFHOST_TCC.md) |
+| 21-B | **libc compile on MAKH**: `tcc` links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot *on MAKH*, and MAKH runs it (F21) | ✅ [docs](docs/PHASE21B_LIBC_COMPILE.md) |
 
 ## 📚 Documentation
 

@@ -273,8 +273,8 @@ TCC_PREBUILT = user/tcc/tcc
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) user/tcc/hello.c
-	@echo "Building initrd.tar (+ user programs)"
+$(INITRD): $(shell find initrd user/sysroot -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) user/tcc/hello.c user/tcc/full.c
+	@echo "Building initrd.tar (+ user programs + tcc sysroot)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
@@ -284,6 +284,8 @@ $(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
 	@cp user/tcc/hello.c build/initrd/share/tcc-hello.c
+	@cp user/tcc/full.c build/initrd/share/tcc-full.c
+	@cp -r user/sysroot/usr build/initrd/usr          # musl headers + libc.a + crt + libtcc1.a
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.

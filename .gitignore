@@ -16,5 +16,9 @@ initrd.tar
 !initrd/
 !initrd/**
 
+# The checked-in musl sysroot (F21-b) ships prebuilt crt objects — these are
+# vendored toolchain inputs, not build output, so override the generic *.o rule.
+!user/sysroot/usr/lib/*.o
+
 # Build artifacts
 build/
