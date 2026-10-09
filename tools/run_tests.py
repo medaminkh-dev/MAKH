@@ -31,7 +31,7 @@ def main():
         return 2
 
     iso = sys.argv[1]
-    timeout = 60
+    timeout = 180   # the suite now runs tcc on MAKH (a real compile), so be generous
     if "--timeout" in sys.argv:
         timeout = int(sys.argv[sys.argv.index("--timeout") + 1])
 

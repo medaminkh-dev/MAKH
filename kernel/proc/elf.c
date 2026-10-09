@@ -63,6 +63,15 @@
  * generous headroom and bumps easily when real binaries need it. */
 #define USER_SEG_MAX  (16u * 1024u * 1024u)
 
+/* With the load window now spanning the whole lower half (Phase 21), a per-
+ * segment cap is no longer enough to bound the loader's work: a malformed ELF
+ * could present thousands of valid-looking PT_LOADs. Cap the header count and
+ * the summed image so an untrusted ELF (the KFUZZ "elf" target hammers these)
+ * can never drive elf_load into a huge allocation loop. Real executables have a
+ * handful of program headers and are a few MiB. */
+#define ELF_MAX_PHNUM 64
+#define ELF_MAX_TOTAL (64u * 1024u * 1024u)
+
 typedef struct {
     uint32_t e_magic;
     uint8_t  e_class, e_data, e_version, e_osabi, e_pad[8];
@@ -84,6 +93,7 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
     if (eh.e_magic != ELF_MAGIC || eh.e_class != 2 /*ELFCLASS64*/) return -ENOEXEC;
     if (eh.e_type != ET_EXEC && eh.e_type != ET_DYN) return -ENOEXEC;
     if (eh.e_phnum == 0 || eh.e_phentsize != sizeof(elf64_phdr_t)) return -ENOEXEC;
+    if (eh.e_phnum > ELF_MAX_PHNUM) return -ENOEXEC;   /* absurd header count */
 
     /* A PIE floats; a fixed executable is already placed. */
     uint64_t bias = (eh.e_type == ET_DYN) ? USER_PIE_BASE : 0;
@@ -93,6 +103,7 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
      * contains it. Both are discovered while we walk the headers below. */
     uint64_t phdr_va = 0;              /* from PT_PHDR (p_vaddr) */
     uint64_t phdr_va_fallback = 0;     /* from the LOAD covering e_phoff */
+    uint64_t total_mem = 0;            /* summed PT_LOAD memsz (bounded work) */
 
     for (uint16_t i = 0; i < eh.e_phnum; i++) {
         elf64_phdr_t ph;
@@ -117,6 +128,10 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
          * malformed; cap the copy at p_memsz so we never read past the frames
          * we allocate for it. */
         if (ph.p_filesz > ph.p_memsz) return -ENOEXEC;
+
+        /* Bound the total image across all segments, not just each one. */
+        total_mem += ph.p_memsz;
+        if (total_mem > ELF_MAX_TOTAL) return -ENOMEM;
 
         /* Does the program-header table live inside this segment's file image?
          * Keep it as the AT_PHDR fallback when there is no PT_PHDR entry. */

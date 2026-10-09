@@ -212,6 +212,7 @@ CI runs the suite and a stress job on every push.
 | 20-S | **Toolchain syscalls**: `execve` envp + `openat`/`*at` family; musl file I/O on ext2 | ✅ [docs](docs/PHASE20S_G3_SYSCALLS.md) |
 | 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (ext2 now read/write) | ✅ [docs](docs/PHASE20T_EXT2_DIROPS.md) |
 | 21 | **Higher-half kernel**: kernel relinked to the top -2 GiB + HHDM; the lower canonical half is freed per-process, so a standard non-PIE binary runs at `0x400000` | ✅ [docs](docs/PHASE21_HIGHERHALF.md) |
+| 21-A | **Self-hosting begins**: `tcc` runs *on MAKH*, compiles C to a native `0x400000` executable, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21A_SELFHOST_TCC.md) |
 
 ## 📚 Documentation
 

@@ -171,7 +171,8 @@ C_SOURCES_TESTS = \
     kernel/tests/test_busybox.c \
     kernel/tests/test_virtio_blk.c \
     kernel/tests/test_ext2.c \
-    kernel/tests/test_g3.c
+    kernel/tests/test_g3.c \
+    kernel/tests/test_f21.c
 
 # Combine all C sources
 C_SOURCES = \
@@ -264,18 +265,25 @@ MUSL_ENVTEST = user/musl/envtest
 # musl with the ziglang toolchain and checked in (see docs/PHASE20O2_BUSYBOX.md
 # for the exact recipe). It ships into the initrd as /bin/busybox.
 BUSYBOX_PREBUILT = user/musl/busybox
+# Phase 21 (F21, self-hosting): a tinycc built as a static-PIE against musl with
+# the ziglang toolchain and checked in (see user/tcc/README.md and
+# docs/PHASE21_HIGHERHALF.md). It runs on MAKH and compiles C to a standard
+# non-PIE ET_EXEC at 0x400000 — which the higher-half kernel now loads.
+TCC_PREBUILT = user/tcc/tcc
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT)
+$(INITRD): $(shell find initrd -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) user/tcc/hello.c
 	@echo "Building initrd.tar (+ user programs)"
-	@rm -rf build/initrd && mkdir -p build/initrd/bin
+	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
 	@cp $(USER_BINS) build/initrd/bin/
 	@cp $(MUSL_PREBUILT) build/initrd/bin/muslhello
 	@cp $(MUSL_FIO) build/initrd/bin/fio
 	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
+	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
+	@cp user/tcc/hello.c build/initrd/share/tcc-hello.c
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.
@@ -405,7 +413,7 @@ $(EXT2IMG): tools/mkext2.sh
 $(TEST_ISO): $(TESTDISK) $(EXT2IMG)
 
 test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
-	@python3 tools/run_tests.py $(TEST_ISO)
+	@python3 tools/run_tests.py $(TEST_ISO) --timeout 240
 
 # Boot the normal image, type commands through the emulated PS/2 keyboard and
 # check what the shell prints (ping over the real e1000, arp, mem, ...).

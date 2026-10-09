@@ -50,6 +50,7 @@ numbers are navigable rather than mysterious.
 | 20-S | **Toolchain syscalls**: `execve` envp + the `openat`/`*at` family; musl file I/O on ext2 (G3) | [PHASE20S_G3_SYSCALLS](PHASE20S_G3_SYSCALLS.md) |
 | 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (G2-d) | [PHASE20T_EXT2_DIROPS](PHASE20T_EXT2_DIROPS.md) |
 | 21 | **Higher-half kernel**: kernel → top -2 GiB, HHDM, the low half freed per-process, standard non-PIE binaries at 0x400000 (F21 Path A) | [PHASE21_HIGHERHALF](PHASE21_HIGHERHALF.md) |
+| 21-A | **tcc self-hosts**: a real C compiler runs on MAKH, compiles C to a native executable, and MAKH runs it (F21) | [PHASE21A_SELFHOST_TCC](PHASE21A_SELFHOST_TCC.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
