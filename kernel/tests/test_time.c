@@ -30,3 +30,14 @@ KTEST(time, krandom_draws_are_distinct) {
     }
     KEXPECT_EQ(dup, 0);
 }
+
+/* U2: identity/limit syscalls from ring 3. /bin/unametest calls uname(2) and
+ * getrlimit(2) and exits 42 iff uname reports sysname "MAKH" + an x86 machine
+ * and getrlimit(RLIMIT_NOFILE) returns a nonzero current limit. */
+KTEST(syscalls, uname_and_getrlimit_from_userspace) {
+    int pid = proc_spawn_user("/bin/unametest");
+    KASSERT_TEST(pid > 0);
+    int status = -1;
+    sys_waitpid(pid, &status);
+    KEXPECT_EQ(status, 42);
+}

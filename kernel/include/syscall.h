@@ -36,6 +36,10 @@
 #define SYS_SYMLINKAT      266
 #define SYS_READLINK       89
 #define SYS_READLINKAT     267
+#define SYS_UNAME          63
+#define SYS_GETRLIMIT      97
+#define SYS_SETRLIMIT      160
+#define SYS_PRLIMIT64      302
 #define SYS_MKDIR          83
 #define SYS_MKDIRAT        258
 #define SYS_RMDIR          84

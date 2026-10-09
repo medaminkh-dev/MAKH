@@ -220,6 +220,7 @@ CI runs the suite and a stress job on every push.
 | 21-D | **Self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with `make`+`tcc` *on MAKH*, and the rebuilt binary behaves identically (F21) | ✅ [docs](docs/PHASE21D_SELFHOST.md) |
 | 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space, reachable under any CR3 | ✅ [docs](docs/PHASE22_MMIO_WINDOW.md) |
 | 23 | **Symlinks + shell commands**: VFS symbolic links (`readlink`/`symlink` syscalls), and busybox applets as `/bin/<name>` so MAKH has real commands | ✅ [docs](docs/PHASE23_SYMLINKS_SHELL.md) |
+| 24 | **uname + rlimits**: `uname`, `getrlimit`/`setrlimit`/`prlimit64` so programs querying identity and limits at startup run | ✅ [docs](docs/PHASE24_UNAME_RLIMIT.md) |
 
 ## 📚 Documentation
 

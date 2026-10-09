@@ -308,6 +308,55 @@ static int64_t do_symlink(uint64_t utarget, uint64_t upath, int from_user) {
     return vfs_symlink(tgt, abs);
 }
 
+/* uname(2): a fixed utsname — six NUL-padded 65-byte fields (sysname, nodename,
+ * release, version, machine, domainname). Enough for libc startup and the
+ * busybox `uname` applet. */
+static int64_t do_uname(uint64_t ubuf, int from_user) {
+    char uts[6 * 65];
+    memset(uts, 0, sizeof uts);
+    static const char* const f[6] = {
+        "MAKH", "makh", "0.1.0-dev", "MAKH 0.1.0-dev x86_64", "x86_64", "(none)"
+    };
+    for (int i = 0; i < 6; i++) {
+        size_t l = strlen(f[i]); if (l > 64) l = 64;
+        memcpy(uts + i * 65, f[i], l);
+    }
+    if (from_user) { if (copy_to_user((void*)(uintptr_t)ubuf, uts, sizeof uts) < 0) return -EFAULT; }
+    else           memcpy((void*)(uintptr_t)ubuf, uts, sizeof uts);
+    return 0;
+}
+
+/* rlimits: MAKH enforces none, so report generous values a program reads at
+ * startup. NOFILE matches the fd table so an fd_set sized from it is right. */
+#define RLIMIT_STACK   3
+#define RLIMIT_NOFILE  7
+#define RLIM_INFINITY  (~0ULL)
+static void fill_rlimit(uint64_t resource, uint64_t out[2]) {
+    switch (resource) {
+        case RLIMIT_NOFILE: out[0] = VFS_MAX_FDS;        out[1] = VFS_MAX_FDS;      break;
+        case RLIMIT_STACK:  out[0] = 8ULL * 1024 * 1024; out[1] = RLIM_INFINITY;    break;
+        default:            out[0] = RLIM_INFINITY;      out[1] = RLIM_INFINITY;    break;
+    }
+}
+static int64_t do_getrlimit(uint64_t resource, uint64_t urlim, int from_user) {
+    uint64_t r[2]; fill_rlimit(resource, r);
+    if (from_user) { if (copy_to_user((void*)(uintptr_t)urlim, r, sizeof r) < 0) return -EFAULT; }
+    else           memcpy((void*)(uintptr_t)urlim, r, sizeof r);
+    return 0;
+}
+static int64_t do_setrlimit(void) { return 0; }   /* accepted, not enforced */
+
+/* prlimit64(pid, resource, new, old): fill *old if requested, accept *new. */
+static int64_t do_prlimit64(uint64_t resource, uint64_t unew, uint64_t uold, int from_user) {
+    (void)unew;
+    if (uold) {
+        uint64_t r[2]; fill_rlimit(resource, r);
+        if (from_user) { if (copy_to_user((void*)(uintptr_t)uold, r, sizeof r) < 0) return -EFAULT; }
+        else           memcpy((void*)(uintptr_t)uold, r, sizeof r);
+    }
+    return 0;
+}
+
 /* readlink(path, buf, size): copy up to `size` bytes of the link target out to
  * user space (no NUL terminator, POSIX-style); returns the byte count. */
 static int64_t do_readlink(uint64_t upath, uint64_t ubuf, uint64_t size, int from_user) {
@@ -665,6 +714,10 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_SYMLINKAT:    return do_symlink(a1, a3, from_user);          /* (target, dirfd, linkpath) */
         case SYS_READLINK:     return do_readlink(a1, a2, a3, from_user);     /* (path, buf, size) */
         case SYS_READLINKAT:   return do_readlink(a2, a3, a4, from_user);     /* (dirfd, path, buf, size) */
+        case SYS_UNAME:        return do_uname(a1, from_user);
+        case SYS_GETRLIMIT:    return do_getrlimit(a1, a2, from_user);        /* (resource, rlim) */
+        case SYS_SETRLIMIT:    return do_setrlimit();                         /* (resource, rlim): no-op */
+        case SYS_PRLIMIT64:    return do_prlimit64(a2, a3, a4, from_user);    /* (pid, resource, new, old) */
         case SYS_ACCESS:       return do_access(a1, from_user);
         case SYS_FACCESSAT:    return do_access(a2, from_user);   /* (dirfd,path,mode) */
         case SYS_CHDIR:        return do_chdir(a1, from_user);

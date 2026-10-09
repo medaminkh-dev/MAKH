@@ -58,6 +58,7 @@ numbers are navigable rather than mysterious.
 | 21-D | **self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with make+tcc, and the rebuilt binary behaves identically (F21) | [PHASE21D_SELFHOST](PHASE21D_SELFHOST.md) |
 | 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space — reachable under any CR3 | [PHASE22_MMIO_WINDOW](PHASE22_MMIO_WINDOW.md) |
 | 23 | **Symlinks + shell commands**: VFS symbolic links (+ readlink/symlink), and busybox applets as `/bin/<name>` so MAKH has real commands (U1) | [PHASE23_SYMLINKS_SHELL](PHASE23_SYMLINKS_SHELL.md) |
+| 24 | **uname + rlimits**: `uname`, `getrlimit`/`setrlimit`/`prlimit64` so programs that query identity and limits at startup run (U2) | [PHASE24_UNAME_RLIMIT](PHASE24_UNAME_RLIMIT.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
