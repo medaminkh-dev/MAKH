@@ -238,7 +238,10 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/iovtest build/user/lowexec build/user/unametest \
             build/user/ls build/user/cat build/user/pwd build/user/clear \
             build/user/whoami build/user/id build/user/ping build/user/ifconfig \
-            build/user/help
+            build/user/help build/user/mkdir build/user/rmdir build/user/rm \
+            build/user/touch build/user/mv build/user/cp build/user/ln \
+            build/user/grep build/user/head build/user/tail build/user/wc \
+            build/user/env build/user/date build/user/sort build/user/cut
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user
@@ -294,11 +297,12 @@ $(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhos
 	@# Expose busybox applets as /bin/<name> symlinks: the kernel resolves the
 	@# symlink to busybox while argv[0]'s basename selects the applet (multi-call
 	@# dispatch), so a user types `uname`, not `busybox uname`. MAKH ships its own
-	@# /bin/sh, /bin/echo and native coreutils /bin/ls, /bin/cat, /bin/pwd,
-	@# /bin/clear, so those names are NOT symlinked here. Plain `ln -s` (no -f)
-	@# deliberately fails the build if a name collides with a real program.
-	@for a in ash grep mkdir rmdir rm cp mv true false head tail \
-	          wc touch ln env uname sleep date sort cut; do \
+	@# MAKH ships native coreutils (ls cat pwd clear mkdir rmdir rm cp mv ln touch
+	@# grep head tail wc env date sort cut) plus its own sh/echo, so only the few
+	@# applets this minimal busybox actually provides are symlinked here. Plain
+	@# `ln -s` (no -f) deliberately fails the build if a name collides with a real
+	@# program already copied in.
+	@for a in ash true false sleep uname; do \
 	    ln -s busybox build/initrd/bin/$$a; done
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
 	@cp $(MAKE_PREBUILT) build/initrd/bin/make

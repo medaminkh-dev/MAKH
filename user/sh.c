@@ -12,6 +12,17 @@
 #define MAXARGS   16
 #define MAXSTAGES 8
 
+/* A small default environment handed to every child, so programs (and `env`)
+ * see sensible values. MAKH has no `export` yet; this is fixed. */
+static char* const sh_env[] = {
+    "PATH=/bin:/usr/bin",
+    "HOME=/",
+    "USER=root",
+    "TERM=makh",
+    "SHELL=/bin/sh",
+    0,
+};
+
 static int sh_streq(const char* a, const char* b) {
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
@@ -41,7 +52,7 @@ static void sh_exec(char** argv) {
     for (char* p = argv[0]; *p; p++) if (*p == '/') { has_slash = 1; break; }
 
     if (has_slash) {
-        uexecve(argv[0], argv, 0);               /* returns only on failure */
+        uexecve(argv[0], argv, sh_env);               /* returns only on failure */
     } else {
         static const char* const dirs[] = { "/bin/", "/usr/bin/" };
         char path[128];
@@ -50,7 +61,7 @@ static void sh_exec(char** argv) {
             for (const char* s = dirs[d]; *s && i < 120; s++) path[i++] = *s;
             for (char* s = argv[0]; *s && i < 127; s++)       path[i++] = *s;
             path[i] = '\0';
-            uexecve(path, argv, 0);              /* returns only on failure */
+            uexecve(path, argv, sh_env);              /* returns only on failure */
         }
     }
 

@@ -46,6 +46,19 @@
 #define SYS_KILL      62
 #define SYS_GETUID    102
 #define SYS_GETGID    104
+#define SYS_RENAME    82
+#define SYS_MKDIR     83
+#define SYS_RMDIR     84
+#define SYS_UNLINK    87
+#define SYS_SYMLINK   88
+
+/* open() flags (match kernel fs/vfs.h). */
+#define O_RDONLY   0x0000
+#define O_WRONLY   0x0001
+#define O_RDWR     0x0002
+#define O_CREAT    0x0040
+#define O_TRUNC    0x0200
+#define O_APPEND   0x0400
 #define SYS_MAKH_PING   0x202
 #define SYS_MAKH_IFINFO 0x203
 
@@ -188,6 +201,11 @@ static inline long uclose(int fd) { return usyscall(SYS_CLOSE, fd, 0, 0); }
 static inline long uchdir(const char* path) {
     return usyscall(SYS_CHDIR, (long)path, 0, 0);
 }
+static inline long umkdir(const char* path) { return usyscall(SYS_MKDIR, (long)path, 0, 0); }
+static inline long urmdir(const char* path) { return usyscall(SYS_RMDIR, (long)path, 0, 0); }
+static inline long uunlink(const char* path) { return usyscall(SYS_UNLINK, (long)path, 0, 0); }
+static inline long urename(const char* a, const char* b) { return usyscall(SYS_RENAME, (long)a, (long)b, 0); }
+static inline long usymlink(const char* t, const char* p) { return usyscall(SYS_SYMLINK, (long)t, (long)p, 0); }
 static inline long ugetcwd(char* buf, unsigned long size) {
     return usyscall(SYS_GETCWD, (long)buf, (long)size, 0);
 }

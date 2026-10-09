@@ -313,6 +313,7 @@ static void fill_stat(vnode_t* vn, struct stat* st) {
     switch (vn->type) {
         case VNODE_DIR: mode = S_IFDIR | 0755; break;
         case VNODE_CHR: mode = S_IFCHR | 0666; break;
+        case VNODE_LNK: mode = S_IFLNK | 0777; break;
         default:        mode = S_IFREG | 0644; break;
     }
     st->st_mode    = mode;
@@ -325,6 +326,15 @@ static void fill_stat(vnode_t* vn, struct stat* st) {
 
 int vfs_stat(const char* path, struct stat* st) {
     vnode_t* vn = vfs_resolve(path);
+    if (!vn) return -ENOENT;
+    fill_stat(vn, st);
+    return 0;
+}
+
+/* Like vfs_stat but does not follow a final symlink: stats the link itself, so
+ * lstat(2) reports S_IFLNK (used by `ls -l`). */
+int vfs_lstat(const char* path, struct stat* st) {
+    vnode_t* vn = vfs_resolve_nofollow(path);
     if (!vn) return -ENOENT;
     fill_stat(vn, st);
     return 0;

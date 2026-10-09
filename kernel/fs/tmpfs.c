@@ -175,6 +175,41 @@ static int tmpfs_unlink(vnode_t* dir, const char* name) {
     return -ENOENT;
 }
 
+/* Move the entry `oldname` in `olddir` to `newname` in `newdir` (same fs). The
+ * dirent node is reused and re-threaded, so the child's refcount is unchanged;
+ * an existing, empty destination is removed first. */
+static int tmpfs_rename(vnode_t* olddir, const char* oldname,
+                        vnode_t* newdir, const char* newname) {
+    if (olddir->type != VNODE_DIR || newdir->type != VNODE_DIR) return -ENOTDIR;
+    tmpfs_dir_t* od = (tmpfs_dir_t*)olddir->priv;
+
+    tmpfs_dirent_t** pp = &od->head;
+    while (*pp && strcmp((*pp)->name, oldname) != 0) pp = &(*pp)->next;
+    if (!*pp) return -ENOENT;
+    tmpfs_dirent_t* src = *pp;
+
+    vnode_t* dstvn = tmpfs_lookup(newdir, newname);
+    if (dstvn) {
+        if (dstvn == src->vnode) return 0;                     /* same file */
+        if (dstvn->type == VNODE_DIR && ((tmpfs_dir_t*)dstvn->priv)->head)
+            return -ENOTEMPTY;
+        int rc = tmpfs_unlink(newdir, newname);
+        if (rc < 0) return rc;
+        pp = &od->head;                                        /* list may have shifted */
+        while (*pp && *pp != src) pp = &(*pp)->next;
+        if (!*pp) return -ENOENT;
+    }
+
+    *pp = src->next;                                           /* detach from olddir */
+    int i = 0;
+    for (; newname[i] && i < VFS_NAME_MAX; i++) src->name[i] = newname[i];
+    src->name[i] = '\0';
+    tmpfs_dir_t* nd = (tmpfs_dir_t*)newdir->priv;              /* attach to newdir */
+    src->next = nd->head;
+    nd->head = src;
+    return 0;
+}
+
 static const vfs_ops_t tmpfs_ops = {
     .read = tmpfs_read,
     .write = tmpfs_write,
@@ -185,6 +220,7 @@ static const vfs_ops_t tmpfs_ops = {
     .truncate = tmpfs_truncate,
     .symlink = tmpfs_symlink,
     .readlink = tmpfs_readlink,
+    .rename = tmpfs_rename,
 };
 
 vnode_t* tmpfs_create_root(void) {

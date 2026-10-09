@@ -526,6 +526,18 @@ static int64_t do_stat(uint64_t upath, uint64_t ust, int from_user) {
     if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
     return 0;
 }
+/* lstat(2): like stat but does not follow a final symlink (reports S_IFLNK). */
+static int64_t do_lstat(uint64_t upath, uint64_t ust, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    struct stat st;
+    rc = vfs_lstat(abs, &st);
+    if (rc < 0) return rc;
+    if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
+    return 0;
+}
 
 static int64_t do_fstat(uint64_t fd, uint64_t ust) {
     struct stat st;
@@ -786,7 +798,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_NANOSLEEP:      return do_nanosleep(a1, a2);
         case SYS_GETRANDOM:      return do_getrandom(a1, a2, a3);
         case SYS_STAT:
-        case SYS_LSTAT:          return do_stat(a1, a2, from_user);   /* no symlinks */
+        case SYS_LSTAT:          return do_lstat(a1, a2, from_user);
         case SYS_FSTAT:          return do_fstat(a1, a2);
         case SYS_GETDENTS64:     return do_getdents64(a1, a2, a3);
         case SYS_FCNTL:          return do_fcntl(a1, a2, a3);
