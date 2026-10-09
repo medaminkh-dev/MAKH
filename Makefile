@@ -98,7 +98,8 @@ C_SOURCES_DRIVERS = \
     kernel/drivers/pci.c \
     kernel/drivers/e1000.c \
     kernel/drivers/rtc.c \
-    kernel/drivers/virtio_blk.c
+    kernel/drivers/virtio_blk.c \
+    kernel/drivers/fb.c
 
 # C source files - Network stack (Phase 14)
 C_SOURCES_NET = \
@@ -234,7 +235,8 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/sigtest build/user/sigmask build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
-            build/user/iovtest build/user/lowexec build/user/unametest
+            build/user/iovtest build/user/lowexec build/user/unametest \
+            build/user/ls build/user/cat build/user/pwd
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user
@@ -287,13 +289,13 @@ $(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhos
 	@cp $(MUSL_FIO) build/initrd/bin/fio
 	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
-	@# U1-b: expose busybox applets as /bin/<name> symlinks (relative to busybox),
-	@# so the kernel resolves the symlink to busybox while argv[0]'s basename picks
-	@# the applet (multi-call dispatch). busybox's shell is /bin/ash (MAKH keeps
-	@# its own /bin/sh and /bin/echo, so those names are not symlinked here). Plain
-	@# `ln -s` (no -f) deliberately fails the build if a name ever collides with a
-	@# real program already copied into /bin.
-	@for a in ash ls cat grep mkdir rmdir rm cp mv pwd true false head tail \
+	@# Expose busybox applets as /bin/<name> symlinks: the kernel resolves the
+	@# symlink to busybox while argv[0]'s basename selects the applet (multi-call
+	@# dispatch), so a user types `uname`, not `busybox uname`. MAKH ships its own
+	@# /bin/sh and /bin/echo and native coreutils /bin/ls, /bin/cat, /bin/pwd, so
+	@# those names are NOT symlinked here. Plain `ln -s` (no -f) deliberately fails
+	@# the build if a name ever collides with a real program already copied in.
+	@for a in ash grep mkdir rmdir rm cp mv true false head tail \
 	          wc touch ln env uname sleep date clear sort cut; do \
 	    ln -s busybox build/initrd/bin/$$a; done
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc

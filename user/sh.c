@@ -12,6 +12,54 @@
 #define MAXARGS   16
 #define MAXSTAGES 8
 
+static int sh_streq(const char* a, const char* b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+static int sh_atoi(const char* s) {
+    int v = 0;
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return v;
+}
+static unsigned long sh_strlen(const char* s) {
+    unsigned long n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+/*
+ * Exec argv[0] in the (already forked) child. A name containing '/' is used as
+ * given; a bare name is looked up in /bin then /usr/bin, so `ls`, `uname`, ...
+ * work without typing the full path. This never returns: on success the image is
+ * replaced; if nothing is found it prints "sh: <cmd>: not found" and exits 127
+ * (returning here would turn the child back into a second shell).
+ */
+static void sh_exec(char** argv) {
+    if (!argv[0]) usyscall(SYS_EXIT, 127, 0, 0);
+
+    int has_slash = 0;
+    for (char* p = argv[0]; *p; p++) if (*p == '/') { has_slash = 1; break; }
+
+    if (has_slash) {
+        uexecve(argv[0], argv, 0);               /* returns only on failure */
+    } else {
+        static const char* const dirs[] = { "/bin/", "/usr/bin/" };
+        char path[128];
+        for (int d = 0; d < 2; d++) {
+            int i = 0;
+            for (const char* s = dirs[d]; *s && i < 120; s++) path[i++] = *s;
+            for (char* s = argv[0]; *s && i < 127; s++)       path[i++] = *s;
+            path[i] = '\0';
+            uexecve(path, argv, 0);              /* returns only on failure */
+        }
+    }
+
+    uwrite(2, "sh: ", 4);
+    uwrite(2, argv[0], sh_strlen(argv[0]));
+    uwrite(2, ": not found\n", 12);
+    usyscall(SYS_EXIT, 127, 0, 0);
+}
+
 static int tokenize(char* s, char** argv) {
     int ac = 0, i = 0;
     for (;;) {
@@ -44,12 +92,28 @@ static int split_pipes(char* line, char** stages) {
 static int run_single(char* cmd, int shell_pgid) {
     char* argv[MAXARGS];
     if (tokenize(cmd, argv) == 0) return 0;
+
+    /* Builtins must run in the shell process itself. */
+    if (sh_streq(argv[0], "cd")) {
+        const char* dir = argv[1] ? argv[1] : "/";
+        if (uchdir(dir) < 0) {
+            uwrite(2, "cd: ", 4);
+            uwrite(2, dir, sh_strlen(dir));
+            uwrite(2, ": no such directory\n", 20);
+            return 1;
+        }
+        return 0;
+    }
+    if (sh_streq(argv[0], "exit")) {
+        usyscall(SYS_EXIT_GROUP, argv[1] ? sh_atoi(argv[1]) : 0, 0, 0);
+    }
+
     long pid = ufork();
     if (pid < 0) return 127;
     if (pid == 0) {                              /* child: own group, exec    */
         usetpgid(0, 0);
-        uexecve(argv[0], argv, 0);
-        return 127;
+        sh_exec(argv);                           /* never returns             */
+        usyscall(SYS_EXIT, 127, 0, 0);           /* unreachable               */
     }
     usetpgid((int)pid, (int)pid);                /* race-safe group assignment */
     utcsetpgrp(0, (int)pid);                     /* hand the job the terminal  */
@@ -73,8 +137,8 @@ static int run_pipeline(char** stages, int ns) {
             if (out_fd != 1) { udup2(out_fd, 1); uclose(out_fd); }
             if (i < ns - 1)  uclose(pfd[0]);     /* not this stage's read end */
             char* argv[MAXARGS];
-            if (tokenize(stages[i], argv) && argv[0]) uexecve(argv[0], argv, 0);
-            return 127;
+            if (tokenize(stages[i], argv) && argv[0]) sh_exec(argv);  /* no return */
+            usyscall(SYS_EXIT, 127, 0, 0);
         }
         pids[i] = (int)pid;
         if (in_fd != 0) uclose(in_fd);           /* parent is done with it     */

@@ -8,6 +8,7 @@
 #include "include/vga.h"
 #include "include/kernel.h"
 #include "include/serial.h"
+#include "include/drivers/fb.h"
 
 /* Static terminal state */
 static struct terminal_state terminal;
@@ -114,13 +115,17 @@ void terminal_setcolor(uint8_t color) {
  * terminal_clear - Clear the entire screen
  */
 void terminal_clear(void) {
+    if (fb_active()) {                       /* pixel console: clear to palette bg */
+        fb_console_clear(terminal.color);
+        return;
+    }
     size_t index;
     uint16_t blank = vga_entry(' ', terminal.color);
-    
+
     for (index = 0; index < VGA_WIDTH * VGA_HEIGHT; index++) {
         terminal.buffer[index] = blank;
     }
-    
+
     terminal.row = 0;
     terminal.column = 0;
 }
@@ -129,8 +134,12 @@ void terminal_clear(void) {
  * terminal_newline - Move to the next line
  */
 void terminal_newline(void) {
+    if (fb_active()) {                       /* pixel console tracks its own cursor */
+        fb_console_newline();
+        return;
+    }
     terminal.column = 0;
-    
+
     if (++terminal.row == VGA_HEIGHT) {
         /* Scroll up by copying all lines up one position */
         size_t i;
@@ -156,6 +165,10 @@ void terminal_newline(void) {
  */
 void terminal_putchar(char c) {
     if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
+    if (fb_active()) {                       /* pixel console renders the glyph */
+        fb_console_putchar(c, terminal.color);
+        return;
+    }
     /* Handle newline */
     if (c == '\n') {
         terminal_newline();
@@ -265,10 +278,14 @@ void terminal_writestring_color(const char* str, uint8_t color) {
  * @column: Column (0-79)
  */
 void terminal_setcursor(size_t row, size_t column) {
+    if (fb_active()) {                       /* pixel console owns the cursor */
+        fb_console_set_cursor((uint32_t)column, (uint32_t)row);
+        return;
+    }
     if (row < VGA_HEIGHT && column < VGA_WIDTH) {
         terminal.row = row;
         terminal.column = column;
-        
+
         // Update VGA hardware cursor
         uint16_t pos = row * VGA_WIDTH + column;
         outb(0x3D4, 0x0F);          // Cursor location low byte
@@ -284,6 +301,13 @@ void terminal_setcursor(size_t row, size_t column) {
  * @column: Pointer to store column
  */
 void terminal_getcursor(size_t* row, size_t* column) {
+    if (fb_active()) {                       /* report the pixel console cursor */
+        uint32_t c, r;
+        fb_console_get_cursor(&c, &r);
+        if (row) *row = r;
+        if (column) *column = c;
+        return;
+    }
     if (row) *row = terminal.row;
     if (column) *column = terminal.column;
 }

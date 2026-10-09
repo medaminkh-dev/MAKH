@@ -71,8 +71,24 @@ multiboot_header:
     dd MB2_ARCH                     ; Architecture (i386 protected mode)
     dd header_end - multiboot_header ; Header length
     dd -(MB2_MAGIC + MB2_ARCH + (header_end - multiboot_header)) & 0xFFFFFFFF ; Checksum
-    
+
+    ; Framebuffer request tag: ask GRUB to set a 1024x768x32 linear-RGB graphics
+    ; mode and pass its address back in the framebuffer info tag. flags bit0 = 1
+    ; (optional), so if the firmware can't provide it the boot still proceeds and
+    ; the kernel falls back to VGA text mode (fb_init() returns 0). This is what
+    ; lets MAKH render the pixel console and the fennec boot splash.
+align 8
+fb_request_start:
+    dw 5                            ; Type: framebuffer
+    dw 1                            ; Flags: optional
+    dd fb_request_end - fb_request_start ; Size
+    dd 1024                         ; Requested width
+    dd 768                          ; Requested height
+    dd 32                           ; Requested depth (bits per pixel)
+fb_request_end:
+
     ; End tag (required)
+align 8
     dw 0                            ; Type: end
     dw 0                            ; Flags
     dd 8                            ; Size

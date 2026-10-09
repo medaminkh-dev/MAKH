@@ -8,6 +8,7 @@
 #include "include/input_line.h"
 #include "include/vga.h"
 #include "include/kernel.h"
+#include "include/drivers/fb.h"
 
 // Clipboard for kill/yank operations
 char input_clipboard[INPUT_CLIPBOARD_MAX];
@@ -416,7 +417,29 @@ void input_line_render(input_line_t* line, const char* prompt, size_t screen_row
         sel_lo = line->sel_start < line->sel_end ? line->sel_start : line->sel_end;
         sel_hi = line->sel_start < line->sel_end ? line->sel_end : line->sel_start;
     }
-    
+
+    /* Pixel console path: render the editable line with the framebuffer cell
+     * primitives instead of the 0xB8000 text buffer (which is not the display
+     * once GRUB has put us in a graphics mode). The whole row is repainted on
+     * every keystroke, so the previous cursor and content are wiped cleanly. */
+    if (fb_active()) {
+        uint32_t cols = fb_cols();
+        fb_console_clear_row(screen_row, normal_color);
+        for (size_t i = 0; i < prompt_len && i < cols; i++)
+            fb_console_draw_cell((uint32_t)i, screen_row, prompt[i], normal_color);
+        for (int i = 0; i < line->length && (prompt_len + (size_t)i) < cols; i++) {
+            uint8_t color = (sel_lo != -1 && i >= sel_lo && i < sel_hi)
+                                ? select_color : normal_color;
+            fb_console_draw_cell((uint32_t)(prompt_len + i), screen_row,
+                                 line->buffer[i], color);
+        }
+        uint32_t cur = (uint32_t)(prompt_len + line->cursor);
+        if (cur >= cols) cur = cols ? cols - 1 : 0;
+        fb_console_draw_cursor(cur, screen_row, VGA_COLOR_WHITE);
+        fb_console_set_cursor(cur, screen_row);
+        return;
+    }
+
     // Clear the line area
     uint16_t* vga_buf = (uint16_t*)0xB8000;
     for (size_t col = 0; col < VGA_WIDTH; col++) {

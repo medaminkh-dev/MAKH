@@ -59,6 +59,8 @@ numbers are navigable rather than mysterious.
 | 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space — reachable under any CR3 | [PHASE22_MMIO_WINDOW](PHASE22_MMIO_WINDOW.md) |
 | 23 | **Symlinks + shell commands**: VFS symbolic links (+ readlink/symlink), and busybox applets as `/bin/<name>` so MAKH has real commands (U1) | [PHASE23_SYMLINKS_SHELL](PHASE23_SYMLINKS_SHELL.md) |
 | 24 | **uname + rlimits**: `uname`, `getrlimit`/`setrlimit`/`prlimit64` so programs that query identity and limits at startup run (U2) | [PHASE24_UNAME_RLIMIT](PHASE24_UNAME_RLIMIT.md) |
+| 25 | **Framebuffer console (FB-1)**: GRUB linear framebuffer, antialiased 8×16 font, warm 16-colour palette; VGA-text fallback, serial mirror unchanged | [PHASE25_FRAMEBUFFER_CONSOLE](PHASE25_FRAMEBUFFER_CONSOLE.md) |
+| 26 | **Fast boot + usable shell**: quiet boot straight to `/bin/sh`, `PATH` lookup + `cd`/`exit`, native `ls`/`cat`/`pwd` | [PHASE26_FAST_BOOT_SHELL](PHASE26_FAST_BOOT_SHELL.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),
