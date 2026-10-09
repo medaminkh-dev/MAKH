@@ -188,6 +188,16 @@ static void ansi_dispatch(char f) {
     case 'J':                                 /* erase display: clear it all */
         terminal_clear();
         break;
+    case 'K':                                 /* erase cursor -> end of line */
+        if (fb_active()) {
+            fb_console_clear_to_eol(terminal.color);
+        } else {                              /* VGA text: blank to row end   */
+            size_t r, c;
+            terminal_getcursor(&r, &c);
+            for (size_t col = c; col < VGA_WIDTH; col++)
+                terminal.buffer[r * VGA_WIDTH + col] = vga_entry(' ', terminal.color);
+        }
+        break;
     case 'H': case 'f': {                      /* cursor position (1-based)   */
         int row = ansi_params[0] ? ansi_params[0] - 1 : 0;
         int col = (ansi_nparam > 1 && ansi_params[1]) ? ansi_params[1] - 1 : 0;

@@ -62,6 +62,7 @@ numbers are navigable rather than mysterious.
 | 25 | **Framebuffer console (FB-1)**: GRUB linear framebuffer, antialiased 8×16 font, warm 16-colour palette; VGA-text fallback, serial mirror unchanged | [PHASE25_FRAMEBUFFER_CONSOLE](PHASE25_FRAMEBUFFER_CONSOLE.md) |
 | 26 | **Fast boot + usable shell**: quiet boot straight to `/bin/sh`, `PATH` lookup + `cd`/`exit`, native `ls`/`cat`/`pwd` | [PHASE26_FAST_BOOT_SHELL](PHASE26_FAST_BOOT_SHELL.md) |
 | 27 | **Splash + clear + ping (FB-2)**: fennec boot splash + spinner → clean terminal, `clear`/ANSI colours, `ping` with TTL + min/avg/max | [PHASE27_SPLASH_CLEAR_PING](PHASE27_SPLASH_CLEAR_PING.md) |
+| 28 | **Interactive shell**: raw-mode line editor with command history (Up/Down) + shortcuts, `termios`/`TCGETS`/`TCSETS`, native coreutils (`grep`/`cp`/`mv`/`whoami`/`id`/`ifconfig`/`help`…), `mv`+`lstat` fixes | [PHASE28_INTERACTIVE_SHELL](PHASE28_INTERACTIVE_SHELL.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

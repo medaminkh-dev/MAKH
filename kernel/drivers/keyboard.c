@@ -258,6 +258,24 @@ static void keyboard_handle_scancode(uint8_t scancode) {
     
     // For extended scancodes, check the key code after 0xE0
     if (extended_scancode == 0xE0 && !is_release) {
+        /* User-shell mode: deliver navigation keys to the line discipline as the
+         * conventional ANSI escape sequences (ESC [ A/B/C/D, ESC [ 3 ~), so the
+         * ring-3 shell's line editor can read arrows, Delete and history. */
+        if (tty_is_active()) {
+            char fin = 0;
+            switch (key) {
+                case KEY_UP:    fin = 'A'; break;
+                case KEY_DOWN:  fin = 'B'; break;
+                case KEY_RIGHT: fin = 'C'; break;
+                case KEY_LEFT:  fin = 'D'; break;
+                case 0x53:      /* Delete */
+                    tty_input(27); tty_input('['); tty_input('3'); tty_input('~');
+                    extended_scancode = 0; return;
+            }
+            if (fin) { tty_input(27); tty_input('['); tty_input(fin); }
+            extended_scancode = 0;
+            return;
+        }
         switch (key) {
             case KEY_UP:    keyboard_buffer_write(CHAR_ARROW_UP);    extended_scancode = 0; return;
             case KEY_DOWN:  keyboard_buffer_write(CHAR_ARROW_DOWN);  extended_scancode = 0; return;

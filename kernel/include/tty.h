@@ -39,7 +39,10 @@ typedef struct termios {
 
 #define TTY_LINE_MAX 256
 
-/* Terminal ioctls for job control (Linux-compatible request numbers). */
+/* Terminal ioctls (Linux-compatible request numbers). TCGETS/TCSETS exchange a
+ * (MAKH-minimal) termios so a shell can switch to raw mode for line editing. */
+#define TCGETS    0x5401   /* get termios */
+#define TCSETS    0x5402   /* set termios */
 #define TIOCGPGRP 0x540F   /* get the terminal's foreground process group */
 #define TIOCSPGRP 0x5410   /* set the terminal's foreground process group */
 

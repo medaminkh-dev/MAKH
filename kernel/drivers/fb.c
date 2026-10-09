@@ -207,6 +207,16 @@ void fb_console_clear_row(uint32_t row, uint8_t vga_color) {
                  fb.pal_native[bg]);
 }
 
+/* Erase from the cursor to the end of its row (ANSI ESC[K). */
+void fb_console_clear_to_eol(uint8_t vga_color) {
+    if (!fb.active) return;
+    uint8_t bg = (vga_color >> 4) & 0x0F;
+    uint32_t x = FB_MARGIN_X + fb.cx * FB_FONT_W;
+    uint32_t y = FB_MARGIN_Y + fb.cy * FB_FONT_H;
+    if (x < fb.width)
+        fb_fill_rect(x, y, fb.width - x, FB_FONT_H, fb.pal_native[bg]);
+}
+
 void fb_console_draw_cursor(uint32_t col, uint32_t row, uint8_t vga_fg) {
     if (!fb.active || col >= fb.cols || row >= fb.rows) return;
     uint32_t x = FB_MARGIN_X + col * FB_FONT_W;

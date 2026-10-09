@@ -472,6 +472,25 @@ static int64_t do_brk(uint64_t newbrk) {
 static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_user) {
     if (fd != 0 && fd != 1 && fd != 2) return -ENOTTY;
     switch (request) {
+        case TCGETS: {
+            termios_t* t = tty_termios();
+            if (from_user) {
+                if (copy_to_user((void*)(uintptr_t)arg, t, sizeof(*t)) < 0) return -EFAULT;
+            } else {
+                *(termios_t*)(uintptr_t)arg = *t;
+            }
+            return 0;
+        }
+        case TCSETS: {
+            termios_t tmp;
+            if (from_user) {
+                if (copy_from_user(&tmp, (const void*)(uintptr_t)arg, sizeof(tmp)) < 0) return -EFAULT;
+            } else {
+                tmp = *(const termios_t*)(uintptr_t)arg;
+            }
+            *tty_termios() = tmp;
+            return 0;
+        }
         case TIOCGPGRP: {
             uint32_t pgid = tty_get_foreground();
             if (from_user) {

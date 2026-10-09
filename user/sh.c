@@ -160,17 +160,109 @@ static int run_pipeline(char** stages, int ns) {
     return st;                                   /* status of the last stage   */
 }
 
+/* ------------------------------------------------------------------ line editor
+ * An interactive editor with history, used when stdin is a terminal. It puts the
+ * tty in raw mode (so it sees arrows, Ctrl-keys and Delete), draws the line
+ * itself, and restores the tty before returning so children run with a normal
+ * terminal. On a non-tty (a pipe or script) it falls back to a plain read.
+ *   Up/Down = history, Left/Right/Home(^A)/End(^E) = move, ^U kill line,
+ *   ^K kill to end, Backspace/Delete, ^D = EOF on an empty line.
+ */
+#define LINE_MAX  256
+#define HIST_MAX  32
+static char sh_hist[HIST_MAX][LINE_MAX];
+static int  sh_hist_n;
+
+static void hist_push(const char* s) {
+    if (!s[0]) return;
+    if (sh_hist_n > 0) {                          /* skip consecutive duplicate */
+        const char* last = sh_hist[(sh_hist_n - 1) % HIST_MAX];
+        if (sh_streq(last, s)) return;
+    }
+    char* d = sh_hist[sh_hist_n % HIST_MAX];
+    int i = 0; for (; s[i] && i < LINE_MAX - 1; i++) d[i] = s[i]; d[i] = 0;
+    sh_hist_n++;
+}
+
+static void refresh(const char* pr, int pl, const char* buf, int len, int cur) {
+    uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
+    uwrite(1, buf, (unsigned long)len); uwrite(1, "\033[K", 3);
+    uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
+    uwrite(1, buf, (unsigned long)cur);
+}
+
+/* Returns line length (>=0), or -1 on EOF. */
+static int sh_readline(const char* pr, char* buf, int max) {
+    int pl = 0; while (pr[pl]) pl++;
+    struct termios saved;
+    int israw = (ugettermios(0, &saved) >= 0);
+    if (israw) { struct termios r = saved; r.c_lflag &= ~(unsigned)(ICANON | ECHO); usettermios(0, &r); }
+    uwrite(1, pr, (unsigned long)pl);
+    if (!israw) {                                  /* pipe/script: plain read */
+        long n = uread(0, buf, (unsigned long)(max - 1));
+        if (n <= 0) return -1;
+        if (buf[n - 1] == '\n') n--;
+        buf[n] = 0;
+        return (int)n;
+    }
+    int len = 0, cur = 0, hb = sh_hist_n, stash_len = 0, have_stash = 0;
+    char stash[LINE_MAX];
+    for (;;) {
+        char c;
+        long r = uread(0, &c, 1);
+        if (r <= 0) { if (len == 0) { usettermios(0, &saved); return -1; } continue; }
+        if (c == '\r' || c == '\n') { uwrite(1, "\n", 1); buf[len] = 0; usettermios(0, &saved); return len; }
+        if (c == 4) {                               /* ^D */
+            if (len == 0) { usettermios(0, &saved); return -1; }
+            if (cur < len) { for (int i = cur; i < len - 1; i++) buf[i] = buf[i + 1]; len--; refresh(pr, pl, buf, len, cur); }
+            continue;
+        }
+        if (c == 127 || c == 8) { if (cur > 0) { for (int i = cur - 1; i < len - 1; i++) buf[i] = buf[i + 1]; cur--; len--; refresh(pr, pl, buf, len, cur); } continue; }
+        if (c == 1) { cur = 0; refresh(pr, pl, buf, len, cur); continue; }   /* ^A */
+        if (c == 5) { cur = len; refresh(pr, pl, buf, len, cur); continue; } /* ^E */
+        if (c == 21) { len = 0; cur = 0; refresh(pr, pl, buf, len, cur); continue; } /* ^U */
+        if (c == 11) { len = cur; refresh(pr, pl, buf, len, cur); continue; } /* ^K */
+        if (c == 27) {                              /* ESC [ X */
+            char a, b;
+            if (uread(0, &a, 1) <= 0 || a != '[') continue;
+            if (uread(0, &b, 1) <= 0) continue;
+            if (b == 'A') {                         /* up: older history */
+                if (hb > 0) {
+                    if (hb == sh_hist_n) { for (int i = 0; i < len; i++) stash[i] = buf[i]; stash_len = len; have_stash = 1; }
+                    hb--;
+                    const char* h = sh_hist[hb % HIST_MAX]; int i = 0; while (h[i] && i < max - 1) { buf[i] = h[i]; i++; } len = cur = i;
+                    refresh(pr, pl, buf, len, cur);
+                }
+            } else if (b == 'B') {                  /* down: newer history */
+                if (hb < sh_hist_n) {
+                    hb++;
+                    int i = 0;
+                    if (hb == sh_hist_n) { if (have_stash) for (; i < stash_len; i++) buf[i] = stash[i]; }
+                    else { const char* h = sh_hist[hb % HIST_MAX]; while (h[i] && i < max - 1) { buf[i] = h[i]; i++; } }
+                    len = cur = i;
+                    refresh(pr, pl, buf, len, cur);
+                }
+            } else if (b == 'C') { if (cur < len) { cur++; refresh(pr, pl, buf, len, cur); } }
+            else if (b == 'D') { if (cur > 0) { cur--; refresh(pr, pl, buf, len, cur); } }
+            else if (b == '3') { char t; uread(0, &t, 1); if (cur < len) { for (int i = cur; i < len - 1; i++) buf[i] = buf[i + 1]; len--; refresh(pr, pl, buf, len, cur); } }
+            continue;
+        }
+        if (c >= 32 && (unsigned char)c < 127) {    /* printable: insert at cursor */
+            if (len < max - 1) { for (int i = len; i > cur; i--) buf[i] = buf[i - 1]; buf[cur] = c; len++; cur++; refresh(pr, pl, buf, len, cur); }
+        }
+    }
+}
+
 int umain(void) {
-    char line[128];
+    char line[LINE_MAX];
     int  last = 0;
     int  shell_pgid = (int)ugetpgrp();
 
     for (;;) {
-        uwrite(1, "$ ", 2);
-        long n = uread(0, line, sizeof(line) - 1);
-        if (n <= 0) return last;                 /* EOF: leave with last status */
-        if (line[n - 1] == '\n') n--;
+        int n = sh_readline("$ ", line, sizeof(line));
+        if (n < 0) return last;                  /* EOF: leave with last status */
         line[n] = '\0';
+        hist_push(line);
 
         int blank = 1;
         for (int k = 0; line[k]; k++) if (line[k] != ' ') { blank = 0; break; }

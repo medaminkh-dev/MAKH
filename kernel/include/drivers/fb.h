@@ -56,6 +56,7 @@ void fb_console_set_cursor(uint32_t col, uint32_t row);
  * attribute byte. */
 void fb_console_draw_cell(uint32_t col, uint32_t row, char c, uint8_t vga_color);
 void fb_console_clear_row(uint32_t row, uint8_t vga_color);
+void fb_console_clear_to_eol(uint8_t vga_color);
 void fb_console_draw_cursor(uint32_t col, uint32_t row, uint8_t vga_fg);
 
 /* --- boot splash (FB-2) --- */

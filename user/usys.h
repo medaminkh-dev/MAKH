@@ -128,6 +128,14 @@ struct timeval  { long tv_sec; long tv_usec; };
 
 #define TIOCGPGRP     0x540F
 #define TIOCSPGRP     0x5410
+#define TCGETS        0x5401
+#define TCSETS        0x5402
+/* termios subset (layout matches kernel tty.h termios_t). */
+#define ICANON   0x0002
+#define ECHO     0x0008
+#define ISIG     0x0001
+#define NCCS     8
+struct termios { unsigned int c_lflag; unsigned char c_cc[NCCS]; };
 
 /* Signals + sigaction/sigprocmask constants (match kernel signal.h). */
 #define SIGINT    2
@@ -236,6 +244,8 @@ static inline int utcgetpgrp(int fd) {
     if (uioctl(fd, TIOCGPGRP, &pgid) < 0) return -1;
     return pgid;
 }
+static inline long ugettermios(int fd, struct termios* t) { return uioctl(fd, TCGETS, t); }
+static inline long usettermios(int fd, struct termios* t) { return uioctl(fd, TCSETS, t); }
 
 /* --- signals (Phase 20-G) --- */
 /* The kernel returns here after a handler: the trampoline invokes sigreturn,
