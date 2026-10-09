@@ -44,8 +44,24 @@
 #define SYS_WRITEV         20
 #define SYS_EXIT_GROUP     231
 #define SYS_KILL      62
+#define SYS_GETUID    102
+#define SYS_GETGID    104
+#define SYS_MAKH_PING   0x202
+#define SYS_MAKH_IFINFO 0x203
 
 struct iovec { void* iov_base; unsigned long iov_len; };
+
+/* Network-interface snapshot from SYS_MAKH_IFINFO. Layout matches the kernel's
+ * struct makh_ifinfo (kernel/include/syscall.h) exactly. */
+#define MAKH_IF_UP        0x1
+#define MAKH_IF_LOOPBACK  0x2
+struct makh_ifinfo {
+    char           name[8];
+    unsigned char  mac[6];
+    unsigned short flags;
+    unsigned int   ip, netmask, gateway;     /* host byte order */
+    unsigned long  rx_packets, tx_packets, rx_bytes, tx_bytes;
+};
 
 /* clone flags + futex ops (match kernel). */
 #define CLONE_VM             0x00000100
@@ -60,8 +76,12 @@ struct iovec { void* iov_base; unsigned long iov_len; };
 #define S_IFCHR  0020000
 #define S_IFDIR  0040000
 #define S_IFREG  0100000
+#define S_IFLNK  0120000
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR)
+#define SYS_LSTAT 6
 #define F_GETFL  3
 #define F_SETFL  4
 #define DT_DIR   4
@@ -138,6 +158,17 @@ static inline long uread(int fd, void* buf, unsigned long n) {
     return usyscall(SYS_READ, fd, (long)buf, (long)n);
 }
 static inline long ugetpid(void) { return usyscall(SYS_GETPID, 0, 0, 0); }
+static inline long ugetuid(void) { return usyscall(SYS_GETUID, 0, 0, 0); }
+static inline long ugetgid(void) { return usyscall(SYS_GETGID, 0, 0, 0); }
+/* One ICMP echo to `dst` (host order), sequence `seq`. Returns (ttl<<16)|rtt_ms
+ * on reply, or a negative errno (e.g. -110 ETIMEDOUT) on no reply. */
+static inline long umakh_ping(unsigned int dst, unsigned int seq, unsigned int timeout_ms) {
+    return usyscall(SYS_MAKH_PING, (long)dst, (long)seq, (long)timeout_ms);
+}
+/* Fill *out for interface #index; returns 0, or <0 when there is no such iface. */
+static inline long umakh_ifinfo(int index, struct makh_ifinfo* out) {
+    return usyscall(SYS_MAKH_IFINFO, index, (long)out, 0);
+}
 static inline void* umap(unsigned long len, int prot, int flags) {
     return (void*)usyscall4(SYS_MMAP, 0, (long)len, prot, flags);
 }
@@ -238,6 +269,9 @@ static inline long usleep_ms(long ms) {
 /* --- metadata / listing / fcntl (Phase 20-J) --- */
 static inline long ustat(const char* path, struct stat* st) {
     return usyscall(SYS_STAT, (long)path, (long)st, 0);
+}
+static inline long ulstat(const char* path, struct stat* st) {
+    return usyscall(SYS_LSTAT, (long)path, (long)st, 0);
 }
 static inline long ufstat(int fd, struct stat* st) {
     return usyscall(SYS_FSTAT, fd, (long)st, 0);

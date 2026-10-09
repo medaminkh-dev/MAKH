@@ -30,6 +30,7 @@
 #include <krandom.h>
 #include <mm/kheap.h>
 #include <futex.h>
+#include <net/net.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -687,6 +688,44 @@ static int64_t do_sched_getaffinity(uint64_t pid, uint64_t size, uint64_t umask)
     return (int64_t)sizeof(m);                           /* bytes written */
 }
 
+/* MAKH net helpers for the user-space `ping` / `ifconfig` (no socket layer yet):
+ * a single ICMP echo and a per-interface snapshot. */
+static int64_t do_makh_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ms) {
+    if (timeout_ms == 0 || timeout_ms > 10000) timeout_ms = 1000;
+    uint8_t ttl = 0;
+    net_lock();
+    int rtt = icmp_ping(dst, seq, timeout_ms, &ttl);
+    net_unlock();
+    if (rtt < 0) return rtt;
+    if (rtt > 0xFFFF) rtt = 0xFFFF;
+    return ((int64_t)ttl << 16) | (uint32_t)rtt;
+}
+
+static int64_t do_makh_ifinfo(int index, uint64_t uout, int from_user) {
+    netdev_t* dev = netdev_get(index);
+    if (!dev) return -ENODEV;
+    struct makh_ifinfo info;
+    memset(&info, 0, sizeof(info));
+    for (int i = 0; i < 8; i++) info.name[i] = dev->name[i];
+    for (int i = 0; i < 6; i++) info.mac[i]  = dev->mac[i];
+    info.flags   = (uint16_t)((dev->up ? MAKH_IF_UP : 0) |
+                              (dev->is_loopback ? MAKH_IF_LOOPBACK : 0));
+    info.ip      = dev->ip;
+    info.netmask = dev->netmask;
+    info.gateway = dev->gateway;
+    info.rx_packets = dev->rx_packets;
+    info.tx_packets = dev->tx_packets;
+    info.rx_bytes   = dev->rx_bytes;
+    info.tx_bytes   = dev->tx_bytes;
+    if (from_user) {
+        if (copy_to_user((void*)(uintptr_t)uout, &info, sizeof(info)) < 0)
+            return -EFAULT;
+    } else {
+        memcpy((void*)(uintptr_t)uout, &info, sizeof(info));
+    }
+    return 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -774,6 +813,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
             /* Deliberately not supported from the non-preemptible ring-3 brick;
              * returns success as a no-op for getticks-style demos. */
             return 0;
+        case SYS_MAKH_PING:    return do_makh_ping((uint32_t)a1, (uint16_t)a2, (uint32_t)a3);
+        case SYS_MAKH_IFINFO:  return do_makh_ifinfo((int)a1, a2, from_user);
         default:
             return -ENOSYS;
     }

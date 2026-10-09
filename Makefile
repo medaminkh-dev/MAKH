@@ -236,7 +236,9 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
             build/user/iovtest build/user/lowexec build/user/unametest \
-            build/user/ls build/user/cat build/user/pwd build/user/clear
+            build/user/ls build/user/cat build/user/pwd build/user/clear \
+            build/user/whoami build/user/id build/user/ping build/user/ifconfig \
+            build/user/help
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

@@ -93,6 +93,20 @@
 
 #define SYS_MAKH_GETTICKS  0x200
 #define SYS_MAKH_SLEEP_MS  0x201
+#define SYS_MAKH_PING      0x202   /* one ICMP echo: returns (ttl<<16)|rtt_ms, or -errno */
+#define SYS_MAKH_IFINFO    0x203   /* fill a struct makh_ifinfo for interface #index */
+
+/* Network-interface snapshot handed to user space by SYS_MAKH_IFINFO. The
+ * layout is shared verbatim with user/usys.h — keep the two in sync. */
+#define MAKH_IF_UP        0x1
+#define MAKH_IF_LOOPBACK  0x2
+struct makh_ifinfo {
+    char     name[8];
+    uint8_t  mac[6];
+    uint16_t flags;                 /* MAKH_IF_UP | MAKH_IF_LOOPBACK */
+    uint32_t ip, netmask, gateway;  /* host byte order */
+    uint64_t rx_packets, tx_packets, rx_bytes, tx_bytes;
+};
 
 /* mmap/mprotect protection bits and flags (Linux ABI subset, Phase 20-B). */
 #define PROT_NONE       0x0
