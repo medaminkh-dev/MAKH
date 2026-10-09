@@ -324,78 +324,90 @@ static long bitmap_alloc(ext2_fs_t* fs, uint32_t bmp_block, uint32_t limit) {
     return found;
 }
 
-/* Decrement a 16-bit field in group-0's descriptor and a 32-bit field in the
- * superblock (the two free-count mirrors), keeping the fs self-consistent. */
-static void dec_free_counts(ext2_fs_t* fs, uint32_t gd_off16, uint32_t sb_off32) {
+/* Number of block groups in the filesystem. */
+static uint32_t group_count(ext2_fs_t* fs) {
+    return (fs->blocks_count - fs->first_data_block + fs->blocks_per_group - 1)
+           / fs->blocks_per_group;
+}
+
+/* Read a 32-bit field from group `g`'s 32-byte descriptor in the GDT (off:
+ * 0 = bg_block_bitmap, 4 = bg_inode_bitmap, 8 = bg_inode_table). The GDT may
+ * span several blocks for a many-group fs, so index it by byte. 0 on error. */
+static uint32_t gd_read32(ext2_fs_t* fs, uint32_t g, uint32_t off) {
+    uint8_t* b = blk_alloc();
+    if (!b) return 0;
+    uint32_t byte = g * 32 + off;
+    uint32_t out = 0;
+    if (bread(fs, fs->gdt_block + byte / fs->block_size, b) == 0)
+        out = rd32(b + byte % fs->block_size);
+    blk_free(b);
+    return out;
+}
+
+/* Adjust group `g`'s 16-bit free-count field (gd_off16: 12 = free blocks,
+ * 14 = free inodes) by `delta` (+1 or −1), mirroring into the superblock's
+ * 32-bit field at sb_off32 — the two counters ext2 keeps in step. */
+static void adj_free_counts(ext2_fs_t* fs, uint32_t g, uint32_t gd_off16,
+                            uint32_t sb_off32, int delta) {
     uint8_t* b = blk_alloc();
     if (!b) return;
-    if (bread(fs, fs->gdt_block, b) == 0) {
-        uint16_t v = rd16(b + gd_off16); if (v) wr16(b + gd_off16, v - 1);
-        bwrite(fs, fs->gdt_block, b);
+    uint32_t byte  = g * 32 + gd_off16;
+    uint32_t gdblk = fs->gdt_block + byte / fs->block_size;
+    if (bread(fs, gdblk, b) == 0) {
+        uint32_t o = byte % fs->block_size;
+        uint16_t v = rd16(b + o);
+        if (delta < 0) { if (v) wr16(b + o, v - 1); } else wr16(b + o, (uint16_t)(v + 1));
+        bwrite(fs, gdblk, b);
     }
     if (virtio_blk_read(fs->unit, 2, b, 2) == 0) {       /* superblock @ byte 1024 */
-        uint32_t v = rd32(b + sb_off32); if (v) wr32(b + sb_off32, v - 1);
+        uint32_t v = rd32(b + sb_off32);
+        if (delta < 0) { if (v) wr32(b + sb_off32, v - 1); } else wr32(b + sb_off32, v + 1);
         virtio_blk_write(fs->unit, 2, b, 2);
     }
     blk_free(b);
 }
 
-/* Allocate a zeroed data/metadata block (group 0). Returns its block number. */
+/* Allocate a zeroed data/metadata block from any group with a free one.
+ * Returns its block number, or 0 if the whole fs is full. */
 static uint32_t alloc_block(ext2_fs_t* fs) {
-    uint8_t* gd = blk_alloc();
-    if (!gd) return 0;
-    if (bread(fs, fs->gdt_block, gd) != 0) { blk_free(gd); return 0; }
-    uint32_t bbmp = rd32(gd + 0);                        /* bg_block_bitmap */
-    blk_free(gd);
-
-    uint32_t limit = fs->blocks_per_group;
-    if (limit > fs->block_size * 8) limit = fs->block_size * 8;
-    long bit = bitmap_alloc(fs, bbmp, limit);
-    if (bit < 0) return 0;
-    uint32_t bn = fs->first_data_block + (uint32_t)bit;  /* group 0 */
-    if (bn >= fs->blocks_count) return 0;
-
-    uint8_t* z = blk_alloc();                       /* zero the new block */
-    if (z) { memset(z, 0, fs->block_size); bwrite(fs, bn, z); blk_free(z); }
-    dec_free_counts(fs, 12, 12);                         /* bg/sb free-blocks */
-    return bn;
+    uint32_t ng = group_count(fs);
+    for (uint32_t g = 0; g < ng; g++) {
+        uint32_t bbmp = gd_read32(fs, g, 0);             /* bg_block_bitmap */
+        if (!bbmp) continue;
+        uint32_t base  = fs->first_data_block + g * fs->blocks_per_group;
+        uint32_t limit = fs->blocks_per_group;           /* the last group is short */
+        if (base + limit > fs->blocks_count) limit = fs->blocks_count - base;
+        if (limit > fs->block_size * 8) limit = fs->block_size * 8;
+        long bit = bitmap_alloc(fs, bbmp, limit);
+        if (bit < 0) continue;                           /* this group is full: next */
+        uint32_t bn = base + (uint32_t)bit;
+        uint8_t* z = blk_alloc();                         /* zero the new block */
+        if (z) { memset(z, 0, fs->block_size); bwrite(fs, bn, z); blk_free(z); }
+        adj_free_counts(fs, g, 12, 12, -1);              /* bg/sb free-blocks */
+        return bn;
+    }
+    return 0;
 }
 
-/* Allocate a free inode (group 0). Returns its inode number, or 0. */
+/* Allocate a free inode from any group. Returns its inode number, or 0. */
 static uint32_t alloc_inode(ext2_fs_t* fs) {
-    uint8_t* gd = blk_alloc();
-    if (!gd) return 0;
-    if (bread(fs, fs->gdt_block, gd) != 0) { blk_free(gd); return 0; }
-    uint32_t ibmp = rd32(gd + 4);                        /* bg_inode_bitmap */
-    blk_free(gd);
-
-    uint32_t limit = fs->inodes_per_group;
-    if (limit > fs->block_size * 8) limit = fs->block_size * 8;
-    long bit = bitmap_alloc(fs, ibmp, limit);
-    if (bit < 0) return 0;
-    uint32_t ino = (uint32_t)bit + 1;                    /* inodes are 1-based */
-    if (ino > fs->inodes_count) return 0;
-    dec_free_counts(fs, 14, 16);                         /* bg/sb free-inodes */
-    return ino;
+    uint32_t ng = group_count(fs);
+    for (uint32_t g = 0; g < ng; g++) {
+        uint32_t ibmp = gd_read32(fs, g, 4);             /* bg_inode_bitmap */
+        if (!ibmp) continue;
+        uint32_t limit = fs->inodes_per_group;
+        if (limit > fs->block_size * 8) limit = fs->block_size * 8;
+        long bit = bitmap_alloc(fs, ibmp, limit);
+        if (bit < 0) continue;
+        uint32_t ino = g * fs->inodes_per_group + (uint32_t)bit + 1;  /* 1-based */
+        if (ino > fs->inodes_count) return 0;
+        adj_free_counts(fs, g, 14, 16, -1);              /* bg/sb free-inodes */
+        return ino;
+    }
+    return 0;
 }
 
-/* Increment a 16-bit group-descriptor field and a 32-bit superblock field —
- * the inverse of dec_free_counts, used when freeing a block or inode. */
-static void inc_free_counts(ext2_fs_t* fs, uint32_t gd_off16, uint32_t sb_off32) {
-    uint8_t* b = blk_alloc();
-    if (!b) return;
-    if (bread(fs, fs->gdt_block, b) == 0) {
-        wr16(b + gd_off16, (uint16_t)(rd16(b + gd_off16) + 1));
-        bwrite(fs, fs->gdt_block, b);
-    }
-    if (virtio_blk_read(fs->unit, 2, b, 2) == 0) {
-        wr32(b + sb_off32, rd32(b + sb_off32) + 1);
-        virtio_blk_write(fs->unit, 2, b, 2);
-    }
-    blk_free(b);
-}
-
-/* Clear a bit in a group-0 bitmap block. */
+/* Clear a bit in a bitmap block. */
 static void bitmap_free(ext2_fs_t* fs, uint32_t bmp_block, uint32_t bit) {
     uint8_t* bm = blk_alloc();
     if (!bm) return;
@@ -408,24 +420,23 @@ static void bitmap_free(ext2_fs_t* fs, uint32_t bmp_block, uint32_t bit) {
 
 static void free_block(ext2_fs_t* fs, uint32_t bn) {
     if (bn < fs->first_data_block) return;
-    uint8_t* gd = blk_alloc();
-    if (!gd) return;
-    if (bread(fs, fs->gdt_block, gd) != 0) { blk_free(gd); return; }
-    uint32_t bbmp = rd32(gd + 0);
-    blk_free(gd);
-    bitmap_free(fs, bbmp, bn - fs->first_data_block);    /* group 0 */
-    inc_free_counts(fs, 12, 12);
+    uint32_t rel = bn - fs->first_data_block;
+    uint32_t g   = rel / fs->blocks_per_group;           /* owning group */
+    uint32_t bit = rel % fs->blocks_per_group;
+    uint32_t bbmp = gd_read32(fs, g, 0);
+    if (!bbmp) return;
+    bitmap_free(fs, bbmp, bit);
+    adj_free_counts(fs, g, 12, 12, +1);
 }
 
 static void free_inode_num(ext2_fs_t* fs, uint32_t ino) {
     if (ino == 0) return;
-    uint8_t* gd = blk_alloc();
-    if (!gd) return;
-    if (bread(fs, fs->gdt_block, gd) != 0) { blk_free(gd); return; }
-    uint32_t ibmp = rd32(gd + 4);
-    blk_free(gd);
-    bitmap_free(fs, ibmp, ino - 1);                      /* group 0 */
-    inc_free_counts(fs, 14, 16);
+    uint32_t g   = (ino - 1) / fs->inodes_per_group;     /* owning group */
+    uint32_t bit = (ino - 1) % fs->inodes_per_group;
+    uint32_t ibmp = gd_read32(fs, g, 4);
+    if (!ibmp) return;
+    bitmap_free(fs, ibmp, bit);
+    adj_free_counts(fs, g, 14, 16, +1);
 }
 
 /* Free entries with within-span index >= `start` in the indirect tree rooted at

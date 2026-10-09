@@ -134,6 +134,37 @@ KTEST(ext2, double_indirect_large_file) {
     kfree(r);
 }
 
+/* G2-f: with the test image's 8 small block groups (256 blocks / 32 inodes
+ * each), group 0 starts with only ~17 free inodes, so creating more files than
+ * that forces alloc_inode into group 1+, and each file's data block likewise
+ * comes from a later group once group 0 fills. Exercises the group-aware
+ * alloc_inode / alloc_block / free paths and the per-group descriptor math. */
+KTEST(ext2, multi_block_group_alloc) {
+    const int NF = 25;                          /* > group 0's free inodes */
+    for (int i = 0; i < NF; i++) {
+        char path[24] = "/mnt/mg"; int p = 7;   /* build "/mnt/mgNN.txt" */
+        if (i >= 10) path[p++] = (char)('0' + i / 10);
+        path[p++] = (char)('0' + i % 10);
+        path[p++] = '.'; path[p++] = 't'; path[p++] = 'x'; path[p++] = 't'; path[p] = 0;
+        vnode_t* vn = vfs_create(path, VNODE_REG);
+        KASSERT_TEST(vn != NULL);
+        char c = (char)('A' + i);
+        KEXPECT_EQ((int)vfs_write(vn, &c, 1, 0), 1);
+    }
+    int ok = 1;                                 /* read each back from its on-disk inode */
+    for (int i = 0; i < NF; i++) {
+        char path[24] = "/mnt/mg"; int p = 7;
+        if (i >= 10) path[p++] = (char)('0' + i / 10);
+        path[p++] = (char)('0' + i % 10);
+        path[p++] = '.'; path[p++] = 't'; path[p++] = 'x'; path[p++] = 't'; path[p] = 0;
+        vnode_t* vn = vfs_resolve(path);
+        if (!vn) { ok = 0; continue; }
+        char r = 0;
+        if (vfs_read(vn, &r, 1, 0) != 1 || r != (char)('A' + i)) ok = 0;
+    }
+    KEXPECT_EQ(ok, 1);
+}
+
 KTEST(ext2, overwrite_in_place) {
     vnode_t* vn = vfs_create("/mnt/ow.txt", VNODE_REG);
     KASSERT_TEST(vn != NULL);

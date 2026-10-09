@@ -50,6 +50,7 @@ numbers are navigable rather than mysterious.
 | 20-S | **Toolchain syscalls**: `execve` envp + the `openat`/`*at` family; musl file I/O on ext2 (G3) | [PHASE20S_G3_SYSCALLS](PHASE20S_G3_SYSCALLS.md) |
 | 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (G2-d) | [PHASE20T_EXT2_DIROPS](PHASE20T_EXT2_DIROPS.md) |
 | 20-U | **ext2 double/triple-indirect**: files beyond the single-indirect cap — recursive map/alloc/free (G2-e) | [PHASE20U_EXT2_INDIRECT](PHASE20U_EXT2_INDIRECT.md) |
+| 20-V | **ext2 multi-block-group**: allocate/free blocks + inodes across every group, not just group 0 (G2-f) | [PHASE20V_EXT2_GROUPS](PHASE20V_EXT2_GROUPS.md) |
 | 21 | **Higher-half kernel**: kernel → top -2 GiB, HHDM, the low half freed per-process, standard non-PIE binaries at 0x400000 (F21 Path A) | [PHASE21_HIGHERHALF](PHASE21_HIGHERHALF.md) |
 | 21-A | **tcc self-hosts**: a real C compiler runs on MAKH, compiles C to a native executable, and MAKH runs it (F21) | [PHASE21A_SELFHOST_TCC](PHASE21A_SELFHOST_TCC.md) |
 | 21-B | **libc compile on MAKH**: tcc links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot, on MAKH, and MAKH runs it (F21) | [PHASE21B_LIBC_COMPILE](PHASE21B_LIBC_COMPILE.md) |
