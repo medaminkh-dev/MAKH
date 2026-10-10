@@ -116,18 +116,18 @@ flowchart LR
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  shell (shell_exec)            KFUZZ (sandbox · coverage)     │
+│  shell (shell_exec)            KFUZZ (sandbox · coverage)    │
 ├──────────────────────────────────────────────────────────────┤
 │  BSD sockets  ·  TCP / UDP / ICMP  ·  IPv4  ·  ARP  ·  Eth   │
-│  netd thread + net_lock                                       │
+│  netd thread + net_lock                                      │
 ├───────────────────────────┬──────────────────────────────────┤
-│  pthreads · sem · errno   │  e1000 · PCI · loopback           │
+│  pthreads · sem · errno   │  e1000 · PCI · loopback          │
 ├───────────────────────────┴──────────────────────────────────┤
-│  preemptive scheduler · wait queues · process table/tree      │
+│  preemptive scheduler · wait queues · process table/tree     │
 ├──────────────────────────────────────────────────────────────┤
-│  PMM (bitmap) · VMM (paging) · kernel heap (+ integrity walk) │
+│  PMM (bitmap) · VMM (paging) · kernel heap (+ integrity walk)│
 ├──────────────────────────────────────────────────────────────┤
-│  GDT · IDT · PIC · PIT · TSS · debug registers  (x86-64)      │
+│  GDT · IDT · PIC · PIT · TSS · debug registers  (x86-64)     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
