@@ -1,15 +1,8 @@
 <div align="center">
 
-<img src="https://res.cloudinary.com/dqtzw37rg/image/upload/v1772868531/MAKH-Vector_dbnspj.png" alt="MakhOS fennec logo — a from-scratch x86-64 operating system kernel" width="180" />
+<img src="https://res.cloudinary.com/dqtzw37rg/image/upload/v1772868531/MAKH-Vector_dbnspj.png" alt="MakhOS fennec logo — a from-scratch x86-64 operating system kernel" width="620" />
 
-```
- ███╗   ███╗ █████╗ ██╗  ██╗██╗  ██╗
- ████╗ ████║██╔══██╗██║ ██╔╝██║  ██║
- ██╔████╔██║███████║█████╔╝ ███████║
- ██║╚██╔╝██║██╔══██║██╔═██╗ ██╔══██║
- ██║ ╚═╝ ██║██║  ██║██║  ██╗██║  ██║
- ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
-```
+
 
 ### A from-scratch x86-64 operating system kernel that fuzzes itself from ring 0 — and compiles itself.
 
