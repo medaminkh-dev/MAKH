@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kernel.c
- * Version: 0.0.2
+ * Version: 1.0.0
  * Main kernel entry point
  */
 
@@ -37,6 +37,7 @@
 #include "include/drivers/pci.h"
 #include "include/drivers/e1000.h"
 #include "include/drivers/virtio_blk.h"
+#include "include/drivers/fb.h"
 #include "include/net/net.h"
 
 /* External reference to multiboot info (passed from assembly in RDI) */
@@ -359,35 +360,16 @@ void test_interrupts(void) {
  */
 void test_syscalls(void);
 
-void test_timer(void) {
+/* The timer/syscall smoke checks (verbose boot only). The PIC/timer/wall-clock/
+ * syscall initialisation itself now runs unconditionally in kernel_main; this
+ * just exercises it: a ring-0 syscall round-trip and a 2-second tick-count
+ * sanity check. */
+void test_timer_checks(void) {
     char buf[32];
-    
-    terminal_writestring("\n[TEST] Testing Timer Interrupts...\n");
-    
-    // Initialize PIC
-    print_check();
-    terminal_writestring("Initializing Programmable Interrupt Controller...\n");
-    pic_init();
-    
-    // Initialize Timer
-    print_check();
-    terminal_writestring("Initializing Timer...\n");
-    timer_init(TIMER_FREQUENCY);
-    ktime_init_realtime();        /* anchor the wall clock to the CMOS RTC */
 
-    // Initialize system calls
-    print_check();
-    terminal_writestring("Initializing system calls...\n");
-    syscall_init();
-    
-    // Enable interrupts
-    print_check();
-    terminal_writestring("Enabling interrupts...\n");
-    idt_enable_interrupts();
-    
     // Test syscalls
     test_syscalls();
-    
+
     // Test timer with busy-wait sleep
     terminal_writestring("\n  Waiting for 2 seconds...\n");
     uint64_t ticks_before = timer_get_ticks();
@@ -728,52 +710,40 @@ void kernel_main(void) {
     if (cmdline_has("makh.debug"))      klog_set_level(KLOG_DEBUG);
     else if (cmdline_has("makh.test"))  klog_set_level(KLOG_WARN);
 
+    /*
+     * Verbose boot (pass "makh.verbose"): the old brick-by-brick status lines
+     * and the in-kernel smoke tests (VMM/heap/GDT/timer/syscall/context-switch/
+     * keyboard). They are OFF by default so a normal boot is short and lands on
+     * the shell straight away. No coverage is lost: every subsystem they poked
+     * is also exercised by the headless suite (makh.test) and reachable from the
+     * shell's `selftest` command.
+     */
+    int verbose = cmdline_has("makh.verbose");
+
     /* Checkpoint - terminal init done */
     vga[82] = (0x0F << 8) | 'i';  /* 'i' for init done */
-    
+
     /* Position cursor after bootloader messages (line 3) */
     terminal_setcursor(3, 0);
-    
-    /* Checkpoint - about to print banner */
-    vga[83] = (0x0F << 8) | 'B';  /* 'B' for banner start */
-    
-    /* Print banner */
-    print_banner();
-    
-    /* Checkpoint - banner printed */
-    vga[84] = (0x0F << 8) | 'b';  /* 'b' for banner done */
-    
-    /* Print version info */
-    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
-    terminal_writestring("  ");
-    terminal_writestring(KERNEL_NAME);
-    terminal_writestring(" v");
-    terminal_writestring(KERNEL_VERSION);
-    terminal_writestring(" - ");
-    terminal_writestring(KERNEL_PHASE);
-    terminal_writestring(" Complete\n\n");
-    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
-    
-    /* Check 1: Long mode active */
-    print_ok();
-    terminal_writestring("Long mode active (64-bit)\n");
-    
-    /* Check 2: CPU features */
-    print_ok();
-    terminal_writestring("CPU initialized\n");
-    
-    /* Check 3: VGA driver */
-    print_ok();
-    terminal_writestring("VGA driver initialized\n");
-    
-    /* Check 4: Parse multiboot info */
-    print_ok();
-    terminal_writestring("Multiboot2 info structure received\n");
-    
-    /* Initialize PMM using multiboot memory map */
-    print_check();
-    terminal_writestring("Initializing Physical Memory Manager...\n");
-    
+
+    if (verbose) {
+        print_banner();
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK));
+        terminal_writestring("  ");
+        terminal_writestring(KERNEL_NAME);
+        terminal_writestring(" v");
+        terminal_writestring(KERNEL_VERSION);
+        terminal_writestring(" - ");
+        terminal_writestring(KERNEL_PHASE);
+        terminal_writestring(" Complete\n\n");
+        terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
+        print_ok(); terminal_writestring("Long mode active (64-bit)\n");
+        print_ok(); terminal_writestring("CPU initialized\n");
+        print_ok(); terminal_writestring("VGA driver initialized\n");
+        print_ok(); terminal_writestring("Multiboot2 info structure received\n");
+        print_check(); terminal_writestring("Initializing Physical Memory Manager...\n");
+    }
+
     /* Find the mmap tag (for PMM) and the first module tag (the initrd) in one
      * pass. We need the module's extent before PMM hands out any frame: GRUB
      * places the module in free RAM that can sit above the fixed low-memory
@@ -802,58 +772,41 @@ void kernel_main(void) {
         pmm_reserve_region(mod_tag->mod_start,
                            (uint64_t)mod_tag->mod_end - mod_tag->mod_start);
     
-    /* PMM Tests */
-    print_ok();
-    terminal_writestring("PMM initialized, running tests...\n");
-    
-    /* Test 1: Allocate 2 pages */
-    terminal_writestring("  Test 1: Allocating 2 pages...\n");
-    void* page1 = pmm_alloc_page();
-    void* page2 = pmm_alloc_page();
-    
-    char buf[32];
-    terminal_writestring("    Page 1: ");
-    uint64_to_hex((uint64_t)(uintptr_t)page1, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    terminal_writestring("    Page 2: ");
-    uint64_to_hex((uint64_t)(uintptr_t)page2, buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    /* Test 2: Free first page */
-    terminal_writestring("  Test 2: Freeing page 1...\n");
-    pmm_free_page(page1);
-    
-    /* Test 3: Print memory statistics */
-    terminal_writestring("  Memory Statistics:\n");
-    terminal_writestring("    Total pages: ");
-    uint64_to_string(pmm_get_total_page_count(), buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    terminal_writestring("    Used pages: ");
-    uint64_to_string(pmm_get_used_page_count(), buf);
-    terminal_writestring(buf);
-    terminal_writestring("\n");
-    
-    terminal_writestring("    Free memory: ");
-    uint64_to_string(pmm_get_free_memory() / (1024 * 1024), buf);
-    terminal_writestring(buf);
-    terminal_writestring(" MB\n");
-    
+    /* PMM smoke test + memory stats (verbose only). */
+    if (verbose) {
+        char buf[32];
+        print_ok();
+        terminal_writestring("PMM initialized, running tests...\n");
+        void* page1 = pmm_alloc_page();
+        void* page2 = pmm_alloc_page();
+        terminal_writestring("    Page 1: ");
+        uint64_to_hex((uint64_t)(uintptr_t)page1, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n    Page 2: ");
+        uint64_to_hex((uint64_t)(uintptr_t)page2, buf);
+        terminal_writestring(buf);
+        terminal_writestring("\n");
+        pmm_free_page(page1);
+        terminal_writestring("  Total pages: ");
+        uint64_to_string(pmm_get_total_page_count(), buf);
+        terminal_writestring(buf);
+        terminal_writestring("  Used: ");
+        uint64_to_string(pmm_get_used_page_count(), buf);
+        terminal_writestring(buf);
+        terminal_writestring("  Free: ");
+        uint64_to_string(pmm_get_free_memory() / (1024 * 1024), buf);
+        terminal_writestring(buf);
+        terminal_writestring(" MB\n");
+        print_check();
+        terminal_writestring("Initializing Virtual Memory Manager...\n");
+    }
+
     /* Initialize VMM */
-    print_check();
-    terminal_writestring("Initializing Virtual Memory Manager...\n");
     vmm_init();
-    
-    /* Run VMM tests */
-    test_vmm();
-    
+    if (verbose) test_vmm();
+
     /* Initialize Kernel Heap */
-    print_check();
-    terminal_writestring("Initializing Kernel Heap...\n");
+    if (verbose) { print_check(); terminal_writestring("Initializing Kernel Heap...\n"); }
     kheap_init();
     page_init();   /* Phase 17: per-frame refcounts for COW */
 
@@ -862,6 +815,29 @@ void kernel_main(void) {
     devfs_mount("/dev");
     tty_init();                 /* Phase 19: terminal line discipline */
     multiboot_parse(multiboot_info_ptr);
+
+    int splash = 0;   /* set when the fennec boot splash is showing (quiet boot) */
+
+    /* Bring up the framebuffer graphics console if GRUB gave us one (requested
+     * in boot/boot.asm). From here terminal_* renders antialiased text on the
+     * framebuffer; with no usable framebuffer it stays on 80x25 VGA text. The
+     * headless self-tests assert on the serial mirror, so turn the pixel console
+     * off under makh.test to spare them the per-glyph / per-scroll cost — fb_init
+     * still runs, exercising the mapping and tag parsing. */
+    if (fb_init((struct multiboot_tag_framebuffer*)
+                multiboot_find_tag(MULTIBOOT_TAG_TYPE_FRAMEBUFFER))) {
+        if (cmdline_has("makh.test")) {
+            fb_console_set_enabled(0);
+        } else if (!verbose) {
+            /* Quiet boot: hide the log console and show the fennec splash while
+             * the kernel finishes init; it is wiped to a clean terminal just
+             * before the shell starts (a clear boot -> terminal transition). */
+            fb_console_set_enabled(0);
+            fb_splash_show();
+            splash = 1;
+        }
+    }
+
     struct multiboot_tag_module* mod =
         (struct multiboot_tag_module*)multiboot_find_tag(MULTIBOOT_TAG_TYPE_MODULE);
     if (mod)
@@ -871,11 +847,10 @@ void kernel_main(void) {
         KLOG_W("INITRD", "no initrd module provided by the bootloader\n");
     
     /* Run heap tests */
-    test_kheap();
-    
+    if (verbose) test_kheap();
+
     /* Initialize IDT */
-    print_check();
-    terminal_writestring("Initializing Interrupt Descriptor Table...\n");
+    if (verbose) { print_check(); terminal_writestring("Initializing Interrupt Descriptor Table...\n"); }
     idt_init();
     
     // Initialize TSS first
@@ -895,13 +870,20 @@ void kernel_main(void) {
 
     /* Phase 16: per-CPU block + GS base, needed before any ring-3 entry. */
     usermode_init();
-    
-    // Test GDT and TSS
-    test_gdt_tss();
-    
-    /* Test timer and interrupts */
-    test_timer();
-    
+
+    if (verbose) test_gdt_tss();
+
+    /* Bring up the interrupt controller, timer, wall clock and the syscall MSRs,
+     * then enable interrupts. (These used to live inside test_timer(); they are
+     * load-bearing init, so they run every boot — only the smoke test and the
+     * 2-second tick-count check are verbose-only.) */
+    pic_init();
+    timer_init(TIMER_FREQUENCY);
+    ktime_init_realtime();          /* anchor the wall clock to the CMOS RTC */
+    syscall_init();
+    idt_enable_interrupts();
+    if (verbose) test_timer_checks();
+
     // Initialize process manager
     proc_init();
     proc_become_current();
@@ -946,50 +928,48 @@ void kernel_main(void) {
      * commands, fork+execve's them and waits. This is init(PID 1)'s job in a
      * fuller system; here kernel_main (already PID 1) launches it directly.
      */
-    if (cmdline_has("makh.sh")) {
-        idt_enable_interrupts();
+    /* Bring up the PS/2 keyboard. (This used to live inside the keyboard
+     * self-test; it is init, so it runs every interactive boot.) Interrupts are
+     * already enabled above. */
+    keyboard_init();
+
+    /* Finish the splash: spin the loader a moment (the timer is up now), then
+     * wipe to a clean terminal — a clear boot -> terminal handoff. */
+    if (splash) {
+        for (int f = 0; f < 22; f++) {
+            fb_splash_tick(f);
+            timer_sleep(80);
+        }
+        fb_console_set_enabled(1);   /* re-select the pixel console ... */
+        terminal_clear();            /* ... and clear it to a fresh screen  */
+    }
+
+    /*
+     * Default interactive boot: the USER-SPACE shell — /bin/sh plus the busybox
+     * applets and coreutils staged in the initrd (ls, cat, grep, uname, env,
+     * ...). This is the rich, "unrestricted" terminal. Keystrokes flow through
+     * the terminal line discipline to the ring-3 shell, which reads commands and
+     * fork+execve's them; kernel_main (already PID 1) then idles.
+     *
+     * Pass "makh.kshell" for the small built-in kernel debug shell instead
+     * (ping / arp / netstat / mem / fuzz / selftest). "makh.sh" still works and
+     * is equivalent to the default.
+     */
+    if (!cmdline_has("makh.kshell")) {
         tty_init();
         tty_set_active(1);                        /* keyboard -> line discipline */
         int pid = proc_spawn_user("/bin/sh");
         if (pid > 0) tty_set_foreground((uint32_t)pid);
-        else terminal_writestring("[init] ERROR: could not start /bin/sh\n");
-        terminal_writestring("[init] MakhOS user shell — type a command path, Ctrl+D to exit\n");
+        else terminal_writestring("[init] could not start /bin/sh\n");
         for (;;) __asm__ volatile("hlt");         /* the scheduler runs the shell */
     }
 
-    /* Small delay before context switch test */
-    terminal_writestring("\n[MAIN] Waiting before context switch test...\n");
-    for (volatile int i = 0; i < 5000000; i++);
+    /* ---- Built-in kernel debug shell (makh.kshell) ---- */
+    if (verbose) {
+        for (volatile int i = 0; i < 5000000; i++);
+        test_context_switch();
+    }
 
-    // Test context switch
-    test_context_switch();
-
-    /* Confirm return from context switch test */
-    terminal_writestring("\n[MAIN] Returned from context switch test\n");
-
-    idt_enable_interrupts();
-
-    /* Test keyboard */
-    test_keyboard();
-
-    /* Success message */
-    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK));
-    terminal_writestring("\n");
-    terminal_writestring("  ====================================\n");
-    terminal_writestring("  ");
-    terminal_writestring(KERNEL_NAME);
-    terminal_writestring(" v");
-    terminal_writestring(KERNEL_VERSION);
-    terminal_writestring(" - ");
-    terminal_writestring(KERNEL_PHASE);
-    terminal_writestring(" [OK]\n");
-    terminal_writestring("  ====================================\n");
-    terminal_setcolor(vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK));
-    
-    terminal_writestring("\n[MAIN] System fully functional.\n");
-    terminal_writestring("Type 'help' for commands.\n");
-    terminal_writestring("Press Ctrl+Alt+G to exit QEMU.\n\n");
-    
     /* Main loop - input line editing with history */
     terminal_writestring("MakhOS> ");
     size_t prompt_row;

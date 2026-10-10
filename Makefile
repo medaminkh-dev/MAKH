@@ -98,7 +98,8 @@ C_SOURCES_DRIVERS = \
     kernel/drivers/pci.c \
     kernel/drivers/e1000.c \
     kernel/drivers/rtc.c \
-    kernel/drivers/virtio_blk.c
+    kernel/drivers/virtio_blk.c \
+    kernel/drivers/fb.c
 
 # C source files - Network stack (Phase 14)
 C_SOURCES_NET = \
@@ -234,7 +235,13 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/sigtest build/user/sigmask build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
-            build/user/iovtest build/user/lowexec build/user/unametest
+            build/user/iovtest build/user/lowexec build/user/unametest \
+            build/user/ls build/user/cat build/user/pwd build/user/clear \
+            build/user/whoami build/user/id build/user/ping build/user/ifconfig \
+            build/user/help build/user/mkdir build/user/rmdir build/user/rm \
+            build/user/touch build/user/mv build/user/cp build/user/ln \
+            build/user/grep build/user/head build/user/tail build/user/wc \
+            build/user/env build/user/date build/user/sort build/user/cut
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user
@@ -287,14 +294,15 @@ $(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhos
 	@cp $(MUSL_FIO) build/initrd/bin/fio
 	@cp $(MUSL_ENVTEST) build/initrd/bin/envtest
 	@cp $(BUSYBOX_PREBUILT) build/initrd/bin/busybox
-	@# U1-b: expose busybox applets as /bin/<name> symlinks (relative to busybox),
-	@# so the kernel resolves the symlink to busybox while argv[0]'s basename picks
-	@# the applet (multi-call dispatch). busybox's shell is /bin/ash (MAKH keeps
-	@# its own /bin/sh and /bin/echo, so those names are not symlinked here). Plain
-	@# `ln -s` (no -f) deliberately fails the build if a name ever collides with a
-	@# real program already copied into /bin.
-	@for a in ash ls cat grep mkdir rmdir rm cp mv pwd true false head tail \
-	          wc touch ln env uname sleep date clear sort cut; do \
+	@# Expose busybox applets as /bin/<name> symlinks: the kernel resolves the
+	@# symlink to busybox while argv[0]'s basename selects the applet (multi-call
+	@# dispatch), so a user types `uname`, not `busybox uname`. MAKH ships its own
+	@# MAKH ships native coreutils (ls cat pwd clear mkdir rmdir rm cp mv ln touch
+	@# grep head tail wc env date sort cut) plus its own sh/echo, so only the few
+	@# applets this minimal busybox actually provides are symlinked here. Plain
+	@# `ln -s` (no -f) deliberately fails the build if a name collides with a real
+	@# program already copied in.
+	@for a in ash true false sleep uname; do \
 	    ln -s busybox build/initrd/bin/$$a; done
 	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
 	@cp $(MAKE_PREBUILT) build/initrd/bin/make

@@ -82,7 +82,13 @@ struct multiboot_tag_mmap {
     struct multiboot_mmap_entry entries[0];
 } __attribute__((packed));
 
-/* Framebuffer tag */
+/* Framebuffer tag. For framebuffer_type == 1 (direct RGB) the fixed fields are
+ * followed by a small colour-info block giving each channel's bit position and
+ * width in the pixel; we read it so the pixel packing adapts to whatever layout
+ * the bootloader hands us (QEMU's std VGA gives 32bpp, red@16 green@8 blue@0). */
+#define MULTIBOOT_FRAMEBUFFER_TYPE_INDEXED 0
+#define MULTIBOOT_FRAMEBUFFER_TYPE_RGB     1
+#define MULTIBOOT_FRAMEBUFFER_TYPE_EGA     2
 struct multiboot_tag_framebuffer {
     uint32_t type;
     uint32_t size;
@@ -93,6 +99,13 @@ struct multiboot_tag_framebuffer {
     uint8_t  framebuffer_bpp;
     uint8_t  framebuffer_type;
     uint16_t reserved;
+    /* colour_info, valid only when framebuffer_type == RGB */
+    uint8_t  fb_red_field_position;
+    uint8_t  fb_red_mask_size;
+    uint8_t  fb_green_field_position;
+    uint8_t  fb_green_mask_size;
+    uint8_t  fb_blue_field_position;
+    uint8_t  fb_blue_mask_size;
 } __attribute__((packed));
 
 /* Module tag */

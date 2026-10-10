@@ -12,8 +12,8 @@
 
 /* Kernel version */
 #define KERNEL_NAME     "MakhOS"
-#define KERNEL_VERSION  "0.1.0-dev"
-#define KERNEL_PHASE    "Phase 11 (foundation)"
+#define KERNEL_VERSION  "1.0.0"
+#define KERNEL_PHASE    "Phase 28 (interactive shell)"
 
 /* Kernel main entry point - called from boot.asm */
 void kernel_main(void);

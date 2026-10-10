@@ -102,9 +102,11 @@ typedef struct file {
 #define S_IFCHR   0020000
 #define S_IFDIR   0040000
 #define S_IFREG   0100000
+#define S_IFLNK   0120000
 #define S_ISDIR(m)  (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m)  (((m) & S_IFMT) == S_IFREG)
 #define S_ISCHR(m)  (((m) & S_IFMT) == S_IFCHR)
+#define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
 
 /* getdents64 d_type values. */
 #define DT_UNKNOWN 0
@@ -197,6 +199,7 @@ void      vfs_close_all(void* proc);
 
 /* -------- metadata / listing / fcntl (Phase 20-J) -------- */
 int       vfs_stat(const char* path, struct stat* st);
+int       vfs_lstat(const char* path, struct stat* st);   /* no-follow (lstat) */
 int       vfs_fstat(int fd, struct stat* st);
 long      vfs_getdents(int fd, void* buf, size_t n);   /* bytes, 0 at end */
 long      vfs_fcntl(int fd, int cmd, long arg);

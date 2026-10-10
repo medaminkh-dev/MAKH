@@ -114,7 +114,7 @@ void ipv4_input(netdev_t* dev, const uint8_t* pkt, size_t len) {
     size_t plen = total - ihl;
 
     switch (h->proto) {
-        case IPPROTO_ICMP: icmp_input(dev, src, dst, payload, plen); break;
+        case IPPROTO_ICMP: icmp_input(dev, src, dst, h->ttl, payload, plen); break;
         case IPPROTO_UDP:  udp_input(dev, src, dst, payload, plen);  break;
         case IPPROTO_TCP:  tcp_input(dev, src, dst, payload, plen);  break;
         default: break;

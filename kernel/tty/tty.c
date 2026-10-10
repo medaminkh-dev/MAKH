@@ -24,6 +24,13 @@ static size_t    ready_len;
 static int       ready_has;            /* a line (or EOF) is available         */
 static int       ready_eof;
 
+/* Non-canonical (raw) input: a byte ring, so an interactive line editor in a
+ * ring-3 shell can read keystrokes one at a time (VMIN=1 style) without the IRQ
+ * producer and the read() consumer clobbering a shared line buffer. */
+#define TTY_RAW_Q 256
+static char      raw_q[TTY_RAW_Q];
+static size_t    raw_head, raw_tail;
+
 static wait_queue_t tty_wq;            /* readers blocked waiting for a line    */
 static int          tty_active;        /* 1 => keyboard feeds the line discipline */
 
@@ -40,6 +47,7 @@ void tty_init(void) {
     fg_pgid = 0;
     line_len = ready_len = 0;
     ready_has = ready_eof = 0;
+    raw_head = raw_tail = 0;
     tty_wq.head = tty_wq.tail = 0;
 }
 
@@ -68,10 +76,11 @@ void tty_input(char c) {
         if (c == (char)termios.c_cc[VQUIT]) { signal_send_pgrp(fg_pgid, SIGQUIT); return; }
     }
 
-    if (!(termios.c_lflag & ICANON)) {        /* raw mode: pass bytes straight through */
-        if (line_len < TTY_LINE_MAX) line[line_len++] = c;
+    if (!(termios.c_lflag & ICANON)) {        /* raw mode: one byte at a time */
+        size_t nh = (raw_head + 1) % TTY_RAW_Q;
+        if (nh != raw_tail) { raw_q[raw_head] = c; raw_head = nh; }  /* drop on overflow */
         echo(c);
-        if (line_len == TTY_LINE_MAX) line_complete();
+        wq_wake_all(&tty_wq);
         return;
     }
 
@@ -100,9 +109,35 @@ void tty_input(char c) {
     }
 }
 
-int tty_line_ready(void) { return ready_has || ready_eof; }
+int tty_line_ready(void) {
+    if (!(termios.c_lflag & ICANON))
+        return raw_head != raw_tail || (ready_has && ready_len) || ready_eof;
+    return ready_has || ready_eof;
+}
 
 long tty_read(char* buf, size_t n) {
+    if (!(termios.c_lflag & ICANON)) {        /* raw: drain whatever bytes we have */
+        size_t k = 0;
+        while (k < n && raw_tail != raw_head) {
+            buf[k++] = raw_q[raw_tail];
+            raw_tail = (raw_tail + 1) % TTY_RAW_Q;
+        }
+        if (k == 0) {
+            /* Bridge: input assembled in canonical mode (e.g. before the shell
+             * switched to raw for line editing) is still delivered byte-wise. */
+            if (ready_has && ready_len > 0) {
+                size_t avail = ready_len < n ? ready_len : n;
+                memcpy(buf, ready, avail);
+                memmove(ready, ready + avail, ready_len - avail);
+                ready_len -= avail;
+                k = avail;
+                if (ready_len == 0) ready_has = 0;
+            } else if (ready_eof) {
+                ready_eof = 0;                /* deliver EOF (0 bytes) */
+            }
+        }
+        return (long)k;
+    }
     if (ready_eof && ready_len == 0) { ready_eof = 0; return 0; }   /* EOF */
     if (!ready_has) return 0;                                       /* nothing yet */
     size_t k = ready_len < n ? ready_len : n;

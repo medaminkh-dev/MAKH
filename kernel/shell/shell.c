@@ -155,21 +155,33 @@ static int cmd_ping(int argc, char** argv) {
 
     char ip[16];
     ip_to_str(dst, ip);
-    kprintf("PING %s: %u echo requests\n", ip, count);
+    kprintf("PING %s: %u echo requests, %u data bytes\n", ip, count, 56);
     uint32_t ok = 0;
+    int rtt_min = -1, rtt_max = 0;
+    uint64_t rtt_sum = 0;
     for (uint32_t seq = 1; seq <= count; seq++) {
+        uint8_t ttl = 0;
         net_lock();
-        int rtt = icmp_ping(dst, (uint16_t)seq, 1000);
+        int rtt = icmp_ping(dst, (uint16_t)seq, 1000, &ttl);
         net_unlock();
         if (rtt >= 0) {
             ok++;
-            kprintf("reply from %s: seq=%u time=%d ms\n", ip, seq, rtt);
+            rtt_sum += (uint32_t)rtt;
+            if (rtt_min < 0 || rtt < rtt_min) rtt_min = rtt;
+            if (rtt > rtt_max) rtt_max = rtt;
+            kprintf("64 bytes from %s: icmp_seq=%u ttl=%u time=%d ms\n",
+                    ip, seq, ttl, rtt);
         } else {
-            kprintf("seq=%u: no reply (%d)\n", seq, rtt);
+            kprintf("icmp_seq=%u: no reply (timeout)\n", seq);
         }
+        if (seq < count) timer_sleep(500);       /* ~1 packet / 0.5 s */
     }
-    kprintf("--- %s: %u sent, %u received, %u%% loss\n", ip, count, ok,
-            (count - ok) * 100 / count);
+    kprintf("--- %s ping statistics ---\n", ip);
+    kprintf("%u packets transmitted, %u received, %u%% packet loss\n",
+            count, ok, (count - ok) * 100 / count);
+    if (ok)
+        kprintf("rtt min/avg/max = %d/%u/%d ms\n",
+                rtt_min, (uint32_t)(rtt_sum / ok), rtt_max);
     return ok ? SHELL_OK : SHELL_ERR;
 }
 

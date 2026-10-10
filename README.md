@@ -1,50 +1,78 @@
 <div align="center">
 
-```
- ███╗   ███╗ █████╗ ██╗  ██╗██╗  ██╗
- ████╗ ████║██╔══██╗██║ ██╔╝██║  ██║
- ██╔████╔██║███████║█████╔╝ ███████║
- ██║╚██╔╝██║██╔══██║██╔═██╗ ██╔══██║
- ██║ ╚═╝ ██║██║  ██║██║  ██╗██║  ██║
- ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝
-```
+<img src="https://res.cloudinary.com/dqtzw37rg/image/upload/v1772868531/MAKH-Vector_dbnspj.png" alt="MakhOS fennec logo — a from-scratch x86-64 operating system kernel" width="620" />
 
-### An x86-64 kernel that tests itself — from the inside, in ring 0.
+
+
+### A from-scratch x86-64 operating system kernel that fuzzes itself from ring 0 — and compiles itself.
 
 [![CI](https://github.com/medaminkh-dev/MAKH/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/medaminkh-dev/MAKH/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Commercial license](https://img.shields.io/badge/commercial-available-success.svg)](LICENSING.md)
 ![Arch](https://img.shields.io/badge/arch-x86--64-informational)
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
-![Tests](https://img.shields.io/badge/in--kernel%20tests-82%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/in--kernel%20tests-183%20passing-brightgreen)
 
-[Quick start](#-quick-start) · [Highlights](#-highlights) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Architecture](#-architecture) · [Docs](#-documentation) · [License](#-license)
+[Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 
 </div>
 
 ---
 
-**MakhOS** is a from-scratch operating system kernel for x86-64, written in
-freestanding C and assembly. It boots with GRUB, schedules threads
-preemptively, speaks TCP/IP over a real NIC driver — and it carries its own
-**coverage-guided fuzzer that attacks the kernel from inside ring 0**,
-surviving the faults it provokes and printing the exact seed to reproduce
-each one.
+**MakhOS** is a hobby **operating system** for **x86-64**, written from scratch in
+freestanding **C** and **assembly** — no Linux, no BSD, no existing kernel underneath.
+It boots with GRUB (Multiboot2), draws to a **framebuffer graphics console**,
+schedules threads preemptively, runs **ring-3 user programs**, speaks **TCP/IP**
+over a real Intel e1000 NIC, mounts **ext2** disks, and even **compiles C on itself**
+with `tcc` + `make`.
 
-It is built **brick by brick**: every phase lands only when its tests are
-green.
+Its signature: a **coverage-guided fuzzer that attacks the kernel from inside
+ring 0** (KFUZZ), survives the CPU faults it provokes, and prints the exact seed
+to reproduce each one.
+
+Everything is built **brick by brick** (طوبة طوبة): a phase lands only when its
+tests are green — **183 in-kernel tests**, a stress runner, and CI on every push.
 
 ```console
-MakhOS> ping 10.0.2.2 3
-PING 10.0.2.2: 3 echo requests
-reply from 10.0.2.2: seq=1 time=250 ms
-reply from 10.0.2.2: seq=2 time=100 ms
-reply from 10.0.2.2: seq=3 time=100 ms
---- 10.0.2.2: 3 sent, 3 received, 0% loss
-MakhOS> fuzz netrx 300
-fuzzing 300 iterations...
-done: 300 iters, 0 crashes, 0 oracle-fails, coverage 184 edges, corpus 2
+$ help
+MAKH OS - a small x86-64 operating system, built brick by brick.
+Running a user-space shell (ring 3) on MAKH's own kernel.
+...
+$ echo "brick by brick" | wc -w
+3
+$ ping 10.0.2.2 3
+PING 10.0.2.2: 3 echo requests, 56 data bytes
+64 bytes from 10.0.2.2: icmp_seq=1 ttl=255 time=0 ms
+64 bytes from 10.0.2.2: icmp_seq=2 ttl=255 time=0 ms
+64 bytes from 10.0.2.2: icmp_seq=3 ttl=255 time=0 ms
+--- 10.0.2.2 ping statistics ---
+3 packets transmitted, 3 received, 0% packet loss
+rtt min/avg/max = 0/0/0 ms
 ```
+
+## 🦊 What makes MakhOS different
+
+Most hobby kernels print "Hello, World" and stop. MakhOS keeps going — and a
+handful of things here are genuinely rare for a from-scratch OS:
+
+- **It fuzzes its own kernel from ring 0.** KFUZZ runs a coverage-guided fuzzer
+  *inside* the kernel, turning `#PF`/`#GP` faults into reproducible reports via an
+  assembly `setjmp`/`longjmp` sandbox — instead of triple-faulting the machine.
+- **It self-hosts.** MakhOS runs `tcc` and GNU `make` *on itself*, rebuilds a
+  program it ships from source, and runs the result — the self-hosting summit for
+  a kernel this size.
+- **It runs real, unmodified binaries.** `busybox` and `musl`-libc static-PIE
+  executables run as ordinary ring-3 processes, with `fork`/`execve`/`wait4`,
+  pipes, job control and signals.
+- **It has a real network stack.** PCI + Intel **e1000** over DMA, ARP, IPv4,
+  ICMP, UDP and a full RFC 793 **TCP** (retransmission, fast retransmit, flow
+  control, TIME_WAIT) behind a POSIX socket API — ~200 KB over loopback TCP in
+  ~20 ms, byte-exact under 1-in-7 packet loss.
+- **It looks like an OS.** A **framebuffer graphics console** with an antialiased
+  font and a warm palette, a **fennec boot splash** with a spinning loader, and an
+  interactive line-editing shell with **command history** and keyboard shortcuts.
+
+<sub>Keywords: operating system · OS kernel · x86-64 · osdev · bare metal · freestanding C · hobby OS · kernel fuzzing · coverage-guided · ring 0 · TCP/IP stack · POSIX · ext2 · musl · self-hosting · framebuffer · QEMU</sub>
 
 ## ✨ Highlights
 
@@ -72,17 +100,16 @@ watchpoints for hunting stray writes.
 ### 🌐 Real TCP/IP stack
 PCI + Intel e1000 driver over DMA, ARP, IPv4, ICMP, UDP and a full RFC 793
 TCP (retransmission, fast retransmit, flow control, TIME_WAIT) behind a
-POSIX socket API. 200 KB over loopback TCP in ~20 ms; survives 1-in-7
-packet loss byte-exact.
+POSIX socket API.
 
 ### 🔬 KFUZZ self-fuzzer
 Coverage-guided fuzzing of the kernel's own heap, page allocator, string
 routines, pthreads, shell and network receive path — with a sandbox that
 turns ring-0 faults into reproducible reports.
 
-### 🖥️ Built-in shell
-`ifconfig` · `arp` · `ping` · `netstat` · `ps` · `mem` · `heapcheck` ·
-`fuzz` · `selftest` — all scriptable through `shell_exec()`.
+### 🖥️ Framebuffer console + shell
+A graphics console (antialiased font, warm palette), a fennec boot splash,
+and a ring-3 `/bin/sh` with pipes, job control, history and ~25 commands.
 
 </td>
 </tr>
@@ -112,22 +139,40 @@ flowchart LR
 - **Watchdog** — a target that hangs is reported with its seed.
 - **Replay** — `fuzz replay <seed> <target>` reproduces any finding exactly.
 
+## 🖥️ The shell
+
+MakhOS boots to a fennec splash, then hands off to an interactive **ring-3
+`/bin/sh`** on a framebuffer console. The shell has pipelines (`a | b`), job
+control (Ctrl+C / Ctrl+Z), a line editor with **command history** (Up/Down),
+cursor movement (Left/Right, Ctrl+A/E), and kill/erase (Ctrl+U/K, Backspace).
+
+Type `help` for the full A-to-Z. The `/bin` commands include:
+
+| Area | Commands |
+|---|---|
+| Files | `ls -la` · `cat` · `cp` · `mv` · `ln -s` · `rm` · `mkdir` · `rmdir` · `touch` · `pwd` |
+| Text | `echo` · `grep` · `head` · `tail` · `wc` · `sort` · `cut` |
+| System | `whoami` · `id` · `uname` · `env` · `date` · `clear` · `sleep` |
+| Network | `ping` (ttl + rtt min/avg/max) · `ifconfig` |
+| Develop | `tcc` (Tiny C Compiler on MAKH) · `make` |
+
 ## 🧱 Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  shell (shell_exec)            KFUZZ (sandbox · coverage)    │
+│  ring-3 /bin/sh + coreutils · tcc · make   KFUZZ (ring-0)     │
 ├──────────────────────────────────────────────────────────────┤
-│  BSD sockets  ·  TCP / UDP / ICMP  ·  IPv4  ·  ARP  ·  Eth   │
-│  netd thread + net_lock                                      │
-├───────────────────────────┬──────────────────────────────────┤
-│  pthreads · sem · errno   │  e1000 · PCI · loopback          │
-├───────────────────────────┴──────────────────────────────────┤
-│  preemptive scheduler · wait queues · process table/tree     │
+│  syscalls · ELF loader · fork/execve · signals · pipes · tty  │
 ├──────────────────────────────────────────────────────────────┤
-│  PMM (bitmap) · VMM (paging) · kernel heap (+ integrity walk)│
+│  VFS · tmpfs · devfs · ext2 (r/w) · tar initrd · virtio-blk   │
 ├──────────────────────────────────────────────────────────────┤
-│  GDT · IDT · PIC · PIT · TSS · debug registers  (x86-64)     │
+│  BSD sockets · TCP / UDP / ICMP · IPv4 · ARP · e1000 · PCI    │
+├──────────────────────────────────────────────────────────────┤
+│  preemptive scheduler · wait queues · pthreads · process tree │
+├──────────────────────────────────────────────────────────────┤
+│  PMM (bitmap) · VMM (paging, COW, NX/W^X) · heap (+ integrity)│
+├──────────────────────────────────────────────────────────────┤
+│  framebuffer console · GDT · IDT · PIC · PIT · TSS  (x86-64)  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,13 +185,16 @@ kernel/
   mm/          physical/virtual memory, kernel heap
   proc/        PCB, process table/tree, PIDs, scheduler
   pthread/     POSIX threads, mutexes, condvars, semaphores
-  drivers/     PCI, e1000, timer, keyboard, serial
+  drivers/     PCI, e1000, timer, keyboard, serial, framebuffer
   net/         Ethernet, ARP, IPv4, ICMP, UDP, TCP, sockets
-  shell/       the command shell
+  fs/          VFS, tmpfs, devfs, ext2, initrd (tar)
+  syscall/     ring-3 syscall ABI, uaccess
+  tty/         terminal line discipline
   kfuzz/       the ring-0 self-fuzzer
   tests/       in-kernel KTEST suites
+user/          ring-3 shell + coreutils (ls, cat, grep, ping, ...)
 tools/         test runner, keyboard-driven smoke test, stress runner
-docs/          per-phase design documents
+docs/          per-phase design documents (start at docs/README.md)
 ```
 
 </details>
@@ -162,7 +210,7 @@ make            # build makhos.kernel + makhos.iso
 make run        # boot it in QEMU
 ```
 
-Type `help` at the `MakhOS>` prompt.
+Watch the fennec splash, then type `help` at the `$` prompt.
 
 ## ✅ Testing
 
@@ -175,60 +223,27 @@ Type `help` at the `MakhOS>` prompt.
 
 CI runs the suite and a stress job on every push.
 
-## 📈 Status
+## 📈 Milestones
 
-| Phase | Milestone | |
-|---|---|---|
-| 1–9 | Boot, VGA/serial, memory, interrupts, timer, keyboard, GDT/TSS, syscall MSRs, processes | ✅ |
-| 11 | In-kernel test harness, `kprintf`, panic backtraces | ✅ |
-| 12 | Preemptive priority scheduler, sleep, wait queues | ✅ |
-| 13 | POSIX threads API | ✅ |
-| 14 | Networking: PCI, e1000, TCP/IP, sockets, shell | ✅ [docs](docs/PHASE14_NETWORK.md) |
-| 15 | KFUZZ ring-0 self-fuzzer | ✅ [docs](docs/PHASE15_KFUZZ.md) |
-| 16 | Ring-3 userspace: syscall/sysret ABI, uaccess, fault containment | ✅ [docs](docs/PHASE16_USERSPACE.md) |
-| 17 | VM v2: per-process address spaces, copy-on-write, NX/W^X | ✅ [docs](docs/PHASE17_VMV2.md) |
-| 18 | Filesystem: VFS, tmpfs, devfs, tar initrd, fd/syscalls | ✅ [docs](docs/PHASE18_VFS.md) |
-| 19 | Signals, process groups, TTY line discipline (Ctrl+C / job control) | ✅ [docs](docs/PHASE19_SIGNALS_TTY.md) |
-| 20-A | User process model: ELF load, preemptible ring 3, per-process address space, `waitpid` | ✅ [docs](docs/PHASE20A_PROCESS_MODEL.md) |
-| 20-B | Anonymous memory: `brk`, `mmap`/`munmap`/`mprotect` | ✅ [docs](docs/PHASE20B_MMAP_BRK.md) |
-| 20-C | Working directory: per-process cwd, `chdir`/`getcwd`, relative paths | ✅ [docs](docs/PHASE20C_CWD.md) |
-| 20-A-2 | `fork` (copy-on-write) + `execve` (replace image) + `wait4` | ✅ [docs](docs/PHASE20A2_FORK_EXECVE.md) |
-| 20-D | Controlling terminal: blocking `read`, Ctrl+C, interactive `/bin/sh` (`makh.sh`) | ✅ [docs](docs/PHASE20D_SHELL.md) |
-| 20-E | `argv`/`envp`/`auxv`: SysV initial stack, `umain(argc, argv)`, shell argument parsing | ✅ [docs](docs/PHASE20E_ARGV.md) |
-| 20-F | Job control: `setpgid`/`getpgid`/`setsid`, `ioctl(TIOCSPGRP)`, Ctrl+C hits the job | ✅ [docs](docs/PHASE20F_JOBCTL.md) |
-| 20-G | User signal handlers: `sigaction`/`sigprocmask`/`sigreturn`, signal frame on the user stack | ✅ [docs](docs/PHASE20G_SIGNALS.md) |
-| 20-H | Thread-local storage: `arch_prctl(ARCH_SET_FS)`, per-process FS base (musl enabler) | ✅ [docs](docs/PHASE20H_TLS.md) |
-| 20-I | Time & randomness: `clock_gettime`/`gettimeofday`/`nanosleep`/`getrandom` (xoshiro256**) | ✅ [docs](docs/PHASE20I_TIME_RANDOM.md) |
-| 20-J | File metadata & listing: `stat`/`fstat`/`getdents64`/`fcntl` (byte-exact `struct stat`) | ✅ [docs](docs/PHASE20J_STAT.md) |
-| 20-K | Pipes & redirection: `pipe`/`pipe2`/`dup2`, fd inheritance, shell `a \| b` pipelines | ✅ [docs](docs/PHASE20K_PIPE.md) |
-| 20-L | User threads: `clone`+`futex`+`set_tid_address` (shared VM/fds, futex-join) | ✅ [docs](docs/PHASE20L_THREADS.md) |
-| 20-M | Wall clock: CMOS RTC anchors `CLOCK_REALTIME`/`gettimeofday` to a real epoch | ✅ [docs](docs/PHASE20M_RTC.md) |
-| 20-N | musl-readiness: `writev`/`readv`/`exit_group`/`madvise` (buffered-stdio path) | ✅ [docs](docs/PHASE20N_IOV.md) |
-| 20-O | **A real C program on musl libc**: static-PIE loader + full auxv + the lost-FS-base fix | ✅ [docs](docs/PHASE20O_MUSL.md) |
-| 20-O2 | **busybox `sh` runs**: real busybox static-PIE, `getppid`/uid family, spawn-with-argv | ✅ [docs](docs/PHASE20O2_BUSYBOX.md) |
-| 20-P | **Persistent storage**: polled legacy **virtio-blk** disk, read/write sectors (gap #2 begins) | ✅ [docs](docs/PHASE20P_VIRTIO_BLK.md) |
-| 20-Q | **ext2 filesystem** (read-only): mount an on-disk ext2 from virtio-blk into the VFS | ✅ [docs](docs/PHASE20Q_EXT2.md) |
-| 20-R | **ext2 write path**: create + write on-disk files (block/inode alloc, dir entries) | ✅ [docs](docs/PHASE20R_EXT2_WRITE.md) |
-| 20-S | **Toolchain syscalls**: `execve` envp + `openat`/`*at` family; musl file I/O on ext2 | ✅ [docs](docs/PHASE20S_G3_SYSCALLS.md) |
-| 20-T | **ext2 directory ops**: `mkdir`/`unlink`/`rmdir`/`rename`/`truncate` (ext2 now read/write) | ✅ [docs](docs/PHASE20T_EXT2_DIROPS.md) |
-| 20-U | **ext2 double/triple-indirect**: on-disk files beyond the single-indirect cap, via a recursive map/alloc/free | ✅ [docs](docs/PHASE20U_EXT2_INDIRECT.md) |
-| 20-V | **ext2 multi-block-group**: allocate and free blocks + inodes across every block group, not just group 0 | ✅ [docs](docs/PHASE20V_EXT2_GROUPS.md) |
-| 21 | **Higher-half kernel**: kernel relinked to the top -2 GiB + HHDM; the lower canonical half is freed per-process, so a standard non-PIE binary runs at `0x400000` | ✅ [docs](docs/PHASE21_HIGHERHALF.md) |
-| 21-A | **Self-hosting begins**: `tcc` runs *on MAKH*, compiles C to a native `0x400000` executable, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21A_SELFHOST_TCC.md) |
-| 21-B | **libc compile on MAKH**: `tcc` links a real `stdio`/`stdlib`/`string` program against a staged musl sysroot *on MAKH*, and MAKH runs it (F21) | ✅ [docs](docs/PHASE21B_LIBC_COMPILE.md) |
-| 21-C | **make on MAKH**: GNU make drives `tcc` across a multi-file project (fork/exec/wait) *on MAKH*, and MAKH runs the result (F21) | ✅ [docs](docs/PHASE21C_MAKE.md) |
-| 21-D | **Self-host summit**: MAKH rebuilds a program it ships (`/bin/muslhello`) from source with `make`+`tcc` *on MAKH*, and the rebuilt binary behaves identically (F21) | ✅ [docs](docs/PHASE21D_SELFHOST.md) |
-| 22 | **MMIO high window**: device BARs mapped uncached in a higher-half window shared into every address space, reachable under any CR3 | ✅ [docs](docs/PHASE22_MMIO_WINDOW.md) |
-| 23 | **Symlinks + shell commands**: VFS symbolic links (`readlink`/`symlink` syscalls), and busybox applets as `/bin/<name>` so MAKH has real commands | ✅ [docs](docs/PHASE23_SYMLINKS_SHELL.md) |
-| 24 | **uname + rlimits**: `uname`, `getrlimit`/`setrlimit`/`prlimit64` so programs querying identity and limits at startup run | ✅ [docs](docs/PHASE24_UNAME_RLIMIT.md) |
+Boot → memory → interrupts → **preemptive scheduler** → **POSIX threads** →
+**TCP/IP + e1000** → **KFUZZ** → **ring-3 userspace** → **COW address spaces** →
+**VFS + ext2** → **signals, pipes, job control** → **musl + busybox** →
+**self-hosting (tcc + make on MAKH)** → **higher-half kernel** →
+**framebuffer console + fennec splash** → interactive shell with history.
+
+Every milestone is a phase with its own design document and a green test suite.
+The full, ordered list — 40+ phases, each linked to its doc — lives in the
+**[docs map](docs/README.md)**.
 
 ## 📚 Documentation
 
-Every phase has a design document in [`docs/`](docs/); start with the
-[**docs map**](docs/README.md), which threads all phases in order — from boot
-through the [user process model](docs/PHASE20A_PROCESS_MODEL.md), by way of
-[networking](docs/PHASE14_NETWORK.md) and the [KFUZZ](docs/PHASE15_KFUZZ.md)
-self-fuzzer.
+The design docs are not in this README on purpose — they live in
+**[`docs/`](docs/)**, one per phase, threaded in order by the
+**[docs map](docs/README.md)**: from boot through the
+[user process model](docs/PHASE20A_PROCESS_MODEL.md), by way of
+[networking](docs/PHASE14_NETWORK.md), the [KFUZZ](docs/PHASE15_KFUZZ.md)
+self-fuzzer, [self-hosting](docs/PHASE21D_SELFHOST.md) and the
+[framebuffer console](docs/PHASE25_FRAMEBUFFER_CONSOLE.md).
 
 ## ⚖️ License
 

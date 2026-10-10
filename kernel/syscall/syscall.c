@@ -30,6 +30,7 @@
 #include <krandom.h>
 #include <mm/kheap.h>
 #include <futex.h>
+#include <net/net.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -315,7 +316,7 @@ static int64_t do_uname(uint64_t ubuf, int from_user) {
     char uts[6 * 65];
     memset(uts, 0, sizeof uts);
     static const char* const f[6] = {
-        "MAKH", "makh", "0.1.0-dev", "MAKH 0.1.0-dev x86_64", "x86_64", "(none)"
+        "MAKH", "makh", "1.0.0", "MAKH 1.0.0 x86_64", "x86_64", "(none)"
     };
     for (int i = 0; i < 6; i++) {
         size_t l = strlen(f[i]); if (l > 64) l = 64;
@@ -471,6 +472,25 @@ static int64_t do_brk(uint64_t newbrk) {
 static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_user) {
     if (fd != 0 && fd != 1 && fd != 2) return -ENOTTY;
     switch (request) {
+        case TCGETS: {
+            termios_t* t = tty_termios();
+            if (from_user) {
+                if (copy_to_user((void*)(uintptr_t)arg, t, sizeof(*t)) < 0) return -EFAULT;
+            } else {
+                *(termios_t*)(uintptr_t)arg = *t;
+            }
+            return 0;
+        }
+        case TCSETS: {
+            termios_t tmp;
+            if (from_user) {
+                if (copy_from_user(&tmp, (const void*)(uintptr_t)arg, sizeof(tmp)) < 0) return -EFAULT;
+            } else {
+                tmp = *(const termios_t*)(uintptr_t)arg;
+            }
+            *tty_termios() = tmp;
+            return 0;
+        }
         case TIOCGPGRP: {
             uint32_t pgid = tty_get_foreground();
             if (from_user) {
@@ -521,6 +541,18 @@ static int64_t do_stat(uint64_t upath, uint64_t ust, int from_user) {
     if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
     struct stat st;
     rc = vfs_stat(abs, &st);
+    if (rc < 0) return rc;
+    if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
+    return 0;
+}
+/* lstat(2): like stat but does not follow a final symlink (reports S_IFLNK). */
+static int64_t do_lstat(uint64_t upath, uint64_t ust, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    struct stat st;
+    rc = vfs_lstat(abs, &st);
     if (rc < 0) return rc;
     if (copy_to_user((void*)(uintptr_t)ust, &st, sizeof(st)) < 0) return -EFAULT;
     return 0;
@@ -687,6 +719,44 @@ static int64_t do_sched_getaffinity(uint64_t pid, uint64_t size, uint64_t umask)
     return (int64_t)sizeof(m);                           /* bytes written */
 }
 
+/* MAKH net helpers for the user-space `ping` / `ifconfig` (no socket layer yet):
+ * a single ICMP echo and a per-interface snapshot. */
+static int64_t do_makh_ping(uint32_t dst, uint16_t seq, uint32_t timeout_ms) {
+    if (timeout_ms == 0 || timeout_ms > 10000) timeout_ms = 1000;
+    uint8_t ttl = 0;
+    net_lock();
+    int rtt = icmp_ping(dst, seq, timeout_ms, &ttl);
+    net_unlock();
+    if (rtt < 0) return rtt;
+    if (rtt > 0xFFFF) rtt = 0xFFFF;
+    return ((int64_t)ttl << 16) | (uint32_t)rtt;
+}
+
+static int64_t do_makh_ifinfo(int index, uint64_t uout, int from_user) {
+    netdev_t* dev = netdev_get(index);
+    if (!dev) return -ENODEV;
+    struct makh_ifinfo info;
+    memset(&info, 0, sizeof(info));
+    for (int i = 0; i < 8; i++) info.name[i] = dev->name[i];
+    for (int i = 0; i < 6; i++) info.mac[i]  = dev->mac[i];
+    info.flags   = (uint16_t)((dev->up ? MAKH_IF_UP : 0) |
+                              (dev->is_loopback ? MAKH_IF_LOOPBACK : 0));
+    info.ip      = dev->ip;
+    info.netmask = dev->netmask;
+    info.gateway = dev->gateway;
+    info.rx_packets = dev->rx_packets;
+    info.tx_packets = dev->tx_packets;
+    info.rx_bytes   = dev->rx_bytes;
+    info.tx_bytes   = dev->tx_bytes;
+    if (from_user) {
+        if (copy_to_user((void*)(uintptr_t)uout, &info, sizeof(info)) < 0)
+            return -EFAULT;
+    } else {
+        memcpy((void*)(uintptr_t)uout, &info, sizeof(info));
+    }
+    return 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -747,7 +817,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_NANOSLEEP:      return do_nanosleep(a1, a2);
         case SYS_GETRANDOM:      return do_getrandom(a1, a2, a3);
         case SYS_STAT:
-        case SYS_LSTAT:          return do_stat(a1, a2, from_user);   /* no symlinks */
+        case SYS_LSTAT:          return do_lstat(a1, a2, from_user);
         case SYS_FSTAT:          return do_fstat(a1, a2);
         case SYS_GETDENTS64:     return do_getdents64(a1, a2, a3);
         case SYS_FCNTL:          return do_fcntl(a1, a2, a3);
@@ -774,6 +844,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
             /* Deliberately not supported from the non-preemptible ring-3 brick;
              * returns success as a no-op for getticks-style demos. */
             return 0;
+        case SYS_MAKH_PING:    return do_makh_ping((uint32_t)a1, (uint16_t)a2, (uint32_t)a3);
+        case SYS_MAKH_IFINFO:  return do_makh_ifinfo((int)a1, a2, from_user);
         default:
             return -ENOSYS;
     }

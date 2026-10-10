@@ -44,8 +44,37 @@
 #define SYS_WRITEV         20
 #define SYS_EXIT_GROUP     231
 #define SYS_KILL      62
+#define SYS_GETUID    102
+#define SYS_GETGID    104
+#define SYS_RENAME    82
+#define SYS_MKDIR     83
+#define SYS_RMDIR     84
+#define SYS_UNLINK    87
+#define SYS_SYMLINK   88
+
+/* open() flags (match kernel fs/vfs.h). */
+#define O_RDONLY   0x0000
+#define O_WRONLY   0x0001
+#define O_RDWR     0x0002
+#define O_CREAT    0x0040
+#define O_TRUNC    0x0200
+#define O_APPEND   0x0400
+#define SYS_MAKH_PING   0x202
+#define SYS_MAKH_IFINFO 0x203
 
 struct iovec { void* iov_base; unsigned long iov_len; };
+
+/* Network-interface snapshot from SYS_MAKH_IFINFO. Layout matches the kernel's
+ * struct makh_ifinfo (kernel/include/syscall.h) exactly. */
+#define MAKH_IF_UP        0x1
+#define MAKH_IF_LOOPBACK  0x2
+struct makh_ifinfo {
+    char           name[8];
+    unsigned char  mac[6];
+    unsigned short flags;
+    unsigned int   ip, netmask, gateway;     /* host byte order */
+    unsigned long  rx_packets, tx_packets, rx_bytes, tx_bytes;
+};
 
 /* clone flags + futex ops (match kernel). */
 #define CLONE_VM             0x00000100
@@ -60,8 +89,12 @@ struct iovec { void* iov_base; unsigned long iov_len; };
 #define S_IFCHR  0020000
 #define S_IFDIR  0040000
 #define S_IFREG  0100000
+#define S_IFLNK  0120000
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
+#define S_ISCHR(m) (((m) & S_IFMT) == S_IFCHR)
+#define SYS_LSTAT 6
 #define F_GETFL  3
 #define F_SETFL  4
 #define DT_DIR   4
@@ -95,6 +128,14 @@ struct timeval  { long tv_sec; long tv_usec; };
 
 #define TIOCGPGRP     0x540F
 #define TIOCSPGRP     0x5410
+#define TCGETS        0x5401
+#define TCSETS        0x5402
+/* termios subset (layout matches kernel tty.h termios_t). */
+#define ICANON   0x0002
+#define ECHO     0x0008
+#define ISIG     0x0001
+#define NCCS     8
+struct termios { unsigned int c_lflag; unsigned char c_cc[NCCS]; };
 
 /* Signals + sigaction/sigprocmask constants (match kernel signal.h). */
 #define SIGINT    2
@@ -138,6 +179,17 @@ static inline long uread(int fd, void* buf, unsigned long n) {
     return usyscall(SYS_READ, fd, (long)buf, (long)n);
 }
 static inline long ugetpid(void) { return usyscall(SYS_GETPID, 0, 0, 0); }
+static inline long ugetuid(void) { return usyscall(SYS_GETUID, 0, 0, 0); }
+static inline long ugetgid(void) { return usyscall(SYS_GETGID, 0, 0, 0); }
+/* One ICMP echo to `dst` (host order), sequence `seq`. Returns (ttl<<16)|rtt_ms
+ * on reply, or a negative errno (e.g. -110 ETIMEDOUT) on no reply. */
+static inline long umakh_ping(unsigned int dst, unsigned int seq, unsigned int timeout_ms) {
+    return usyscall(SYS_MAKH_PING, (long)dst, (long)seq, (long)timeout_ms);
+}
+/* Fill *out for interface #index; returns 0, or <0 when there is no such iface. */
+static inline long umakh_ifinfo(int index, struct makh_ifinfo* out) {
+    return usyscall(SYS_MAKH_IFINFO, index, (long)out, 0);
+}
 static inline void* umap(unsigned long len, int prot, int flags) {
     return (void*)usyscall4(SYS_MMAP, 0, (long)len, prot, flags);
 }
@@ -157,6 +209,11 @@ static inline long uclose(int fd) { return usyscall(SYS_CLOSE, fd, 0, 0); }
 static inline long uchdir(const char* path) {
     return usyscall(SYS_CHDIR, (long)path, 0, 0);
 }
+static inline long umkdir(const char* path) { return usyscall(SYS_MKDIR, (long)path, 0, 0); }
+static inline long urmdir(const char* path) { return usyscall(SYS_RMDIR, (long)path, 0, 0); }
+static inline long uunlink(const char* path) { return usyscall(SYS_UNLINK, (long)path, 0, 0); }
+static inline long urename(const char* a, const char* b) { return usyscall(SYS_RENAME, (long)a, (long)b, 0); }
+static inline long usymlink(const char* t, const char* p) { return usyscall(SYS_SYMLINK, (long)t, (long)p, 0); }
 static inline long ugetcwd(char* buf, unsigned long size) {
     return usyscall(SYS_GETCWD, (long)buf, (long)size, 0);
 }
@@ -187,6 +244,8 @@ static inline int utcgetpgrp(int fd) {
     if (uioctl(fd, TIOCGPGRP, &pgid) < 0) return -1;
     return pgid;
 }
+static inline long ugettermios(int fd, struct termios* t) { return uioctl(fd, TCGETS, t); }
+static inline long usettermios(int fd, struct termios* t) { return uioctl(fd, TCSETS, t); }
 
 /* --- signals (Phase 20-G) --- */
 /* The kernel returns here after a handler: the trampoline invokes sigreturn,
@@ -238,6 +297,9 @@ static inline long usleep_ms(long ms) {
 /* --- metadata / listing / fcntl (Phase 20-J) --- */
 static inline long ustat(const char* path, struct stat* st) {
     return usyscall(SYS_STAT, (long)path, (long)st, 0);
+}
+static inline long ulstat(const char* path, struct stat* st) {
+    return usyscall(SYS_LSTAT, (long)path, (long)st, 0);
 }
 static inline long ufstat(int fd, struct stat* st) {
     return usyscall(SYS_FSTAT, fd, (long)st, 0);

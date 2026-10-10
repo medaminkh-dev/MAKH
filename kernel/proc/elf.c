@@ -182,7 +182,7 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
         aux->at_phnum = eh.e_phnum;
         aux->at_base = bias;
     }
-    KLOG_I("ELF", "loaded %s entry=%p bias=%p\n",
+    KLOG_D("ELF", "loaded %s entry=%p bias=%p\n",
            eh.e_type == ET_DYN ? "PIE" : "EXEC",
            (void*)(uintptr_t)*entry, (void*)(uintptr_t)bias);
     return 0;

@@ -8,6 +8,7 @@
 #include "include/vga.h"
 #include "include/kernel.h"
 #include "include/serial.h"
+#include "include/drivers/fb.h"
 
 /* Static terminal state */
 static struct terminal_state terminal;
@@ -114,13 +115,17 @@ void terminal_setcolor(uint8_t color) {
  * terminal_clear - Clear the entire screen
  */
 void terminal_clear(void) {
+    if (fb_active()) {                       /* pixel console: clear to palette bg */
+        fb_console_clear(terminal.color);
+        return;
+    }
     size_t index;
     uint16_t blank = vga_entry(' ', terminal.color);
-    
+
     for (index = 0; index < VGA_WIDTH * VGA_HEIGHT; index++) {
         terminal.buffer[index] = blank;
     }
-    
+
     terminal.row = 0;
     terminal.column = 0;
 }
@@ -129,8 +134,12 @@ void terminal_clear(void) {
  * terminal_newline - Move to the next line
  */
 void terminal_newline(void) {
+    if (fb_active()) {                       /* pixel console tracks its own cursor */
+        fb_console_newline();
+        return;
+    }
     terminal.column = 0;
-    
+
     if (++terminal.row == VGA_HEIGHT) {
         /* Scroll up by copying all lines up one position */
         size_t i;
@@ -154,8 +163,103 @@ void terminal_newline(void) {
  * Supports '\n' for newline, '\b' for simple backspace (no shift)
  * Insert mode: typing in middle of line shifts characters right
  */
+/*
+ * A small ANSI/VT escape handler so programs can clear the screen, move the
+ * cursor and set colours (e.g. `clear`, a coloured prompt, `ls` with colour).
+ * It drives the existing terminal_clear/setcursor/setcolor, which already route
+ * to the framebuffer console or the VGA text buffer, so both backends benefit.
+ * Supported: CSI J (clear), CSI H/f (cursor position), CSI m (SGR colours).
+ */
+/* ANSI colour index (0..7) -> VGA colour code; |8 gives the bright variant. */
+static const uint8_t ansi_to_vga[8] = {
+    VGA_COLOR_BLACK, VGA_COLOR_RED, VGA_COLOR_GREEN, VGA_COLOR_BROWN,
+    VGA_COLOR_BLUE,  VGA_COLOR_MAGENTA, VGA_COLOR_CYAN, VGA_COLOR_LIGHT_GREY,
+};
+enum { A_NORM = 0, A_ESC, A_CSI };
+static int     ansi_state = A_NORM;
+static int     ansi_params[8];
+static int     ansi_curparam;
+static int     ansi_nparam;
+static uint8_t ansi_fg = VGA_COLOR_LIGHT_GREY;
+static uint8_t ansi_bg = VGA_COLOR_BLACK;
+
+static void ansi_dispatch(char f) {
+    switch (f) {
+    case 'J':                                 /* erase display: clear it all */
+        terminal_clear();
+        break;
+    case 'K':                                 /* erase cursor -> end of line */
+        if (fb_active()) {
+            fb_console_clear_to_eol(terminal.color);
+        } else {                              /* VGA text: blank to row end   */
+            size_t r, c;
+            terminal_getcursor(&r, &c);
+            for (size_t col = c; col < VGA_WIDTH; col++)
+                terminal.buffer[r * VGA_WIDTH + col] = vga_entry(' ', terminal.color);
+        }
+        break;
+    case 'H': case 'f': {                      /* cursor position (1-based)   */
+        int row = ansi_params[0] ? ansi_params[0] - 1 : 0;
+        int col = (ansi_nparam > 1 && ansi_params[1]) ? ansi_params[1] - 1 : 0;
+        terminal_setcursor((size_t)row, (size_t)col);
+        break;
+    }
+    case 'm': {                                /* select graphic rendition    */
+        int bold = 0;
+        for (int i = 0; i < ansi_nparam; i++) {
+            int p = ansi_params[i];
+            if (p == 0)      { ansi_fg = VGA_COLOR_LIGHT_GREY; ansi_bg = VGA_COLOR_BLACK; bold = 0; }
+            else if (p == 1) bold = 1;
+            else if (p >= 30 && p <= 37)  ansi_fg = ansi_to_vga[p - 30] | (bold ? 8 : 0);
+            else if (p >= 90 && p <= 97)  ansi_fg = ansi_to_vga[p - 90] | 8;
+            else if (p >= 40 && p <= 47)  ansi_bg = ansi_to_vga[p - 40];
+            else if (p >= 100 && p <= 107) ansi_bg = ansi_to_vga[p - 100] | 8;
+        }
+        terminal_setcolor(vga_entry_color((enum vga_color)ansi_fg,
+                                          (enum vga_color)ansi_bg));
+        break;
+    }
+    default:
+        break;                                 /* unsupported final byte       */
+    }
+}
+
+/* Returns 1 if the byte was part of an escape sequence (so don't print it). */
+static int ansi_consume(char c) {
+    switch (ansi_state) {
+    case A_NORM:
+        if (c == 0x1B) { ansi_state = A_ESC; return 1; }
+        return 0;
+    case A_ESC:
+        if (c == '[') {
+            ansi_state = A_CSI;
+            ansi_curparam = 0;
+            for (int i = 0; i < 8; i++) ansi_params[i] = 0;
+            return 1;
+        }
+        ansi_state = A_NORM;                    /* unsupported ESC x: swallow   */
+        return 1;
+    case A_CSI:
+        if (c >= '0' && c <= '9') {
+            ansi_params[ansi_curparam] = ansi_params[ansi_curparam] * 10 + (c - '0');
+            return 1;
+        }
+        if (c == ';') { if (ansi_curparam < 7) ansi_curparam++; return 1; }
+        ansi_nparam = ansi_curparam + 1;
+        ansi_dispatch(c);
+        ansi_state = A_NORM;
+        return 1;
+    }
+    return 0;
+}
+
 void terminal_putchar(char c) {
     if (terminal_quiet) return;              /* suppressed (e.g. shell fuzzing) */
+    if (ansi_consume(c)) return;             /* ANSI escape handling (clear/colours) */
+    if (fb_active()) {                       /* pixel console renders the glyph */
+        fb_console_putchar(c, terminal.color);
+        return;
+    }
     /* Handle newline */
     if (c == '\n') {
         terminal_newline();
@@ -265,10 +369,14 @@ void terminal_writestring_color(const char* str, uint8_t color) {
  * @column: Column (0-79)
  */
 void terminal_setcursor(size_t row, size_t column) {
+    if (fb_active()) {                       /* pixel console owns the cursor */
+        fb_console_set_cursor((uint32_t)column, (uint32_t)row);
+        return;
+    }
     if (row < VGA_HEIGHT && column < VGA_WIDTH) {
         terminal.row = row;
         terminal.column = column;
-        
+
         // Update VGA hardware cursor
         uint16_t pos = row * VGA_WIDTH + column;
         outb(0x3D4, 0x0F);          // Cursor location low byte
@@ -284,6 +392,13 @@ void terminal_setcursor(size_t row, size_t column) {
  * @column: Pointer to store column
  */
 void terminal_getcursor(size_t* row, size_t* column) {
+    if (fb_active()) {                       /* report the pixel console cursor */
+        uint32_t c, r;
+        fb_console_get_cursor(&c, &r);
+        if (row) *row = r;
+        if (column) *column = c;
+        return;
+    }
     if (row) *row = terminal.row;
     if (column) *column = terminal.column;
 }
