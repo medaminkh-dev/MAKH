@@ -36,13 +36,18 @@ KTEST(job, ctrl_c_kills_job_not_shell) {
     KASSERT_TEST(pid > 0);
     tty_set_foreground((uint32_t)pid);
 
-    sched_sleep_ms(15);
+    /* These waits give each step (spawn, take the terminal, deliver ^C + reap
+     * the job, re-prompt, run the next command) time to finish. They are
+     * generous on purpose: under a heavily loaded stress run (many QEMUs under
+     * TCG) tight fixed delays race the scheduler and flake, so we leave wide
+     * margins rather than synchronise on fixed times too small for peak load. */
+    sched_sleep_ms(50);
     feed("/bin/spinner\n");                      /* foreground job, loops forever */
-    sched_sleep_ms(60);                          /* let it take the terminal      */
+    sched_sleep_ms(200);                         /* let it take the terminal      */
     tty_input((char)3);                          /* ^C -> job's group, not shell  */
-    sched_sleep_ms(60);                          /* job dies; shell re-prompts     */
+    sched_sleep_ms(250);                         /* job dies; shell re-prompts     */
     feed("/bin/hello\n");                        /* shell still alive? run a cmd   */
-    sched_sleep_ms(60);
+    sched_sleep_ms(250);                         /* let /bin/hello run and exit 42 */
     tty_input((char)4);                          /* ^D: shell exits with last st  */
 
     int status = -1;
