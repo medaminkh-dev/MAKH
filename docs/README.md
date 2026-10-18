@@ -63,6 +63,13 @@ numbers are navigable rather than mysterious.
 | 26 | **Fast boot + usable shell**: quiet boot straight to `/bin/sh`, `PATH` lookup + `cd`/`exit`, native `ls`/`cat`/`pwd` | [PHASE26_FAST_BOOT_SHELL](PHASE26_FAST_BOOT_SHELL.md) |
 | 27 | **Splash + clear + ping (FB-2)**: fennec boot splash + spinner → clean terminal, `clear`/ANSI colours, `ping` with TTL + min/avg/max | [PHASE27_SPLASH_CLEAR_PING](PHASE27_SPLASH_CLEAR_PING.md) |
 | 28 | **Interactive shell**: raw-mode line editor with command history (Up/Down) + shortcuts, `termios`/`TCGETS`/`TCSETS`, native coreutils (`grep`/`cp`/`mv`/`whoami`/`id`/`ifconfig`/`help`…), `mv`+`lstat` fixes | [PHASE28_INTERACTIVE_SHELL](PHASE28_INTERACTIVE_SHELL.md) |
+| 29 | **Shell UX**: prompt shows the cwd, TAB completion (commands + paths), redirection (`>`/`>>`/`<`) and heredocs (`<<EOF`), colour `grep` | [PHASE29_SHELL_UX](PHASE29_SHELL_UX.md) |
+| 30 | **chmod**: real mutable file modes — a vnode mode + `.chmod` VFS op (tmpfs in memory, ext2 persisted), `chmod`/`fchmodat` syscalls, native `chmod` | [PHASE30_CHMOD](PHASE30_CHMOD.md) |
+| 31 | **edit**: a small full-screen text editor (ring-3, raw-mode) — open/move/type/save/quit on the framebuffer console | [PHASE31_EDITOR](PHASE31_EDITOR.md) |
+| 32 | **Ring-3 sockets**: a `VNODE_SOCK` bridge so `socket`/`connect` + read/write/close reach the TCP stack; native `curl`/`wget`/`nc` | [PHASE32_SOCKETS](PHASE32_SOCKETS.md) |
+| 33 | **cc driver**: `cc hello.c` / `tcc hello.c` compile + link against the musl sysroot in one line (raw TinyCC at `/bin/tcc.real`) | [PHASE33_CC_DRIVER](PHASE33_CC_DRIVER.md) |
+| 34 | **DNS**: a userspace resolver (UDP A-query, recv timeout via `setsockopt`) so `curl`/`wget`/`nc` take hostnames; reads `/etc/resolv.conf` | [PHASE34_DNS](PHASE34_DNS.md) |
+| 35 | **Cursor + friendly URLs**: a cyan block cursor on the FB console (shell + `edit`, via SGR reverse video), optional scheme/port in `curl`/`wget`/`nc` (`https://` served as plain HTTP), `ping` takes a hostname | [PHASE35_CURSOR_URLS](PHASE35_CURSOR_URLS.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

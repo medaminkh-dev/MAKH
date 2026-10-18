@@ -78,4 +78,9 @@ int     sock_close(int fd);
 /* Number of open sockets (leak checks in tests). */
 int     sock_open_count(void);
 
+/* Ring-3 glue: wrap a socket in a VNODE_SOCK fd, and map an fd back to its
+ * socks[] index. net_socket_open returns an fd (or -errno). */
+int     net_socket_open(int type);
+int     net_socket_index(int fd);
+
 #endif /* MAKHOS_SOCKET_H */

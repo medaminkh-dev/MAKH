@@ -31,6 +31,7 @@
 #include <mm/kheap.h>
 #include <futex.h>
 #include <net/net.h>
+#include <net/socket.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -289,6 +290,17 @@ static int64_t do_mkdir(uint64_t upath, int from_user) {
     return vfs_mkdir(abs);
 }
 
+/* chmod(path, mode) and fchmodat(dirfd, path, mode, flags): set the permission
+ * bits of a file. fchmodat's dirfd/flags are ignored (paths are cwd-relative or
+ * absolute, as elsewhere in MAKH). */
+static int64_t do_chmod(uint64_t upath, uint64_t mode, int from_user) {
+    char path[VFS_PATH_MAX], abs[VFS_PATH_MAX];
+    int rc = copy_path(path, sizeof(path), upath, from_user);
+    if (rc < 0) return rc;
+    if (resolve_path(abs, sizeof(abs), path) != 0) return -ENAMETOOLONG;
+    return vfs_chmod(abs, (uint32_t)mode);
+}
+
 /* rename(old, new): re-home a name (atomic-replace within one filesystem). */
 static int64_t do_rename(uint64_t uold, uint64_t unew, int from_user) {
     char op[VFS_PATH_MAX], np[VFS_PATH_MAX], oabs[VFS_PATH_MAX], nabs[VFS_PATH_MAX];
@@ -316,7 +328,7 @@ static int64_t do_uname(uint64_t ubuf, int from_user) {
     char uts[6 * 65];
     memset(uts, 0, sizeof uts);
     static const char* const f[6] = {
-        "MAKH", "makh", "1.0.0", "MAKH 1.0.0 x86_64", "x86_64", "(none)"
+        "MAKH", "makh", "1.1.0", "MAKH 1.1.0 x86_64", "x86_64", "(none)"
     };
     for (int i = 0; i < 6; i++) {
         size_t l = strlen(f[i]); if (l > 64) l = 64;
@@ -757,6 +769,46 @@ static int64_t do_makh_ifinfo(int index, uint64_t uout, int from_user) {
     return 0;
 }
 
+/* socket(domain, type, protocol): open a TCP/UDP socket as a ring-3 fd. */
+static int64_t do_socket(uint64_t domain, uint64_t type, uint64_t proto) {
+    (void)proto;
+    if ((int)domain != AF_INET) return -EAFNOSUPPORT;
+    return net_socket_open((int)type);
+}
+
+/* connect(fd, addr, len): connect a socket fd to a remote address. */
+static int64_t do_connect(uint64_t fd, uint64_t uaddr, uint64_t len, int from_user) {
+    int idx = net_socket_index((int)fd);
+    if (idx < 0) return -ENOTSOCK;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    size_t n = len < sizeof(sa) ? (size_t)len : sizeof(sa);
+    if (from_user) {
+        if (copy_from_user(&sa, (const void*)(uintptr_t)uaddr, n) < 0) return -EFAULT;
+    } else {
+        memcpy(&sa, (const void*)(uintptr_t)uaddr, n);
+    }
+    int rc = connect(idx, (const struct sockaddr*)&sa, (socklen_t)n);
+    return rc < 0 ? -errno : 0;
+}
+
+/* setsockopt(fd, level, optname, optval): the length is inferred from optname
+ * (a timeval for SO_RCVTIMEO/SO_SNDTIMEO, an int otherwise), so this fits the
+ * 4-argument syscall path. Enough for a recv timeout on the DNS resolver. */
+static int64_t do_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t uval, int from_user) {
+    int idx = net_socket_index((int)fd);
+    if (idx < 0) return -ENOTSOCK;
+    size_t n = (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO) ? sizeof(struct timeval) : sizeof(int);
+    char buf[sizeof(struct timeval)];
+    if (from_user) {
+        if (copy_from_user(buf, (const void*)(uintptr_t)uval, n) < 0) return -EFAULT;
+    } else {
+        memcpy(buf, (const void*)(uintptr_t)uval, n);
+    }
+    int rc = setsockopt(idx, (int)level, (int)optname, buf, (socklen_t)n);
+    return rc < 0 ? -errno : 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -790,6 +842,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_PRLIMIT64:    return do_prlimit64(a2, a3, a4, from_user);    /* (pid, resource, new, old) */
         case SYS_ACCESS:       return do_access(a1, from_user);
         case SYS_FACCESSAT:    return do_access(a2, from_user);   /* (dirfd,path,mode) */
+        case SYS_CHMOD:        return do_chmod(a1, a2, from_user);          /* (path, mode) */
+        case SYS_FCHMODAT:     return do_chmod(a2, a3, from_user);          /* (dirfd, path, mode, flags) */
         case SYS_CHDIR:        return do_chdir(a1, from_user);
         case SYS_GETCWD:       return do_getcwd(a1, a2, from_user);
         case SYS_CLOSE:        return vfs_close((int)a1);
@@ -846,6 +900,9 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
             return 0;
         case SYS_MAKH_PING:    return do_makh_ping((uint32_t)a1, (uint16_t)a2, (uint32_t)a3);
         case SYS_MAKH_IFINFO:  return do_makh_ifinfo((int)a1, a2, from_user);
+        case SYS_SOCKET:       return do_socket(a1, a2, a3);
+        case SYS_CONNECT:      return do_connect(a1, a2, a3, from_user);
+        case SYS_SETSOCKOPT:   return do_setsockopt(a1, a2, a3, a4, from_user);
         default:
             return -ENOSYS;
     }

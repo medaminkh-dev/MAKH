@@ -81,6 +81,7 @@ typedef struct ext2_vinfo {
 #define EXT2_S_IFDIR 0x4000
 
 static struct vfs_ops ext2_ops;      /* defined after the ops below */
+static int write_inode(ext2_fs_t* fs, ext2_vinfo_t* vi);   /* forward (used by chmod) */
 
 /* Read one fs block into `dst` (dst must hold block_size bytes; a pmm page). */
 static int bread(ext2_fs_t* fs, uint32_t blk, void* dst) {
@@ -176,9 +177,18 @@ static vnode_t* make_vnode(ext2_fs_t* fs, uint32_t ino) {
     if (!vn) { kfree(vi); return NULL; }
     vn->type = ((vi->mode & EXT2_S_IFMT) == EXT2_S_IFDIR) ? VNODE_DIR : VNODE_REG;
     vn->size = vi->size;
+    vn->mode = vi->mode & 07777;          /* real on-disk permission bits      */
     vn->priv = vi;
     vn->ops  = &ext2_ops;
     return vn;
+}
+
+/* chmod(2): persist new permission bits (keeping the type) to the inode. */
+static int ext2_chmod(vnode_t* vn, uint32_t mode) {
+    ext2_vinfo_t* vi = (ext2_vinfo_t*)vn->priv;
+    if (!vi) return -EINVAL;
+    vi->mode = (uint16_t)((vi->mode & EXT2_S_IFMT) | (mode & 07777));
+    return write_inode(vi->fs, vi);
 }
 
 /* Read up to `n` bytes of file `vn` from byte offset `off`. */
@@ -826,6 +836,7 @@ static vfs_ops_t ext2_ops = {
     .unlink = ext2_unlink,
     .truncate = ext2_truncate,
     .rename = ext2_rename,
+    .chmod = ext2_chmod,
 };
 
 /* Mount the ext2 filesystem on virtio-blk `unit`; returns its root vnode or

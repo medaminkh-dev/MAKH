@@ -51,6 +51,28 @@
 #define SYS_RMDIR     84
 #define SYS_UNLINK    87
 #define SYS_SYMLINK   88
+#define SYS_CHMOD     90
+#define SYS_SOCKET    41
+#define SYS_CONNECT   42
+#define SYS_SETSOCKOPT 54
+#define SOL_SOCKET    1
+#define SO_RCVTIMEO   20
+
+/* sockets (match kernel net/socket.h) */
+#define AF_INET       2
+#define SOCK_STREAM   1
+#define SOCK_DGRAM    2
+struct in_addr { unsigned int s_addr; };          /* network byte order */
+struct sockaddr_in {
+    unsigned short sin_family;
+    unsigned short sin_port;                       /* network byte order */
+    struct in_addr sin_addr;
+    unsigned char  sin_zero[8];
+};
+static inline unsigned short uhtons(unsigned short h) { return (unsigned short)((h >> 8) | (h << 8)); }
+static inline unsigned int   uhtonl(unsigned int h)   {
+    return ((h & 0xFF) << 24) | ((h & 0xFF00) << 8) | ((h >> 8) & 0xFF00) | ((h >> 24) & 0xFF);
+}
 
 /* open() flags (match kernel fs/vfs.h). */
 #define O_RDONLY   0x0000
@@ -212,6 +234,12 @@ static inline long uchdir(const char* path) {
 static inline long umkdir(const char* path) { return usyscall(SYS_MKDIR, (long)path, 0, 0); }
 static inline long urmdir(const char* path) { return usyscall(SYS_RMDIR, (long)path, 0, 0); }
 static inline long uunlink(const char* path) { return usyscall(SYS_UNLINK, (long)path, 0, 0); }
+static inline long uchmod(const char* path, int mode) { return usyscall(SYS_CHMOD, (long)path, mode, 0); }
+static inline long usocket(int domain, int type, int proto) { return usyscall(SYS_SOCKET, domain, type, proto); }
+static inline long uconnect(int fd, const struct sockaddr_in* a, unsigned long len) { return usyscall(SYS_CONNECT, fd, (long)a, (long)len); }
+/* MAKH setsockopt: the optlen is inferred from optname in the kernel (timeval for
+ * SO_RCVTIMEO/SO_SNDTIMEO, int otherwise), so this takes four args, not five. */
+static inline long usetsockopt(int fd, int level, int optname, const void* val) { return usyscall4(SYS_SETSOCKOPT, fd, level, optname, (long)val); }
 static inline long urename(const char* a, const char* b) { return usyscall(SYS_RENAME, (long)a, (long)b, 0); }
 static inline long usymlink(const char* t, const char* p) { return usyscall(SYS_SYMLINK, (long)t, (long)p, 0); }
 static inline long ugetcwd(char* buf, unsigned long size) {

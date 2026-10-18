@@ -27,12 +27,14 @@ int umain(void) {
         "  pwd                   print the working directory\n"
         "  clear                 clear the screen\n"
         "  mkdir / rmdir / rm    create / remove directories / files\n"
-        "  cp / mv / ln / touch  copy / move / link / create\n\n");
+        "  cp / mv / ln / touch  copy / move / link / create\n"
+        "  chmod MODE file       set permission bits (octal, e.g. 755)\n\n");
 
     put(HDR "Text" RST "\n"
         "  echo [words...]       print the arguments\n"
         "  grep / head / tail    search / first / last lines\n"
-        "  wc / sort / cut       count / sort / select fields\n\n");
+        "  wc / sort / cut       count / sort / select fields\n"
+        "  edit FILE             full-screen text editor (^S save, ^Q quit)\n\n");
 
     put(HDR "System" RST "\n"
         "  whoami                print the user (MAKH is single-user: root)\n"
@@ -42,10 +44,14 @@ int umain(void) {
 
     put(HDR "Network" RST "\n"
         "  ping <ip> [count]     ICMP echo, with ttl and rtt min/avg/max\n"
-        "  ifconfig              list the network interfaces\n\n");
+        "  ifconfig              list the network interfaces\n"
+        "  curl URL              fetch an HTTP URL to stdout (name or IP, no TLS)\n"
+        "  wget [-O f] URL       download an HTTP URL to a file\n"
+        "  nc HOST PORT          open a TCP connection, relay stdin/stdout\n\n");
 
     put(HDR "Develop (self-hosting)" RST "\n"
-        "  tcc <file.c>          the Tiny C Compiler, running on MAKH\n"
+        "  cc file.c [-o out]    compile + link a C program (the easy way)\n"
+        "  tcc <file.c>          same driver; tcc.real is the raw TinyCC\n"
         "  make                  build multi-file projects on MAKH\n\n");
 
     put("Type a command name to run it. More bricks are on the way.\n");

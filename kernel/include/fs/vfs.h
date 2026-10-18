@@ -30,6 +30,7 @@ typedef enum vtype {
     VNODE_CHR,          /* character device */
     VNODE_FIFO,         /* pipe (Phase 20-K) */
     VNODE_LNK,          /* symbolic link (U1-a) */
+    VNODE_SOCK,         /* socket (ring-3 sockets) */
 } vtype_t;
 
 struct vnode;
@@ -51,6 +52,9 @@ typedef struct vfs_ops {
      * returning its length or -1. (U1-a) */
     struct vnode* (*symlink)(struct vnode* dir, const char* name, const char* target);
     int  (*readlink)(struct vnode* vn, char* buf, size_t sz);
+    /* Change the permission bits (low 12 of `mode`). Optional: a filesystem that
+     * omits it keeps the mode only in memory (the VFS updates vn->mode itself). */
+    int  (*chmod)(struct vnode* vn, uint32_t mode);
 } vfs_ops_t;
 
 typedef struct vnode {
@@ -59,6 +63,7 @@ typedef struct vnode {
     void*               priv;      /* filesystem-private */
     uint64_t            size;
     uint32_t            refcount;
+    uint32_t            mode;      /* permission bits (low 12); type is in `type` */
     struct vnode*       mounted;   /* if a filesystem is mounted here, its root */
 } vnode_t;
 
@@ -189,6 +194,9 @@ file_t*   vfs_file(int fd);               /* raw file for a fd, or NULL */
 /* -------- pipes / descriptor duplication (Phase 20-K) -------- */
 int       vfs_pipe(int fds[2]);           /* fds[0]=read end, fds[1]=write end */
 int       vfs_dup2(int oldfd, int newfd); /* share oldfd's description at newfd */
+/* Install an already-built vnode as a new fd (used by the socket layer). The
+ * vnode's refcount should be 1; on failure the caller still owns the vnode. */
+int       vfs_install_vnode(vnode_t* vn, int flags);
 /* Duplicate `src`'s whole fd table into `dst` (fork): shared descriptions,
  * refcounts bumped. Both are process_t*. */
 void      vfs_fork_fds(void* dst, void* src);
@@ -201,6 +209,7 @@ void      vfs_close_all(void* proc);
 int       vfs_stat(const char* path, struct stat* st);
 int       vfs_lstat(const char* path, struct stat* st);   /* no-follow (lstat) */
 int       vfs_fstat(int fd, struct stat* st);
+int       vfs_chmod(const char* path, uint32_t mode);     /* set permission bits */
 long      vfs_getdents(int fd, void* buf, size_t n);   /* bytes, 0 at end */
 long      vfs_fcntl(int fd, int cmd, long arg);
 

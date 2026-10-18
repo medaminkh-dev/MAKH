@@ -182,6 +182,7 @@ static int     ansi_curparam;
 static int     ansi_nparam;
 static uint8_t ansi_fg = VGA_COLOR_LIGHT_GREY;
 static uint8_t ansi_bg = VGA_COLOR_BLACK;
+static int     ansi_reverse = 0;      /* SGR 7: swap fg/bg (used by the editor) */
 
 static void ansi_dispatch(char f) {
     switch (f) {
@@ -208,15 +209,18 @@ static void ansi_dispatch(char f) {
         int bold = 0;
         for (int i = 0; i < ansi_nparam; i++) {
             int p = ansi_params[i];
-            if (p == 0)      { ansi_fg = VGA_COLOR_LIGHT_GREY; ansi_bg = VGA_COLOR_BLACK; bold = 0; }
+            if (p == 0)      { ansi_fg = VGA_COLOR_LIGHT_GREY; ansi_bg = VGA_COLOR_BLACK; bold = 0; ansi_reverse = 0; }
             else if (p == 1) bold = 1;
+            else if (p == 7) ansi_reverse = 1;             /* reverse video        */
+            else if (p == 27) ansi_reverse = 0;            /* reverse off          */
             else if (p >= 30 && p <= 37)  ansi_fg = ansi_to_vga[p - 30] | (bold ? 8 : 0);
             else if (p >= 90 && p <= 97)  ansi_fg = ansi_to_vga[p - 90] | 8;
             else if (p >= 40 && p <= 47)  ansi_bg = ansi_to_vga[p - 40];
             else if (p >= 100 && p <= 107) ansi_bg = ansi_to_vga[p - 100] | 8;
         }
-        terminal_setcolor(vga_entry_color((enum vga_color)ansi_fg,
-                                          (enum vga_color)ansi_bg));
+        uint8_t fg = ansi_fg, bg = ansi_bg;
+        if (ansi_reverse) { uint8_t t = fg; fg = bg; bg = t; }
+        terminal_setcolor(vga_entry_color((enum vga_color)fg, (enum vga_color)bg));
         break;
     }
     default:

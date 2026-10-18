@@ -1,16 +1,19 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
 /* Copyright (C) 2026 Amine Khemissi */
 /**
- * A tiny shell with job control and pipelines: prompt, read a line, split it on
- * '|' into stages, and run them connected by pipes (fork + dup2 + execve). A
- * single command keeps full job control (its own process group owns the
- * terminal, so Ctrl+C hits it, not the shell). On EOF (^D) the shell exits with
- * the last command's status.
+ * A tiny shell with job control and pipelines: a prompt that shows the working
+ * directory, a line editor with history and TAB completion, redirection
+ * (`>`, `>>`, `<`) and heredocs (`<<EOF`), and `|` pipelines run by
+ * fork + dup2 + execve. A single command keeps full job control (its own
+ * process group owns the terminal, so Ctrl+C hits it, not the shell). On EOF
+ * (^D) the shell exits with the last command's status.
  */
 #include "usys.h"
 
 #define MAXARGS   16
 #define MAXSTAGES 8
+#define MAXNAME   64            /* VFS_NAME_MAX (63) + NUL                     */
+#define DT_DIR    4             /* getdents64 d_type for a directory          */
 
 /* A small default environment handed to every child, so programs (and `env`)
  * see sensible values. MAKH has no `export` yet; this is fixed. */
@@ -84,6 +87,52 @@ static int tokenize(char* s, char** argv) {
     return ac;
 }
 
+/* ------------------------------------------------------------------ redirection
+ * Pull `>`, `>>`, `<` (and their targets, whether "> f" or ">f") out of an argv,
+ * in place. Returns 0, or -1 on a missing target. A heredoc (`<<`) is expanded
+ * to a plain `< tmpfile` by the caller before tokenizing, so it arrives here as
+ * an ordinary input redirection. */
+typedef struct { const char* in; const char* out; int append; } redir_t;
+
+static int strip_redirs(char** argv, redir_t* r) {
+    r->in = r->out = 0; r->append = 0;
+    int w = 0;
+    for (int i = 0; argv[i]; i++) {
+        char* a = argv[i];
+        int is_out = (a[0] == '>'), is_in = (a[0] == '<');
+        if (is_out || is_in) {
+            int append = (is_out && a[1] == '>');
+            const char* target = a + (append ? 2 : 1);
+            if (!*target) {                       /* "> file": target is next arg */
+                if (!argv[i + 1]) return -1;
+                target = argv[++i];
+            }
+            if (is_out) { r->out = target; r->append = append; }
+            else        { r->in = target; }
+            continue;
+        }
+        argv[w++] = a;
+    }
+    argv[w] = 0;
+    return 0;
+}
+
+/* In the child: open the redirection targets and dup them onto fd 0/1. Prints an
+ * error and exits the child on failure. */
+static void apply_redirs(const redir_t* r) {
+    if (r->in) {
+        long fd = uopen(r->in, O_RDONLY);
+        if (fd < 0) { uwrite(2, "sh: ", 4); uwrite(2, r->in, sh_strlen(r->in)); uwrite(2, ": cannot open\n", 14); usyscall(SYS_EXIT, 1, 0, 0); }
+        udup2((int)fd, 0); uclose((int)fd);
+    }
+    if (r->out) {
+        int flags = O_WRONLY | O_CREAT | (r->append ? O_APPEND : O_TRUNC);
+        long fd = uopen(r->out, flags);
+        if (fd < 0) { uwrite(2, "sh: ", 4); uwrite(2, r->out, sh_strlen(r->out)); uwrite(2, ": cannot create\n", 16); usyscall(SYS_EXIT, 1, 0, 0); }
+        udup2((int)fd, 1); uclose((int)fd);
+    }
+}
+
 /* Split `line` at each '|' into stage strings (in place). Returns the count. */
 static int split_pipes(char* line, char** stages) {
     int ns = 0, start = 0;
@@ -119,10 +168,15 @@ static int run_single(char* cmd, int shell_pgid) {
         usyscall(SYS_EXIT_GROUP, argv[1] ? sh_atoi(argv[1]) : 0, 0, 0);
     }
 
+    redir_t rd;
+    if (strip_redirs(argv, &rd) < 0) { uwrite(2, "sh: syntax error near redirection\n", 34); return 2; }
+    if (!argv[0]) return 0;                        /* only a redirection, no cmd */
+
     long pid = ufork();
     if (pid < 0) return 127;
     if (pid == 0) {                              /* child: own group, exec    */
         usetpgid(0, 0);
+        apply_redirs(&rd);
         sh_exec(argv);                           /* never returns             */
         usyscall(SYS_EXIT, 127, 0, 0);           /* unreachable               */
     }
@@ -148,7 +202,10 @@ static int run_pipeline(char** stages, int ns) {
             if (out_fd != 1) { udup2(out_fd, 1); uclose(out_fd); }
             if (i < ns - 1)  uclose(pfd[0]);     /* not this stage's read end */
             char* argv[MAXARGS];
-            if (tokenize(stages[i], argv) && argv[0]) sh_exec(argv);  /* no return */
+            if (tokenize(stages[i], argv) && argv[0]) {
+                redir_t rd;                      /* explicit >,< override the pipe */
+                if (strip_redirs(argv, &rd) == 0) { apply_redirs(&rd); if (argv[0]) sh_exec(argv); }
+            }
             usyscall(SYS_EXIT, 127, 0, 0);
         }
         pids[i] = (int)pid;
@@ -161,12 +218,13 @@ static int run_pipeline(char** stages, int ns) {
 }
 
 /* ------------------------------------------------------------------ line editor
- * An interactive editor with history, used when stdin is a terminal. It puts the
- * tty in raw mode (so it sees arrows, Ctrl-keys and Delete), draws the line
- * itself, and restores the tty before returning so children run with a normal
- * terminal. On a non-tty (a pipe or script) it falls back to a plain read.
+ * An interactive editor with history and TAB completion, used when stdin is a
+ * terminal. It puts the tty in raw mode (so it sees arrows, Ctrl-keys, Tab and
+ * Delete), draws the line itself, and restores the tty before returning so
+ * children run with a normal terminal. On a non-tty (a pipe or script) it falls
+ * back to a plain read.
  *   Up/Down = history, Left/Right/Home(^A)/End(^E) = move, ^U kill line,
- *   ^K kill to end, Backspace/Delete, ^D = EOF on an empty line.
+ *   ^K kill to end, Backspace/Delete, Tab = complete, ^D = EOF on an empty line.
  */
 #define LINE_MAX  256
 #define HIST_MAX  32
@@ -189,6 +247,60 @@ static void refresh(const char* pr, int pl, const char* buf, int len, int cur) {
     uwrite(1, buf, (unsigned long)len); uwrite(1, "\033[K", 3);
     uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
     uwrite(1, buf, (unsigned long)cur);
+    /* Cyan block cursor: the framebuffer console has no blinking hardware
+     * cursor, so the shell paints the cell under the cursor black-on-cyan so
+     * you can always see where you are typing. */
+    char under = (cur < len) ? buf[cur] : ' ';
+    uwrite(1, "\033[30;46m", 8);
+    uwrite(1, &under, 1);
+    uwrite(1, "\033[0m", 4);
+}
+
+/* --- TAB completion: gather candidate names and their longest common prefix --- */
+typedef struct {
+    int  count;                 /* candidates seen                              */
+    int  lcp_len;               /* longest common prefix length                 */
+    char lcp[MAXNAME];          /* longest common prefix of all candidates      */
+    int  first_dir;             /* is the (single) candidate a directory?       */
+    int  nnames;                /* names kept for listing (capped)              */
+    char names[32][MAXNAME];
+} comp_t;
+
+static void comp_add(comp_t* c, const char* name, int is_dir) {
+    int nl = 0; while (name[nl] && nl < MAXNAME - 1) nl++;
+    if (c->count == 0) {
+        for (int i = 0; i < nl; i++) c->lcp[i] = name[i];
+        c->lcp[nl] = 0; c->lcp_len = nl; c->first_dir = is_dir;
+    } else {
+        int i = 0; while (i < c->lcp_len && name[i] && c->lcp[i] == name[i]) i++;
+        c->lcp_len = i; c->lcp[i] = 0;
+    }
+    if (c->nnames < 32) {
+        int i = 0; for (; name[i] && i < MAXNAME - 1; i++) c->names[c->nnames][i] = name[i];
+        c->names[c->nnames][i] = 0; c->nnames++;
+    }
+    c->count++;
+}
+
+/* Walk `path`, feeding entries whose name starts with prefix[0..plen) to the
+ * completion accumulator (skipping "." and ".."). */
+static void scan_dir(const char* path, const char* prefix, int plen, comp_t* c) {
+    long fd = uopen(path, O_RDONLY);
+    if (fd < 0) return;
+    char dbuf[2048]; long n;
+    while ((n = ugetdents64((int)fd, dbuf, sizeof dbuf)) > 0) {
+        long off = 0;
+        while (off < n) {
+            struct linux_dirent64* de = (struct linux_dirent64*)(dbuf + off);
+            off += de->d_reclen;
+            const char* name = de->d_name;
+            if (name[0] == '.' && (name[1] == 0 || (name[1] == '.' && name[2] == 0))) continue;
+            int ok = 1;
+            for (int i = 0; i < plen; i++) if (name[i] != prefix[i]) { ok = 0; break; }
+            if (ok) comp_add(c, name, de->d_type == DT_DIR);
+        }
+    }
+    uclose((int)fd);
 }
 
 /* Returns line length (>=0), or -1 on EOF. */
@@ -207,11 +319,16 @@ static int sh_readline(const char* pr, char* buf, int max) {
     }
     int len = 0, cur = 0, hb = sh_hist_n, stash_len = 0, have_stash = 0;
     char stash[LINE_MAX];
+    refresh(pr, pl, buf, len, cur);               /* show the cursor at the empty prompt */
     for (;;) {
         char c;
         long r = uread(0, &c, 1);
         if (r <= 0) { if (len == 0) { usettermios(0, &saved); return -1; } continue; }
-        if (c == '\r' || c == '\n') { uwrite(1, "\n", 1); buf[len] = 0; usettermios(0, &saved); return len; }
+        if (c == '\r' || c == '\n') {             /* redraw without the cursor block, then newline */
+            uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
+            uwrite(1, buf, (unsigned long)len); uwrite(1, "\033[K", 3);
+            uwrite(1, "\n", 1); buf[len] = 0; usettermios(0, &saved); return len;
+        }
         if (c == 4) {                               /* ^D */
             if (len == 0) { usettermios(0, &saved); return -1; }
             if (cur < len) { for (int i = cur; i < len - 1; i++) buf[i] = buf[i + 1]; len--; refresh(pr, pl, buf, len, cur); }
@@ -222,6 +339,55 @@ static int sh_readline(const char* pr, char* buf, int max) {
         if (c == 5) { cur = len; refresh(pr, pl, buf, len, cur); continue; } /* ^E */
         if (c == 21) { len = 0; cur = 0; refresh(pr, pl, buf, len, cur); continue; } /* ^U */
         if (c == 11) { len = cur; refresh(pr, pl, buf, len, cur); continue; } /* ^K */
+        if (c == 9) {                               /* Tab: complete the token */
+            int ts = cur; while (ts > 0 && buf[ts - 1] != ' ' && buf[ts - 1] != '|') ts--;
+            int tlen = cur - ts;
+            int cmdpos = 1;                         /* first word of a command?  */
+            for (int i = ts - 1; i >= 0; i--) { if (buf[i] == ' ') continue; cmdpos = (buf[i] == '|'); break; }
+            char tok[LINE_MAX];
+            for (int i = 0; i < tlen; i++) tok[i] = buf[ts + i];
+            tok[tlen] = 0;
+            int has_slash = 0; for (int i = 0; i < tlen; i++) if (tok[i] == '/') has_slash = 1;
+            comp_t cc; cc.count = cc.lcp_len = cc.nnames = cc.first_dir = 0;
+            const char* base; int blen;
+            if (cmdpos && !has_slash) {              /* command name: scan PATH dirs */
+                base = tok; blen = tlen;
+                scan_dir("/bin", base, blen, &cc);
+                scan_dir("/usr/bin", base, blen, &cc);
+            } else {                                 /* file/dir: split dir + base   */
+                int slash = -1; for (int i = tlen - 1; i >= 0; i--) if (tok[i] == '/') { slash = i; break; }
+                char dir[LINE_MAX];
+                if (slash < 0) { dir[0] = '.'; dir[1] = 0; base = tok; blen = tlen; }
+                else {
+                    int j = 0; for (; j <= slash; j++) dir[j] = tok[j];
+                    if (slash == 0) { dir[0] = '/'; dir[1] = 0; } else dir[slash + 1] = 0;
+                    base = tok + slash + 1; blen = tlen - (slash + 1);
+                }
+                scan_dir(dir, base, blen, &cc);
+            }
+            if (cc.count > 0) {
+                int add = cc.lcp_len - blen;         /* chars to insert past prefix */
+                if (add > 0) {
+                    for (int k = blen; k < cc.lcp_len && len < max - 1; k++) {
+                        for (int i = len; i > cur; i--) buf[i] = buf[i - 1];
+                        buf[cur] = cc.lcp[k]; len++; cur++;
+                    }
+                }
+                if (cc.count == 1) {                 /* unique: add '/' (dir) or ' ' */
+                    char tail = cc.first_dir ? '/' : ' ';
+                    if (len < max - 1) { for (int i = len; i > cur; i--) buf[i] = buf[i - 1]; buf[cur] = tail; len++; cur++; }
+                    refresh(pr, pl, buf, len, cur);
+                } else if (add > 0) {
+                    refresh(pr, pl, buf, len, cur);  /* advanced the common prefix   */
+                } else {                              /* ambiguous: list candidates   */
+                    uwrite(1, "\n", 1);
+                    for (int i = 0; i < cc.nnames; i++) { uwrite(1, cc.names[i], sh_strlen(cc.names[i])); uwrite(1, "  ", 2); }
+                    uwrite(1, "\n", 1);
+                    refresh(pr, pl, buf, len, cur);
+                }
+            }
+            continue;
+        }
         if (c == 27) {                              /* ESC [ X */
             char a, b;
             if (uread(0, &a, 1) <= 0 || a != '[') continue;
@@ -253,13 +419,70 @@ static int sh_readline(const char* pr, char* buf, int max) {
     }
 }
 
+/* Build the prompt: "makh:<cwd>$ " with the name in cyan and the path in green
+ * (SGR escapes are zero-width, so the line editor's redraw math is unaffected).
+ * Showing the cwd means the user never has to run pwd to know where they are. */
+static void build_prompt(char* out, int max) {
+    char cwd[128];
+    long n = ugetcwd(cwd, sizeof cwd);
+    if (n <= 0) { cwd[0] = '/'; cwd[1] = 0; }
+    int w = 0;
+    const char* pre = "\033[1;36mmakh\033[0m:\033[1;32m";
+    for (const char* s = pre;  *s && w < max - 1; s++) out[w++] = *s;
+    for (const char* s = cwd;  *s && w < max - 1; s++) out[w++] = *s;
+    const char* post = "\033[0m$ ";
+    for (const char* s = post; *s && w < max - 1; s++) out[w++] = *s;
+    out[w] = 0;
+}
+
+/* If `line` contains a heredoc (`<<DELIM`), read the body from the terminal into
+ * a temp file and rewrite the line as `... < /tmp/.heredoc ...`, so the normal
+ * input-redirection path feeds the body to the command. Works before a pipe too
+ * (`cat <<EOF | grep x`). Returns 0, or -1 if ^D ended the body early. */
+static int expand_heredoc(char* line, int max) {
+    int p = -1;
+    for (int i = 0; line[i]; i++) if (line[i] == '<' && line[i + 1] == '<') { p = i; break; }
+    if (p < 0) return 0;
+    int d = p + 2; while (line[d] == ' ') d++;
+    char delim[64]; int dl = 0;
+    while (line[d] && line[d] != ' ' && dl < 63) delim[dl++] = line[d++];
+    delim[dl] = 0;
+    if (dl == 0) return 0;                          /* "<<" with no delimiter     */
+    int after = d;
+
+    const char* tmp = "/tmp/.heredoc";
+    long fd = uopen(tmp, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) { uwrite(2, "sh: heredoc: cannot create temp file\n", 37); return -1; }
+    char hl[LINE_MAX];
+    for (;;) {
+        int n = sh_readline("> ", hl, sizeof hl);
+        if (n < 0) { uclose((int)fd); return -1; }  /* ^D aborts the heredoc      */
+        hl[n] = 0;
+        if (sh_streq(hl, delim)) break;
+        uwrite((int)fd, hl, (unsigned long)n);
+        uwrite((int)fd, "\n", 1);
+    }
+    uclose((int)fd);
+
+    char rebuilt[LINE_MAX]; int w = 0;
+    for (int i = 0; i < p && w < max - 1; i++) rebuilt[w++] = line[i];
+    for (const char* s = "< ";  *s && w < max - 1; s++) rebuilt[w++] = *s;
+    for (const char* s = tmp;   *s && w < max - 1; s++) rebuilt[w++] = *s;
+    for (int i = after; line[i] && w < max - 1; i++)    rebuilt[w++] = line[i];
+    rebuilt[w] = 0;
+    for (int i = 0; i <= w; i++) line[i] = rebuilt[i];
+    return 0;
+}
+
 int umain(void) {
     char line[LINE_MAX];
+    char prompt[192];
     int  last = 0;
     int  shell_pgid = (int)ugetpgrp();
 
     for (;;) {
-        int n = sh_readline("$ ", line, sizeof(line));
+        build_prompt(prompt, sizeof prompt);
+        int n = sh_readline(prompt, line, sizeof(line));
         if (n < 0) return last;                  /* EOF: leave with last status */
         line[n] = '\0';
         hist_push(line);
@@ -267,6 +490,8 @@ int umain(void) {
         int blank = 1;
         for (int k = 0; line[k]; k++) if (line[k] != ' ') { blank = 0; break; }
         if (blank) continue;
+
+        if (expand_heredoc(line, sizeof(line)) < 0) continue;  /* ^D during body */
 
         int piped = 0;
         for (int k = 0; line[k]; k++) if (line[k] == '|') { piped = 1; break; }
