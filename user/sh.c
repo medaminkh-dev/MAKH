@@ -247,6 +247,13 @@ static void refresh(const char* pr, int pl, const char* buf, int len, int cur) {
     uwrite(1, buf, (unsigned long)len); uwrite(1, "\033[K", 3);
     uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
     uwrite(1, buf, (unsigned long)cur);
+    /* Cyan block cursor: the framebuffer console has no blinking hardware
+     * cursor, so the shell paints the cell under the cursor black-on-cyan so
+     * you can always see where you are typing. */
+    char under = (cur < len) ? buf[cur] : ' ';
+    uwrite(1, "\033[30;46m", 8);
+    uwrite(1, &under, 1);
+    uwrite(1, "\033[0m", 4);
 }
 
 /* --- TAB completion: gather candidate names and their longest common prefix --- */
@@ -312,11 +319,16 @@ static int sh_readline(const char* pr, char* buf, int max) {
     }
     int len = 0, cur = 0, hb = sh_hist_n, stash_len = 0, have_stash = 0;
     char stash[LINE_MAX];
+    refresh(pr, pl, buf, len, cur);               /* show the cursor at the empty prompt */
     for (;;) {
         char c;
         long r = uread(0, &c, 1);
         if (r <= 0) { if (len == 0) { usettermios(0, &saved); return -1; } continue; }
-        if (c == '\r' || c == '\n') { uwrite(1, "\n", 1); buf[len] = 0; usettermios(0, &saved); return len; }
+        if (c == '\r' || c == '\n') {             /* redraw without the cursor block, then newline */
+            uwrite(1, "\r", 1); uwrite(1, pr, (unsigned long)pl);
+            uwrite(1, buf, (unsigned long)len); uwrite(1, "\033[K", 3);
+            uwrite(1, "\n", 1); buf[len] = 0; usettermios(0, &saved); return len;
+        }
         if (c == 4) {                               /* ^D */
             if (len == 0) { usettermios(0, &saved); return -1; }
             if (cur < len) { for (int i = cur; i < len - 1; i++) buf[i] = buf[i + 1]; len--; refresh(pr, pl, buf, len, cur); }

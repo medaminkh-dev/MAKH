@@ -69,6 +69,7 @@ numbers are navigable rather than mysterious.
 | 32 | **Ring-3 sockets**: a `VNODE_SOCK` bridge so `socket`/`connect` + read/write/close reach the TCP stack; native `curl`/`wget`/`nc` | [PHASE32_SOCKETS](PHASE32_SOCKETS.md) |
 | 33 | **cc driver**: `cc hello.c` / `tcc hello.c` compile + link against the musl sysroot in one line (raw TinyCC at `/bin/tcc.real`) | [PHASE33_CC_DRIVER](PHASE33_CC_DRIVER.md) |
 | 34 | **DNS**: a userspace resolver (UDP A-query, recv timeout via `setsockopt`) so `curl`/`wget`/`nc` take hostnames; reads `/etc/resolv.conf` | [PHASE34_DNS](PHASE34_DNS.md) |
+| 35 | **Cursor + friendly URLs**: a cyan block cursor on the FB console (shell + `edit`, via SGR reverse video), optional scheme/port in `curl`/`wget`/`nc` (`https://` served as plain HTTP), `ping` takes a hostname | [PHASE35_CURSOR_URLS](PHASE35_CURSOR_URLS.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

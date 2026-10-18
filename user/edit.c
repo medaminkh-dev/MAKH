@@ -89,7 +89,15 @@ static void draw(void){
     out(" edit: "); out(fname); out(dirty ? " [modified]" : "");
     out("  ^S save  ^Q quit  ");
     out("\033[0m");
-    gotoxy(cy - top + 1, cx + 1);                       /* cursor */
+    /* Draw a visible cursor: the cell under it as a cyan block (the framebuffer
+     * console has no blinking hardware cursor, so the editor paints its own). */
+    int crow = cy - top + 1, ccol = cx + 1;
+    gotoxy(crow, ccol);
+    char under = (cx < llen[cy]) ? line[cy][cx] : ' ';
+    out("\033[30;46m");                                 /* black on cyan */
+    uwrite(1, &under, 1);
+    out("\033[0m");
+    gotoxy(crow, ccol);
 }
 
 static void scroll_fix(void){
