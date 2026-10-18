@@ -65,6 +65,7 @@ numbers are navigable rather than mysterious.
 | 28 | **Interactive shell**: raw-mode line editor with command history (Up/Down) + shortcuts, `termios`/`TCGETS`/`TCSETS`, native coreutils (`grep`/`cp`/`mv`/`whoami`/`id`/`ifconfig`/`help`…), `mv`+`lstat` fixes | [PHASE28_INTERACTIVE_SHELL](PHASE28_INTERACTIVE_SHELL.md) |
 | 29 | **Shell UX**: prompt shows the cwd, TAB completion (commands + paths), redirection (`>`/`>>`/`<`) and heredocs (`<<EOF`), colour `grep` | [PHASE29_SHELL_UX](PHASE29_SHELL_UX.md) |
 | 30 | **chmod**: real mutable file modes — a vnode mode + `.chmod` VFS op (tmpfs in memory, ext2 persisted), `chmod`/`fchmodat` syscalls, native `chmod` | [PHASE30_CHMOD](PHASE30_CHMOD.md) |
+| 31 | **edit**: a small full-screen text editor (ring-3, raw-mode) — open/move/type/save/quit on the framebuffer console | [PHASE31_EDITOR](PHASE31_EDITOR.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

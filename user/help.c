@@ -33,7 +33,8 @@ int umain(void) {
     put(HDR "Text" RST "\n"
         "  echo [words...]       print the arguments\n"
         "  grep / head / tail    search / first / last lines\n"
-        "  wc / sort / cut       count / sort / select fields\n\n");
+        "  wc / sort / cut       count / sort / select fields\n"
+        "  edit FILE             full-screen text editor (^S save, ^Q quit)\n\n");
 
     put(HDR "System" RST "\n"
         "  whoami                print the user (MAKH is single-user: root)\n"
