@@ -50,7 +50,8 @@ int umain(void) {
         "  nc IP PORT            open a TCP connection, relay stdin/stdout\n\n");
 
     put(HDR "Develop (self-hosting)" RST "\n"
-        "  tcc <file.c>          the Tiny C Compiler, running on MAKH\n"
+        "  cc file.c [-o out]    compile + link a C program (the easy way)\n"
+        "  tcc <file.c>          same driver; tcc.real is the raw TinyCC\n"
         "  make                  build multi-file projects on MAKH\n\n");
 
     put("Type a command name to run it. More bricks are on the way.\n");

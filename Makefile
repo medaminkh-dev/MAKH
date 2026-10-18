@@ -243,7 +243,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/grep build/user/head build/user/tail build/user/wc \
             build/user/env build/user/date build/user/sort build/user/cut \
             build/user/chmod build/user/edit \
-            build/user/curl build/user/wget build/user/nc
+            build/user/curl build/user/wget build/user/nc build/user/cc
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user
@@ -306,7 +306,11 @@ $(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhos
 	@# program already copied in.
 	@for a in ash true false sleep uname; do \
 	    ln -s busybox build/initrd/bin/$$a; done
-	@cp $(TCC_PREBUILT) build/initrd/bin/tcc
+	@# TinyCC itself lands at /bin/tcc.real; the friendly `cc` driver (also copied
+	@# here as /bin/tcc) fills in MAKH's musl sysroot link line so `cc hello.c`
+	@# and `tcc hello.c` just work, while advanced flags pass straight through.
+	@cp $(TCC_PREBUILT) build/initrd/bin/tcc.real
+	@cp build/user/cc build/initrd/bin/tcc
 	@cp $(MAKE_PREBUILT) build/initrd/bin/make
 	@cp user/tcc/hello.c build/initrd/share/tcc-hello.c
 	@cp user/tcc/full.c build/initrd/share/tcc-full.c
