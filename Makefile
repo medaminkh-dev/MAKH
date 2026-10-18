@@ -241,7 +241,8 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/help build/user/mkdir build/user/rmdir build/user/rm \
             build/user/touch build/user/mv build/user/cp build/user/ln \
             build/user/grep build/user/head build/user/tail build/user/wc \
-            build/user/env build/user/date build/user/sort build/user/cut
+            build/user/env build/user/date build/user/sort build/user/cut \
+            build/user/chmod
 
 build/user/start.o: user/start.S
 	@mkdir -p build/user

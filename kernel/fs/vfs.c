@@ -309,14 +309,16 @@ int vfs_close(int fd) {
 
 static void fill_stat(vnode_t* vn, struct stat* st) {
     memset(st, 0, sizeof(*st));
-    uint32_t mode;
+    uint32_t typ, def;
     switch (vn->type) {
-        case VNODE_DIR: mode = S_IFDIR | 0755; break;
-        case VNODE_CHR: mode = S_IFCHR | 0666; break;
-        case VNODE_LNK: mode = S_IFLNK | 0777; break;
-        default:        mode = S_IFREG | 0644; break;
+        case VNODE_DIR: typ = S_IFDIR; def = 0755; break;
+        case VNODE_CHR: typ = S_IFCHR; def = 0666; break;
+        case VNODE_LNK: typ = S_IFLNK; def = 0777; break;
+        default:        typ = S_IFREG; def = 0644; break;
     }
-    st->st_mode    = mode;
+    /* Honour a chmod'd mode; fall back to the type default when unset (0). */
+    uint32_t perm = (vn->mode & 07777u) ? (vn->mode & 07777u) : def;
+    st->st_mode    = typ | perm;
     st->st_nlink   = 1;
     st->st_size    = (int64_t)vn->size;
     st->st_blksize = 4096;
@@ -337,6 +339,17 @@ int vfs_lstat(const char* path, struct stat* st) {
     vnode_t* vn = vfs_resolve_nofollow(path);
     if (!vn) return -ENOENT;
     fill_stat(vn, st);
+    return 0;
+}
+
+/* chmod(2): set the permission bits on the file at `path` (following symlinks,
+ * as POSIX chmod does). The mode is kept on the vnode, and a filesystem that
+ * provides a .chmod op (ext2) also persists it to disk. */
+int vfs_chmod(const char* path, uint32_t mode) {
+    vnode_t* vn = vfs_resolve(path);
+    if (!vn) return -ENOENT;
+    vn->mode = (vn->mode & ~07777u) | (mode & 07777u);
+    if (vn->ops && vn->ops->chmod) return vn->ops->chmod(vn, vn->mode);
     return 0;
 }
 

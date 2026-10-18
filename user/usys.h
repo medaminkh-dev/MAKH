@@ -51,6 +51,7 @@
 #define SYS_RMDIR     84
 #define SYS_UNLINK    87
 #define SYS_SYMLINK   88
+#define SYS_CHMOD     90
 
 /* open() flags (match kernel fs/vfs.h). */
 #define O_RDONLY   0x0000
@@ -212,6 +213,7 @@ static inline long uchdir(const char* path) {
 static inline long umkdir(const char* path) { return usyscall(SYS_MKDIR, (long)path, 0, 0); }
 static inline long urmdir(const char* path) { return usyscall(SYS_RMDIR, (long)path, 0, 0); }
 static inline long uunlink(const char* path) { return usyscall(SYS_UNLINK, (long)path, 0, 0); }
+static inline long uchmod(const char* path, int mode) { return usyscall(SYS_CHMOD, (long)path, mode, 0); }
 static inline long urename(const char* a, const char* b) { return usyscall(SYS_RENAME, (long)a, (long)b, 0); }
 static inline long usymlink(const char* t, const char* p) { return usyscall(SYS_SYMLINK, (long)t, (long)p, 0); }
 static inline long ugetcwd(char* buf, unsigned long size) {

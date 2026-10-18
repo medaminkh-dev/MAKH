@@ -27,7 +27,8 @@ int umain(void) {
         "  pwd                   print the working directory\n"
         "  clear                 clear the screen\n"
         "  mkdir / rmdir / rm    create / remove directories / files\n"
-        "  cp / mv / ln / touch  copy / move / link / create\n\n");
+        "  cp / mv / ln / touch  copy / move / link / create\n"
+        "  chmod MODE file       set permission bits (octal, e.g. 755)\n\n");
 
     put(HDR "Text" RST "\n"
         "  echo [words...]       print the arguments\n"

@@ -64,6 +64,7 @@ numbers are navigable rather than mysterious.
 | 27 | **Splash + clear + ping (FB-2)**: fennec boot splash + spinner → clean terminal, `clear`/ANSI colours, `ping` with TTL + min/avg/max | [PHASE27_SPLASH_CLEAR_PING](PHASE27_SPLASH_CLEAR_PING.md) |
 | 28 | **Interactive shell**: raw-mode line editor with command history (Up/Down) + shortcuts, `termios`/`TCGETS`/`TCSETS`, native coreutils (`grep`/`cp`/`mv`/`whoami`/`id`/`ifconfig`/`help`…), `mv`+`lstat` fixes | [PHASE28_INTERACTIVE_SHELL](PHASE28_INTERACTIVE_SHELL.md) |
 | 29 | **Shell UX**: prompt shows the cwd, TAB completion (commands + paths), redirection (`>`/`>>`/`<`) and heredocs (`<<EOF`), colour `grep` | [PHASE29_SHELL_UX](PHASE29_SHELL_UX.md) |
+| 30 | **chmod**: real mutable file modes — a vnode mode + `.chmod` VFS op (tmpfs in memory, ext2 persisted), `chmod`/`fchmodat` syscalls, native `chmod` | [PHASE30_CHMOD](PHASE30_CHMOD.md) |
 
 Reports that span phases: [CHANGELOG_v0.0.2](CHANGELOG_v0.0.2.md),
 [GIT_DIFF_REPORT_v0.0.2](GIT_DIFF_REPORT_v0.0.2.md),

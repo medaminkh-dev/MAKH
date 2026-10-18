@@ -51,6 +51,9 @@ typedef struct vfs_ops {
      * returning its length or -1. (U1-a) */
     struct vnode* (*symlink)(struct vnode* dir, const char* name, const char* target);
     int  (*readlink)(struct vnode* vn, char* buf, size_t sz);
+    /* Change the permission bits (low 12 of `mode`). Optional: a filesystem that
+     * omits it keeps the mode only in memory (the VFS updates vn->mode itself). */
+    int  (*chmod)(struct vnode* vn, uint32_t mode);
 } vfs_ops_t;
 
 typedef struct vnode {
@@ -59,6 +62,7 @@ typedef struct vnode {
     void*               priv;      /* filesystem-private */
     uint64_t            size;
     uint32_t            refcount;
+    uint32_t            mode;      /* permission bits (low 12); type is in `type` */
     struct vnode*       mounted;   /* if a filesystem is mounted here, its root */
 } vnode_t;
 
@@ -201,6 +205,7 @@ void      vfs_close_all(void* proc);
 int       vfs_stat(const char* path, struct stat* st);
 int       vfs_lstat(const char* path, struct stat* st);   /* no-follow (lstat) */
 int       vfs_fstat(int fd, struct stat* st);
+int       vfs_chmod(const char* path, uint32_t mode);     /* set permission bits */
 long      vfs_getdents(int fd, void* buf, size_t n);   /* bytes, 0 at end */
 long      vfs_fcntl(int fd, int cmd, long arg);
 

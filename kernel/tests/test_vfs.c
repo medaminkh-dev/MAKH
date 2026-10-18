@@ -10,6 +10,7 @@
 #include <fs/vfs.h>
 #include <lib/string.h>
 #include <mm/kheap.h>
+#include <errno.h>
 
 KTEST(vfs, create_write_read_close) {
     int fd = vfs_open("/scratch.txt", O_CREAT | O_RDWR);
@@ -62,6 +63,19 @@ KTEST(vfs, unlink_removes_file) {
     KEXPECT_EQ(vfs_unlink("/temp"), 0);
     KEXPECT(vfs_resolve("/temp") == (void*)0);
     KEXPECT(vfs_open("/temp", O_RDONLY) < 0);
+}
+
+KTEST(vfs, chmod_changes_mode) {
+    vfs_create("/cm.txt", VNODE_REG);
+    struct stat st;
+    KEXPECT_EQ(vfs_stat("/cm.txt", &st), 0);
+    KEXPECT_EQ((int)(st.st_mode & 0777), 0644);          /* type default */
+    KEXPECT_EQ(vfs_chmod("/cm.txt", 0600), 0);
+    KEXPECT_EQ(vfs_stat("/cm.txt", &st), 0);
+    KEXPECT_EQ((int)(st.st_mode & 0777), 0600);          /* new perms */
+    KEXPECT(S_ISREG(st.st_mode));                        /* type preserved */
+    KEXPECT_EQ(vfs_chmod("/nope-missing", 0600), -ENOENT);
+    vfs_unlink("/cm.txt");
 }
 
 KTEST(vfs, readdir_lists_children) {
