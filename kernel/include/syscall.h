@@ -49,6 +49,7 @@
 #define SYS_FCHMODAT       268
 #define SYS_SOCKET         41
 #define SYS_CONNECT        42
+#define SYS_SETSOCKOPT     54
 #define AT_FDCWD           (-100)
 #define SYS_PIPE           22
 #define SYS_DUP2           33

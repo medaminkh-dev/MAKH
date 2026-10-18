@@ -792,6 +792,23 @@ static int64_t do_connect(uint64_t fd, uint64_t uaddr, uint64_t len, int from_us
     return rc < 0 ? -errno : 0;
 }
 
+/* setsockopt(fd, level, optname, optval): the length is inferred from optname
+ * (a timeval for SO_RCVTIMEO/SO_SNDTIMEO, an int otherwise), so this fits the
+ * 4-argument syscall path. Enough for a recv timeout on the DNS resolver. */
+static int64_t do_setsockopt(uint64_t fd, uint64_t level, uint64_t optname, uint64_t uval, int from_user) {
+    int idx = net_socket_index((int)fd);
+    if (idx < 0) return -ENOTSOCK;
+    size_t n = (optname == SO_RCVTIMEO || optname == SO_SNDTIMEO) ? sizeof(struct timeval) : sizeof(int);
+    char buf[sizeof(struct timeval)];
+    if (from_user) {
+        if (copy_from_user(buf, (const void*)(uintptr_t)uval, n) < 0) return -EFAULT;
+    } else {
+        memcpy(buf, (const void*)(uintptr_t)uval, n);
+    }
+    int rc = setsockopt(idx, (int)level, (int)optname, buf, (socklen_t)n);
+    return rc < 0 ? -errno : 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -885,6 +902,7 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
         case SYS_MAKH_IFINFO:  return do_makh_ifinfo((int)a1, a2, from_user);
         case SYS_SOCKET:       return do_socket(a1, a2, a3);
         case SYS_CONNECT:      return do_connect(a1, a2, a3, from_user);
+        case SYS_SETSOCKOPT:   return do_setsockopt(a1, a2, a3, a4, from_user);
         default:
             return -ENOSYS;
     }

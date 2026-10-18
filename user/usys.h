@@ -54,6 +54,9 @@
 #define SYS_CHMOD     90
 #define SYS_SOCKET    41
 #define SYS_CONNECT   42
+#define SYS_SETSOCKOPT 54
+#define SOL_SOCKET    1
+#define SO_RCVTIMEO   20
 
 /* sockets (match kernel net/socket.h) */
 #define AF_INET       2
@@ -234,6 +237,9 @@ static inline long uunlink(const char* path) { return usyscall(SYS_UNLINK, (long
 static inline long uchmod(const char* path, int mode) { return usyscall(SYS_CHMOD, (long)path, mode, 0); }
 static inline long usocket(int domain, int type, int proto) { return usyscall(SYS_SOCKET, domain, type, proto); }
 static inline long uconnect(int fd, const struct sockaddr_in* a, unsigned long len) { return usyscall(SYS_CONNECT, fd, (long)a, (long)len); }
+/* MAKH setsockopt: the optlen is inferred from optname in the kernel (timeval for
+ * SO_RCVTIMEO/SO_SNDTIMEO, int otherwise), so this takes four args, not five. */
+static inline long usetsockopt(int fd, int level, int optname, const void* val) { return usyscall4(SYS_SETSOCKOPT, fd, level, optname, (long)val); }
 static inline long urename(const char* a, const char* b) { return usyscall(SYS_RENAME, (long)a, (long)b, 0); }
 static inline long usymlink(const char* t, const char* p) { return usyscall(SYS_SYMLINK, (long)t, (long)p, 0); }
 static inline long ugetcwd(char* buf, unsigned long size) {
