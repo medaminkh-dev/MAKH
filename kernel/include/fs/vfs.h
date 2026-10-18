@@ -30,6 +30,7 @@ typedef enum vtype {
     VNODE_CHR,          /* character device */
     VNODE_FIFO,         /* pipe (Phase 20-K) */
     VNODE_LNK,          /* symbolic link (U1-a) */
+    VNODE_SOCK,         /* socket (ring-3 sockets) */
 } vtype_t;
 
 struct vnode;
@@ -193,6 +194,9 @@ file_t*   vfs_file(int fd);               /* raw file for a fd, or NULL */
 /* -------- pipes / descriptor duplication (Phase 20-K) -------- */
 int       vfs_pipe(int fds[2]);           /* fds[0]=read end, fds[1]=write end */
 int       vfs_dup2(int oldfd, int newfd); /* share oldfd's description at newfd */
+/* Install an already-built vnode as a new fd (used by the socket layer). The
+ * vnode's refcount should be 1; on failure the caller still owns the vnode. */
+int       vfs_install_vnode(vnode_t* vn, int flags);
 /* Duplicate `src`'s whole fd table into `dst` (fork): shared descriptions,
  * refcounts bumped. Both are process_t*. */
 void      vfs_fork_fds(void* dst, void* src);

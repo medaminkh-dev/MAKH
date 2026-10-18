@@ -12,6 +12,7 @@
 #include <ktime.h>
 #include <mm/kheap.h>
 #include <lib/string.h>
+#include <fs/vfs.h>
 
 static sock_t socks[SOCK_MAX];
 static uint16_t next_ephemeral = 49152;
@@ -349,4 +350,49 @@ int sock_close(int fd) {
     s->used = 0;
     net_unlock();
     return 0;
+}
+
+/* ---------------------------------------------------------------- ring-3 glue
+ * A socket is exposed to ring 3 as a VNODE_SOCK vnode so the normal fd layer
+ * (read/write/close, dup2) drives it: read()/write() map to recv()/send(), and
+ * close() frees the socket slot. The vnode's priv holds the socks[] index. */
+
+static long sockv_read(vnode_t* vn, void* buf, size_t n, uint64_t off) {
+    (void)off;
+    long r = recv((int)(intptr_t)vn->priv, buf, n, 0);
+    return r < 0 ? -errno : r;
+}
+static long sockv_write(vnode_t* vn, const void* buf, size_t n, uint64_t off) {
+    (void)off;
+    long r = send((int)(intptr_t)vn->priv, buf, n, 0);
+    return r < 0 ? -errno : r;
+}
+static const vfs_ops_t sockv_ops = { .read = sockv_read, .write = sockv_write };
+
+/* Called by the VFS when the last fd on a socket vnode closes. */
+void sock_on_vnode_close(vnode_t* vn) {
+    if (vn) sock_close((int)(intptr_t)vn->priv);
+}
+
+/* socket(2) for ring 3: open a kernel socket and wrap it in an fd. Returns the
+ * fd, or -errno. */
+int net_socket_open(int type) {
+    int idx = socket(AF_INET, type, 0);
+    if (idx < 0) return -errno;
+    vnode_t* vn = kcalloc(1, sizeof(*vn));
+    if (!vn) { sock_close(idx); return -ENOMEM; }
+    vn->type = VNODE_SOCK;
+    vn->ops  = &sockv_ops;
+    vn->priv = (void*)(intptr_t)idx;
+    vn->refcount = 1;
+    int fd = vfs_install_vnode(vn, O_RDWR);
+    if (fd < 0) { sock_close(idx); kfree(vn); return fd; }
+    return fd;
+}
+
+/* Map a ring-3 socket fd to its socks[] index, or -1 if it is not a socket. */
+int net_socket_index(int fd) {
+    file_t* f = vfs_file(fd);
+    if (!f || !f->vnode || f->vnode->type != VNODE_SOCK) return -1;
+    return (int)(intptr_t)f->vnode->priv;
 }

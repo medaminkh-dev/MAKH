@@ -44,7 +44,10 @@ int umain(void) {
 
     put(HDR "Network" RST "\n"
         "  ping <ip> [count]     ICMP echo, with ttl and rtt min/avg/max\n"
-        "  ifconfig              list the network interfaces\n\n");
+        "  ifconfig              list the network interfaces\n"
+        "  curl URL              fetch an HTTP URL to stdout (IP, no TLS)\n"
+        "  wget [-O f] URL       download an HTTP URL to a file\n"
+        "  nc IP PORT            open a TCP connection, relay stdin/stdout\n\n");
 
     put(HDR "Develop (self-hosting)" RST "\n"
         "  tcc <file.c>          the Tiny C Compiler, running on MAKH\n"

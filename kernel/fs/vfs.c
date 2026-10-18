@@ -264,6 +264,7 @@ long vfs_lseek(int fd, long off, int whence) {
 }
 
 static void pipe_detach(vnode_t* vn, int access);   /* fwd (Phase 20-K) */
+void sock_on_vnode_close(vnode_t* vn);              /* net/socket.c: ring-3 sockets */
 
 /* Release one reference to an open-file description. The caller has already
  * removed it from its fd slot. At the last reference the backing is released:
@@ -278,6 +279,9 @@ static void file_put(file_t* f) {
         if (vn->refcount) vn->refcount--;
         if (vn->type == VNODE_FIFO && vn->refcount == 0) {
             kfree(vn->priv);
+            kfree(vn);
+        } else if (vn->type == VNODE_SOCK && vn->refcount == 0) {
+            sock_on_vnode_close(vn);           /* tcp close + free the socket slot */
             kfree(vn);
         }
     }
@@ -550,6 +554,19 @@ int vfs_pipe(int fds[2]) {
     fds[0] = rfd;
     fds[1] = wfd;
     return 0;
+}
+
+/* Install an already-built vnode (e.g. a socket) as a fresh fd. */
+int vfs_install_vnode(vnode_t* vn, int flags) {
+    file_t** t = fd_table();
+    if (!t || !vn) return -ENOMEM;
+    file_t* f = kcalloc(1, sizeof(file_t));
+    if (!f) return -ENOMEM;
+    f->vnode = vn; f->flags = flags; f->used = 1; f->refcount = 1;
+    int fd = fd_alloc(t);
+    if (fd < 0) { kfree(f); return fd; }
+    t[fd] = f;
+    return fd;
 }
 
 int vfs_dup2(int oldfd, int newfd) {

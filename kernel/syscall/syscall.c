@@ -31,6 +31,7 @@
 #include <mm/kheap.h>
 #include <futex.h>
 #include <net/net.h>
+#include <net/socket.h>
 
 /* From usermode.c: leave ring 3. */
 void usermode_exit(long code) __attribute__((noreturn));
@@ -768,6 +769,29 @@ static int64_t do_makh_ifinfo(int index, uint64_t uout, int from_user) {
     return 0;
 }
 
+/* socket(domain, type, protocol): open a TCP/UDP socket as a ring-3 fd. */
+static int64_t do_socket(uint64_t domain, uint64_t type, uint64_t proto) {
+    (void)proto;
+    if ((int)domain != AF_INET) return -EAFNOSUPPORT;
+    return net_socket_open((int)type);
+}
+
+/* connect(fd, addr, len): connect a socket fd to a remote address. */
+static int64_t do_connect(uint64_t fd, uint64_t uaddr, uint64_t len, int from_user) {
+    int idx = net_socket_index((int)fd);
+    if (idx < 0) return -ENOTSOCK;
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    size_t n = len < sizeof(sa) ? (size_t)len : sizeof(sa);
+    if (from_user) {
+        if (copy_from_user(&sa, (const void*)(uintptr_t)uaddr, n) < 0) return -EFAULT;
+    } else {
+        memcpy(&sa, (const void*)(uintptr_t)uaddr, n);
+    }
+    int rc = connect(idx, (const struct sockaddr*)&sa, (socklen_t)n);
+    return rc < 0 ? -errno : 0;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Dispatch                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -859,6 +883,8 @@ static int64_t dispatch(uint64_t num, uint64_t a1, uint64_t a2, uint64_t a3,
             return 0;
         case SYS_MAKH_PING:    return do_makh_ping((uint32_t)a1, (uint16_t)a2, (uint32_t)a3);
         case SYS_MAKH_IFINFO:  return do_makh_ifinfo((int)a1, a2, from_user);
+        case SYS_SOCKET:       return do_socket(a1, a2, a3);
+        case SYS_CONNECT:      return do_connect(a1, a2, a3, from_user);
         default:
             return -ENOSYS;
     }
