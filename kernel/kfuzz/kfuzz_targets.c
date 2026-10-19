@@ -513,6 +513,33 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
         if (kfuzz_rand_below(r, 4) == 0) {
             n = kfuzz_rand_below(r, ELF_FZ_MAX + 1);     /* pure garbage */
             kfuzz_fill(r, buf, n);
+        } else if (kfuzz_rand_below(r, 3) == 0) {
+            /* A VALID two-segment ELF whose PT_LOADs may share a page. Kept
+             * valid (no byte mutation) so elf_load actually maps both segments:
+             * if the loader orphans a frame when a later segment overwrites a
+             * page an earlier one backed (mm audit F3), the per-iteration page
+             * conservation check below breaks. */
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC */
+            *(uint16_t*)(buf + 18) = 0x3E;
+            *(uint64_t*)(buf + 24) = 0x400000ull;        /* e_entry */
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff */
+            *(uint16_t*)(buf + 54) = 56;
+            *(uint16_t*)(buf + 56) = 2;                  /* e_phnum = 2 */
+            uint64_t off2 = (uint64_t)kfuzz_rand_below(r, 2) * 0x800;  /* same page */
+            for (int sg = 0; sg < 2; sg++) {
+                uint8_t* p = buf + 64 + sg * 56;
+                *(uint32_t*)(p + 0)  = 1;                /* PT_LOAD */
+                *(uint32_t*)(p + 4)  = 6;                /* RW      */
+                *(uint64_t*)(p + 8)  = 0x100;            /* p_offset */
+                *(uint64_t*)(p + 16) = 0x400000ull + (uint64_t)sg * off2;  /* p_vaddr */
+                *(uint64_t*)(p + 32) = 0x40;             /* p_filesz */
+                *(uint64_t*)(p + 40) = 0x40;             /* p_memsz  */
+            }
+            n = 0x180;
+            goto write_elf;
         } else {
             memset(buf, 0, sizeof(buf));
             *(uint32_t*)(buf + 0)  = 0x464C457Fu;        /* \x7fELF */
@@ -543,6 +570,7 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
             if (kfuzz_rand_below(r, 4) == 0) *(uint16_t*)(buf + 56) = (uint16_t)kfuzz_rand(r);
         }
 
+    write_elf:;
         /* Fresh scratch file each time (unlink first so there is no stale tail). */
         vfs_unlink(path);
         int fd = vfs_open(path, O_CREAT | O_RDWR);
@@ -588,8 +616,33 @@ static int t_uvm(kfuzz_rng_t* r, uint32_t iters) {
     struct { uint64_t va, len; } live[UVM_FZ_LIVE];
     int nlive = 0;
 
+    /* Addresses from the whole 64-bit space, not just regions we mmap'd: a
+     * kernel-half VA, the non-canonical gap, page 0, the user ceiling, and wild
+     * aligned values. mprotect/munmap must reject every one before touching a
+     * page table; the strict page-conservation oracle at the end catches a
+     * munmap that wrongly frees a frame it never owned (mm audit F2). */
+    static const uint64_t adversarial[] = {
+        0xFFFF900000000000ULL,      /* kernel heap window        */
+        0xFFFF800000000000ULL,      /* first kernel-half VA      */
+        0x0000800000000000ULL,      /* non-canonical gap / ceiling */
+        0x0000000000000000ULL,      /* page 0                    */
+        0xFFFFFFFFFFFFF000ULL,      /* wraps on addr+len         */
+        0xDEADBEEF000ULL,           /* wild but canonical-low    */
+    };
+
     for (uint32_t it = 0; it < iters; it++) {
-        switch (kfuzz_rand_below(r, 5)) {
+        switch (kfuzz_rand_below(r, 7)) {
+        case 5: {                                   /* adversarial munmap */
+            uint64_t va = adversarial[kfuzz_rand_below(r, 6)];
+            uvm_munmap(&as, va, (uint64_t)(1 + kfuzz_rand_below(r, 4)) * 4096);
+            break;
+        }
+        case 6: {                                   /* adversarial mprotect */
+            uint64_t va = adversarial[kfuzz_rand_below(r, 6)];
+            int prot = (kfuzz_rand(r) & 1) ? (PROT_READ | PROT_WRITE) : PROT_READ;
+            uvm_mprotect(&as, va, (uint64_t)(1 + kfuzz_rand_below(r, 4)) * 4096, prot);
+            break;
+        }
         case 0: {                                   /* mmap */
             uint64_t len = (1 + (uint64_t)kfuzz_rand_below(r, 8)) * 4096;
             int prot = PROT_READ | ((kfuzz_rand(r) & 1) ? PROT_WRITE : 0);
