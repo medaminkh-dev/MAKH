@@ -670,6 +670,76 @@ static int t_path(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 13. OOM rollback under allocation fault injection (KFUZZ v2)                 */
+/* -------------------------------------------------------------------------- */
+/*
+ * The error paths a plentiful-memory campaign never reaches. Every allocation
+ * succeeds when RAM is free, so rollback code — fork's page-table copy, heap
+ * expansion, mmap's map_anon — is dead weight the fuzzer cannot see. This
+ * target arms pmm_test_fail_after() so an allocation fails partway through a
+ * multi-page operation, then checks strict page conservation. A
+ * create -> op -> destroy sequence is net-zero whether the op succeeds or
+ * fails; a frame leaked on the rollback path breaks it. This is exactly the
+ * class the mm audit's fork-OOM (F4) and kheap-expand (F5) leaks fell into,
+ * and which v1 could not reach because it never made an allocation fail.
+ */
+static int t_oom(kfuzz_rng_t* r, uint32_t iters) {
+    for (uint32_t it = 0; it < iters; it++) {
+        uint32_t fail_at = kfuzz_rand_below(r, 6);   /* fail the (fail_at+1)-th alloc */
+        switch (kfuzz_rand_below(r, 3)) {
+        case 0: {                                    /* heap expansion (F5 class) */
+            /* A big kmalloc goes through kheap_expand via the real allocator, so
+             * the heap stays structured. A successful alloc legitimately grows
+             * the heap (not net-zero) — free it and move on; a *failed* one must
+             * have rolled back every page it mapped (buggy expand leaks them). */
+            size_t snap = pmm_get_free_memory();
+            pmm_test_fail_after(fail_at);
+            void* p = kmalloc((size_t)(1 + kfuzz_rand_below(r, 8)) * PAGE_SIZE);
+            pmm_test_fail_after(-1);
+            if (p) kfree(p);
+            else if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 1: {                                    /* fork page-table copy (F4 class) */
+            size_t snap = pmm_get_free_memory();
+            address_space_t parent, child;
+            if (vmspace_create(&parent) == 0) {
+                for (int j = 0; j < 2; j++) {        /* two pages, two PTs apart */
+                    void* f = pmm_alloc_page();
+                    if (!f) break;
+                    uint64_t pf = (uint64_t)(uintptr_t)f;
+                    page_setref(pf, 1);
+                    vmspace_map(&parent, 0x400000 + (uint64_t)j * 0x200000, pf, PAGE_WRITABLE);
+                }
+                pmm_test_fail_after(fail_at);
+                int rc = vmspace_fork(&parent, &child);
+                pmm_test_fail_after(-1);
+                if (rc == 0) vmspace_destroy(&child);
+                vmspace_destroy(&parent);
+            }
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 2: {                                    /* mmap rollback (map_anon) */
+            size_t snap = pmm_get_free_memory();
+            address_space_t as;
+            if (vmspace_create(&as) == 0) {
+                uint64_t cur = USER_MMAP_BASE;
+                pmm_test_fail_after(fail_at);
+                (void)uvm_mmap(&as, &cur, (1 + (uint64_t)kfuzz_rand_below(r, 6)) * 4096,
+                               PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE);
+                pmm_test_fail_after(-1);
+                vmspace_destroy(&as);
+            }
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        }
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -702,6 +772,7 @@ static const kfuzz_target_t g_targets[] = {
     { "elf",     t_elf,     KFUZZ_T_ELF,     NULL },
     { "uvm",     t_uvm,     KFUZZ_T_UVM,     NULL },
     { "path",    t_path,    KFUZZ_T_PATH,    NULL },
+    { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

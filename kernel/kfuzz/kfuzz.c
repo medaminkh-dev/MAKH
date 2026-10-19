@@ -33,6 +33,7 @@
 #include <pthread.h>
 #include <ktime.h>
 #include <mm/kheap.h>
+#include <mm/pmm.h>
 #include <lib/string.h>
 #include <vga.h>
 
@@ -205,6 +206,8 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
         sb.cleanup = NULL;
         terminal_set_quiet(0);    /* a target that muted the console (t_shell)
                                      must not leave it muted after a caught fault */
+        pmm_test_fail_after(-1);  /* a fault mid-injection (t_oom) skipped its own
+                                     disarm; never let it leak into the next target */
         if (res) {
             res->crashes++;
             res->last_crash_seed   = seed;
@@ -224,6 +227,7 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
     sb.cleanup = NULL;
     terminal_set_quiet(0);        /* belt-and-suspenders: no target leaves the
                                      console muted once it has returned */
+    pmm_test_fail_after(-1);      /* nor the allocation-fault injector armed */
 
     /* A target's own verdict counts. Several targets already compute a strict
      * oracle — page conservation (t_vmspace/t_uvm/t_elf), buffer guards
