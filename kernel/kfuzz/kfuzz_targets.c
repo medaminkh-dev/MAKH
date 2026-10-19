@@ -430,7 +430,7 @@ static int t_vfs(kfuzz_rng_t* r, uint32_t iters) {
             vnode_t* d = vfs_resolve("/fz");
             if (d && d->ops && d->ops->readdir) {
                 char nm[VFS_NAME_MAX + 1];
-                for (uint32_t i = 0; i < 64 && d->ops->readdir(d, i, nm) == 0; i++) { }
+                for (uint32_t i = 0; i < 64 && d->ops->readdir(d, i, nm, sizeof nm) == 0; i++) { }
             }
             break;
         }

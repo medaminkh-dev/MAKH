@@ -237,3 +237,39 @@ KTEST(ext2, truncate_to_zero) {
     KEXPECT_EQ((int)v2->size, 0);
     kfree(buf);
 }
+
+/* Audit F1: an ext2 name can be up to 255 bytes, but the VFS hands readdir a
+ * VFS_NAME_MAX+1 buffer. /mnt/longdir holds a 200-byte name next to short.txt;
+ * readdir must never write past the buffer (the guard behind it stays intact)
+ * and must only report names the VFS can represent and look up. */
+KTEST(ext2, readdir_long_name_is_bounded) {
+    vnode_t* dir = vfs_resolve("/mnt/longdir");
+    KASSERT_TEST(dir != NULL && dir->ops && dir->ops->readdir);
+    struct { char name[VFS_NAME_MAX + 1]; uint8_t guard[256]; } g;
+    int found_short = 0, entries = 0;
+    for (uint32_t i = 0; i < 16; i++) {
+        memset(&g, 0xA5, sizeof g);
+        if (dir->ops->readdir(dir, i, g.name, sizeof g.name) != 0) break;
+        entries++;
+        int intact = 1;
+        for (unsigned k = 0; k < sizeof g.guard; k++)
+            if (g.guard[k] != 0xA5) { intact = 0; break; }
+        KEXPECT_EQ(intact, 1);                       /* no write past the buffer */
+        int terminated = 0;
+        for (unsigned k = 0; k <= VFS_NAME_MAX; k++)
+            if (g.name[k] == '\0') { terminated = 1; break; }
+        KEXPECT_EQ(terminated, 1);                   /* NUL inside the buffer   */
+        if (terminated && strcmp(g.name, "short.txt") == 0) found_short = 1;
+    }
+    KEXPECT_EQ(found_short, 1);
+    KEXPECT_EQ(entries, 3);                          /* ".", "..", short.txt     */
+}
+
+/* Audit F1 follow-up: /mnt/longonly holds a single entry whose name is too long
+ * for readdir to list. Hiding it from readdir must not make the directory look
+ * empty: rmdir has to refuse, or the inode would be orphaned. */
+KTEST(ext2, rmdir_refuses_dir_with_only_long_name) {
+    KASSERT_TEST(vfs_resolve("/mnt/longonly") != NULL);
+    KEXPECT_NE(vfs_unlink("/mnt/longonly"), 0);
+    KEXPECT(vfs_resolve("/mnt/longonly") != NULL);
+}

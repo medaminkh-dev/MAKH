@@ -42,7 +42,10 @@ typedef struct vfs_ops {
     long (*write)(struct vnode* vn, const void* buf, size_t n, uint64_t off);
     struct vnode* (*lookup)(struct vnode* dir, const char* name);          /* child or NULL */
     struct vnode* (*create)(struct vnode* dir, const char* name, vtype_t t);/* new child    */
-    int  (*readdir)(struct vnode* dir, uint32_t index, char* name_out);     /* 0 / -1 at end */
+    /* Writes the index-th name (NUL-terminated, at most cap bytes incl. the
+     * NUL) to name_out. 0, or -1 past the end. Names longer than VFS_NAME_MAX
+     * are not reported, so every listed name can also be looked up. */
+    int  (*readdir)(struct vnode* dir, uint32_t index, char* name_out, size_t cap);
     int  (*unlink)(struct vnode* dir, const char* name);
     int  (*truncate)(struct vnode* vn, uint64_t len);
     int  (*rename)(struct vnode* olddir, const char* oldname,

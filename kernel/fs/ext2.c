@@ -227,7 +227,8 @@ static long ext2_read(vnode_t* vn, void* buf, size_t n, uint64_t off) {
  * so lookup and readdir share the walk. `want` is a name to match (lookup) or
  * NULL; `index` selects the nth entry (readdir). */
 static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
-                    uint32_t* out_ino, uint8_t* out_ftype, char* out_name) {
+                    uint32_t* out_ino, uint8_t* out_ftype, char* out_name, size_t cap,
+                    int all) {
     ext2_vinfo_t* vi = (ext2_vinfo_t*)dir->priv;
     if (!vi || dir->type != VNODE_DIR) return -1;
     ext2_fs_t* fs = vi->fs;
@@ -245,7 +246,9 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
             uint16_t rlen  = rd16(blk + o + 4);
             uint8_t  nlen  = blk[o + 6];
             uint8_t  ftype = blk[o + 7];
-            if (rlen < 8) break;                                 /* corrupt: stop */
+            /* A record must lie inside the block and hold its own name; a disk
+             * that says otherwise is corrupt (or hostile): stop, never over-read. */
+            if (rlen < 8 || o + rlen > fs->block_size || 8u + nlen > rlen) break;
             if (ino != 0 && nlen != 0) {
                 const char* name = (const char*)(blk + o + 8);
                 if (want) {
@@ -253,13 +256,15 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
                         *out_ino = ino; *out_ftype = ftype;
                         blk_free(blk); return 0;
                     }
-                } else if (seen == index) {
-                    uint8_t k = nlen; if (k > 254) k = 254;
-                    memcpy(out_name, name, k); out_name[k] = '\0';
-                    *out_ino = ino; *out_ftype = ftype;
-                    blk_free(blk); return 0;
+                } else if (all || nlen <= VFS_NAME_MAX) {      /* listable unless all  */
+                    if (seen == index) {
+                        size_t k = nlen; if (k + 1 > cap) k = cap ? cap - 1 : 0;
+                        if (cap) { memcpy(out_name, name, k); out_name[k] = '\0'; }
+                        *out_ino = ino; *out_ftype = ftype;
+                        blk_free(blk); return 0;
+                    }
+                    seen++;
                 }
-                seen++;
             }
             o += rlen;
         }
@@ -270,15 +275,15 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
 
 static vnode_t* ext2_lookup(vnode_t* dir, const char* name) {
     uint32_t ino; uint8_t ftype;
-    if (dir_walk(dir, name, 0, &ino, &ftype, NULL) != 0) return NULL;
+    if (dir_walk(dir, name, 0, &ino, &ftype, NULL, 0, 0) != 0) return NULL;
     (void)ftype;                                 /* type comes from the inode */
     ext2_vinfo_t* vi = (ext2_vinfo_t*)dir->priv;
     return make_vnode(vi->fs, ino);
 }
 
-static int ext2_readdir(vnode_t* dir, uint32_t index, char* name_out) {
+static int ext2_readdir(vnode_t* dir, uint32_t index, char* name_out, size_t cap) {
     uint32_t ino; uint8_t ftype;
-    if (dir_walk(dir, NULL, index, &ino, &ftype, name_out) != 0) return -1;
+    if (dir_walk(dir, NULL, index, &ino, &ftype, name_out, cap, 0) != 0) return -1;
     return 0;
 }
 
@@ -685,10 +690,11 @@ static int dir_remove_entry(vnode_t* dir, const char* name, uint32_t* out_ino) {
     return -ENOENT;
 }
 
-/* True if `dir` holds only "." and "..". */
+/* True if `dir` holds only "." and "..". Counts every entry, including names
+ * too long for readdir to list, so rmdir never orphans one. */
 static int dir_is_empty(vnode_t* dir) {
     char nm[256]; uint32_t ino; uint8_t ft; uint32_t idx = 0, real = 0;
-    while (dir_walk(dir, NULL, idx, &ino, &ft, nm) == 0) {
+    while (dir_walk(dir, NULL, idx, &ino, &ft, nm, sizeof nm, 1) == 0) {
         if (!(nm[0] == '.' && (nm[1] == '\0' || (nm[1] == '.' && nm[2] == '\0')))) real++;
         idx++;
     }
@@ -758,7 +764,7 @@ static int ext2_unlink(vnode_t* dir, const char* name) {
 
     /* Find the child first so we can handle a directory (rmdir) vs a file. */
     uint32_t ino = 0; uint8_t ft = 0;
-    if (dir_walk(dir, name, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    if (dir_walk(dir, name, 0, &ino, &ft, NULL, 0, 0) != 0) return -ENOENT;
     ext2_vinfo_t cvi;
     if (read_inode(fs, ino, &cvi) != 0) return -EIO;
 
@@ -798,13 +804,13 @@ static int ext2_rename(vnode_t* olddir, const char* oldname,
     ext2_fs_t* fs = ovi->fs;
 
     uint32_t ino = 0; uint8_t ft = 0;
-    if (dir_walk(olddir, oldname, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    if (dir_walk(olddir, oldname, 0, &ino, &ft, NULL, 0, 0) != 0) return -ENOENT;
     ext2_vinfo_t cvi;
     if (read_inode(fs, ino, &cvi) != 0) return -EIO;
     int is_dir = (cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR;
 
     uint32_t existing = 0;                                /* replace a target if present */
-    if (dir_walk(newdir, newname, 0, &existing, &ft, NULL) == 0) {
+    if (dir_walk(newdir, newname, 0, &existing, &ft, NULL, 0, 0) == 0) {
         if (ext2_unlink(newdir, newname) != 0) return -EEXIST;
     }
 
