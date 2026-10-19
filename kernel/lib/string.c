@@ -114,13 +114,15 @@ int strncmp(const char* s1, const char* s2, size_t n) {
 }
 
 char* strchr(const char* s, int c) {
-    while (*s) {
-        if (*s == (char)c) {
-            return (char*)s;
-        }
-        s++;
+    char ch = (char)c;
+    /* The terminating NUL is part of the string: strchr(s, '\0') must return a
+     * pointer to it, not NULL (C standard / POSIX). The old loop stopped at the
+     * terminator before testing it, so it wrongly returned NULL for c == 0.
+     * Found by KFUZZ (t_string case 3) once run_one honored the target verdict. */
+    for (;; s++) {
+        if (*s == ch) return (char*)s;
+        if (*s == '\0') return NULL;
     }
-    return NULL;
 }
 
 char* strrchr(const char* s, int c) {
