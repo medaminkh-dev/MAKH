@@ -85,18 +85,29 @@ long uvm_mmap(address_space_t* as, uint64_t* mmap_cur, uint64_t len,
     return (long)va;
 }
 
+/* True if [addr, addr+len) is a page-aligned range lying wholly in the user
+ * half (page 0 excluded), with no overflow. Guards the page-table walkers
+ * against ring-3 handing us a kernel or non-canonical address (Audit F2). */
+#define USER_VA_END 0x0000800000000000ULL   /* first kernel-half VA (PML4 slot 256) */
+static int user_va_range_ok(uint64_t addr, uint64_t len) {
+    uint64_t end;
+    if (addr & 0xFFF) return 0;
+    if (len == 0 || __builtin_add_overflow(addr, len, &end)) return 0;
+    return addr >= 0x1000ULL && end <= USER_VA_END;
+}
+
 int uvm_munmap(address_space_t* as, uint64_t addr, uint64_t len) {
-    if (addr & 0xFFF) return -EINVAL;
-    len = PAGE_UP(len);
-    for (uint64_t off = 0; off < len; off += 4096)
+    uint64_t rlen = PAGE_UP(len);
+    if (!user_va_range_ok(addr, rlen)) return -EINVAL;
+    for (uint64_t off = 0; off < rlen; off += 4096)
         vmspace_unmap(as, addr + off);                   /* holes are fine */
     return 0;
 }
 
 int uvm_mprotect(address_space_t* as, uint64_t addr, uint64_t len, int prot) {
-    if (addr & 0xFFF) return -EINVAL;
-    len = PAGE_UP(len);
-    for (uint64_t off = 0; off < len; off += 4096)
+    uint64_t rlen = PAGE_UP(len);
+    if (!user_va_range_ok(addr, rlen)) return -EINVAL;
+    for (uint64_t off = 0; off < rlen; off += 4096)
         if (vmspace_protect(as, addr + off, prot_to_flags(prot)) != 0)
             return -ENOMEM;                              /* an unmapped page */
     return 0;

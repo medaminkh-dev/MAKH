@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <proc_internal.h>
 #include <signal.h>
+#include <mm/vmm.h>                  /* PAGE_USER, P2V, VMM_PML4_INDEX */
+#include <mm/kheap.h>               /* HEAP_START_VIRTUAL (a mapped kernel VA) */
 
 /* ---- engine-level: operate on a bare address space ---------------------- */
 
@@ -104,4 +106,43 @@ KTEST(uvm, user_mprotect_read_only_faults_on_write) {
     int status = -1;
     sys_waitpid(pid, &status);
     KEXPECT_EQ(status, 128 + SIGSEGV);   /* write to RO page -> SIGSEGV (139) */
+}
+
+/* ---- Audit F2: mprotect/munmap must not reach kernel address space -------
+ * uvm_mprotect/uvm_munmap only checked page alignment, then walked the page
+ * tables at the given VA. The walker (leaf_slot -> ensure) sets PAGE_USER on
+ * every *present* table entry it crosses, and PML4 slots 256..511 point at the
+ * shared kernel page tables. So a ring-3 mprotect/munmap on a kernel address
+ * could flip kernel mappings to user-accessible in every process (privilege
+ * escalation), or free a kernel frame. These assert the engine now rejects any
+ * range outside the user half before touching a single table. */
+KTEST(uvm, mprotect_rejects_kernel_addresses) {
+    size_t base = pmm_get_free_memory();
+    address_space_t as;
+    KASSERT_TEST(vmspace_create(&as) == 0);
+    uint64_t* pml4 = (uint64_t*)P2V(as.pml4_phys);
+
+    /* A mapped kernel VA (the kernel heap window). Its PML4 slot is present but
+     * must stay supervisor-only. */
+    uint64_t kva = HEAP_START_VIRTUAL;
+    unsigned kslot = VMM_PML4_INDEX(kva);
+    KEXPECT_EQ((int)(pml4[kslot] & PAGE_USER), 0);           /* supervisor to start */
+
+    KEXPECT_EQ(uvm_mprotect(&as, kva, 4096, PROT_READ), -EINVAL);
+    KEXPECT_EQ(uvm_munmap(&as, kva, 4096), -EINVAL);
+    KEXPECT_EQ((int)(pml4[kslot] & PAGE_USER), 0);           /* still supervisor */
+
+    /* The non-canonical gap / overflow: addr+len wraps or crosses USER_VA_END. */
+    KEXPECT_EQ(uvm_mprotect(&as, 0x0000800000000000ULL - 4096, 2 * 4096, PROT_READ), -EINVAL);
+    KEXPECT_EQ(uvm_munmap(&as, 0xFFFFFFFFFFFFF000ULL, 4096), -EINVAL);
+
+    /* A legitimate user mapping in the same space still works (no regression). */
+    uint64_t mmc = USER_MMAP_BASE;
+    long a = uvm_mmap(&as, &mmc, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE);
+    KASSERT_TEST(a > 0);
+    KEXPECT_EQ(uvm_mprotect(&as, (uint64_t)a, 4096, PROT_READ), 0);
+    KEXPECT_EQ(uvm_munmap(&as, (uint64_t)a, 4096), 0);
+
+    vmspace_destroy(&as);
+    KEXPECT_EQ(pmm_get_free_memory(), base);
 }

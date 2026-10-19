@@ -51,6 +51,11 @@ static uint64_t* ensure(uint64_t* table, int idx, int create) {
 
 /* Pointer to the leaf PTE slot for `va`, creating the walk if asked. */
 static uint64_t* leaf_slot(uint64_t pml4_phys, uint64_t va, int create) {
+    /* Only the lower (user) half is a space's own: PML4 slots 256..511 are the
+     * shared kernel tables. Never walk into them — ensure() would taint the
+     * shared entries with PAGE_USER, and this is the hard backstop behind the
+     * range checks in uvm.c (Audit F2). A non-canonical VA also lands here. */
+    if (VMM_PML4_INDEX(va) >= 256) return NULL;
     uint64_t* pml4 = tbl(pml4_phys);
     uint64_t* pdpt = ensure(pml4, VMM_PML4_INDEX(va), create);
     if (!pdpt) return NULL;
