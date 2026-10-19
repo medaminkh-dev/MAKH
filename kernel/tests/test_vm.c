@@ -17,6 +17,7 @@
 #include <fs/vfs.h>
 #include <elf.h>
 #include <errno.h>
+#include <irq.h>
 
 #define TEST_VA  0x0000200000010000ULL   /* inside the user PML4 slot (64) */
 
@@ -187,4 +188,35 @@ KTEST(vm, elf_overlapping_segments_no_frame_leak) {
     vmspace_destroy(&as);
     KEXPECT_EQ(pmm_get_free_memory(), snap);        /* no orphaned frame */
     vfs_unlink(path);
+}
+
+
+/* Audit F4: a fork that runs out of memory mid-copy must leak nothing. The
+ * parent is mapped across two page tables (VAs 4 MiB apart -> two PD entries);
+ * injection fails the allocation for the second PT, after the first PT and its
+ * leaf's COW incref are already built. copy_level() must unwind that partial
+ * subtree (free the tables, drop the leaf ref) so create->fork(fail)->destroy
+ * returns every page. Runs IRQs-off so the fault lands on exactly the fork. */
+KTEST(vm, fork_oom_rolls_back_cleanly) {
+    address_space_t parent;
+    KASSERT_TEST(vmspace_create(&parent) == 0);
+    void* fa = pmm_alloc_page(); void* fb = pmm_alloc_page();
+    KASSERT_TEST(fa && fb);
+    page_setref((uint64_t)(uintptr_t)fa, 1);
+    page_setref((uint64_t)(uintptr_t)fb, 1);
+    KASSERT_TEST(vmspace_map(&parent, 0x400000, (uint64_t)(uintptr_t)fa, PAGE_WRITABLE) == 0);
+    KASSERT_TEST(vmspace_map(&parent, 0x600000, (uint64_t)(uintptr_t)fb, PAGE_WRITABLE) == 0);
+
+    size_t snap = pmm_get_free_memory();
+    address_space_t child;
+    irqflags_t fl = local_irq_save();
+    pmm_test_fail_after(4);          /* child PML4, PDPT, PD, PT#1 ok; PT#2 fails */
+    int r = vmspace_fork(&parent, &child);
+    pmm_test_fail_after(-1);         /* disarm */
+    local_irq_restore(fl);
+
+    KEXPECT_EQ(r, -1);                               /* fork reported OOM        */
+    KEXPECT_EQ(pmm_get_free_memory(), snap);         /* ...and leaked no page    */
+
+    vmspace_destroy(&parent);
 }

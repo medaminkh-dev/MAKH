@@ -113,12 +113,18 @@ uint64_t vmspace_phys(address_space_t* as, uint64_t va) {
 /* fork: deep-copy the user page-table structure, share data frames as COW     */
 /* -------------------------------------------------------------------------- */
 
+static void free_level(uint64_t phys, int level);   /* fwd: used for OOM rollback */
+
 /* Copy one user table level. level 3 = PDPT, 2 = PD, 1 = PT (leaves). Returns
- * the new table's physical address, or 0 on OOM. */
+ * the new table's physical address, or 0 on OOM. On failure it frees the whole
+ * partial subtree it built (tables + the leaf refs it took), so a fork that
+ * runs out of memory leaks nothing — the parent keeps its (now-COW) pages,
+ * which self-heal on the next write (Audit F4). */
 static uint64_t copy_level(uint64_t src_phys, int level) {
     void* f = pmm_alloc_page();
     if (!f) return 0;
-    uint64_t* dst = tbl((uint64_t)(uintptr_t)f);
+    uint64_t dst_phys = (uint64_t)(uintptr_t)f;
+    uint64_t* dst = tbl(dst_phys);
     uint64_t* src = tbl(src_phys);
     memset(dst, 0, 4096);
 
@@ -135,11 +141,11 @@ static uint64_t copy_level(uint64_t src_phys, int level) {
             page_incref(phys);
         } else {
             uint64_t sub = copy_level(src[i] & PTE_PHYS_MASK, level - 1);
-            if (!sub) return 0;                 /* caller frees partial tree */
+            if (!sub) { free_level(dst_phys, level); return 0; }  /* roll back */
             dst[i] = (src[i] & 0xFFF) | sub;
         }
     }
-    return (uint64_t)(uintptr_t)f;
+    return dst_phys;
 }
 
 int vmspace_fork(address_space_t* parent, address_space_t* child) {

@@ -217,7 +217,18 @@ void pmm_reserve_region(uint64_t phys_addr, uint64_t len) {
  * Uses first-fit algorithm
  * Returns: Physical address of allocated page, or NULL if out of memory
  */
+/* Test-only fault injection: when armed with pmm_test_fail_after(n), the next n
+ * single-page allocations succeed and the one after that returns NULL (once),
+ * then it disarms. Lets KTESTs drive out-of-memory rollback paths deterministic-
+ * ally. Disabled (-1) in all normal operation; nothing calls the setter at boot. */
+static int64_t pmm_fail_in = -1;
+void pmm_test_fail_after(int64_t n) { pmm_fail_in = n; }
+
 void* pmm_alloc_page(void) {
+    if (pmm_fail_in >= 0) {
+        if (pmm_fail_in == 0) { pmm_fail_in = -1; return NULL; }
+        pmm_fail_in--;
+    }
     /* The bitmap is shared with any preemptible caller, so guard it. */
     irqflags_t f = local_irq_save();
     for (uint64_t page = 0; page < max_page_num; page++) {
