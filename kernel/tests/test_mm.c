@@ -173,3 +173,26 @@ KTEST(kheap, integrity_walker_detects_smashed_footer) {
     KEXPECT_EQ(kheap_check(), 0);
     kfree(p);
 }
+
+/* Audit F5: kheap_expand() maps pages one at a time; a failure partway used to
+ * return NULL while leaving the already-mapped pages mapped and their frames
+ * allocated, and without advancing heap_end — so the range was stranded and the
+ * frames leaked. It must be atomic: on failure, unmap and free every page it
+ * mapped in that call. Inject a failure mid-expansion and assert page
+ * conservation (the test wrapper drives kheap_expand directly). */
+KTEST(kheap, expand_failure_is_atomic) {
+    size_t snap = pmm_get_free_memory();
+    irqflags_t f = local_irq_save();
+    pmm_test_fail_after(2);              /* pages 1,2 map; page 3 fails */
+    void* r = kheap_test_expand(5);
+    pmm_test_fail_after(-1);
+    local_irq_restore(f);
+    KEXPECT(r == NULL);                             /* expansion reported failure */
+    KEXPECT_EQ(pmm_get_free_memory(), snap);        /* ...and freed pages 1 and 2 */
+    /* heap_end is left untouched on failure, so ordinary kmalloc still grows
+     * the heap correctly afterwards (the success path runs on every kmalloc). */
+    void* p = kmalloc(64);
+    KEXPECT(p != NULL);
+    KEXPECT_EQ(kheap_check(), 0);                   /* heap chain still intact */
+    kfree(p);
+}

@@ -54,6 +54,9 @@ void kheap_init(void);
 /* Allocate memory (malloc equivalent) */
 void* kmalloc(size_t size);
 
+/* Test-only: expand the heap by `pages`, or NULL on failure (atomic). */
+void* kheap_test_expand(size_t pages);
+
 /* Allocate zeroed memory (calloc equivalent) */
 void* kcalloc(size_t num, size_t size);
 

@@ -91,20 +91,22 @@ static void* kheap_expand(size_t pages) {
     uint64_t old_end = heap_end;
     uint64_t new_end = heap_end + bytes_needed;
     
-    /* Map new pages */
+    /* Map new pages. The call is all-or-nothing: if any page in the run cannot
+     * be allocated or mapped, unmap and free every page already mapped by this
+     * call before returning NULL, and leave heap_end untouched. Otherwise a
+     * partial expansion would leak those frames and strand the virtual range,
+     * so the next expansion would try to map the same addresses again (F5). */
     for (uint64_t addr = old_end; addr < new_end; addr += PAGE_SIZE) {
-        /* Allocate physical page */
         void* phys_page = pmm_alloc_page();
-        if (phys_page == NULL) {
-            /* Failed - cleanup already mapped pages? */
-            /* For simplicity, we just return NULL */
-            return NULL;
-        }
-        
-        /* Map to virtual address */
-        if (vmm_map_page(addr, (uint64_t)(uintptr_t)phys_page, 
+        if (phys_page == NULL ||
+            vmm_map_page(addr, (uint64_t)(uintptr_t)phys_page,
                          PAGE_PRESENT | PAGE_WRITABLE) != 0) {
-            pmm_free_page(phys_page);
+            if (phys_page) pmm_free_page(phys_page);     /* this page: alloc'd, not mapped */
+            for (uint64_t u = old_end; u < addr; u += PAGE_SIZE) {
+                uint64_t up = vmm_get_physical(u);
+                vmm_unmap_page(u);
+                if (up) pmm_free_page((void*)(uintptr_t)up);
+            }
             return NULL;
         }
     }
@@ -116,6 +118,10 @@ static void* kheap_expand(size_t pages) {
     
     return (void*)old_end;
 }
+
+/* Test-only: drive kheap_expand() directly so a KTEST can inject an allocation
+ * failure mid-run and verify the expansion is atomic (Audit F5). */
+void* kheap_test_expand(size_t pages) { return kheap_expand(pages); }
 
 /**
  * find_free_block - Find a free block using first-fit strategy
