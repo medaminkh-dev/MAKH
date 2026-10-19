@@ -25,4 +25,8 @@ const char* cmdline_get(void);
 /* Returns non-zero if the whitespace-separated token `flag` is present. */
 int cmdline_has(const char* flag);
 
+/* Copies the value of a "key=value" token into out (NUL-terminated, truncated
+ * to outsz-1). Returns non-zero if the key is present with a non-empty value. */
+int cmdline_value(const char* key, char* out, size_t outsz);
+
 #endif /* MAKHOS_CMDLINE_H */
