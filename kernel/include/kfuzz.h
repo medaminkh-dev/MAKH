@@ -12,7 +12,7 @@
 #include <types.h>
 
 /* Callee-saved regs + rsp + return address (see kernel/kfuzz/jmp.asm). */
-typedef uint64_t kfuzz_jmp_buf[8];
+typedef uint64_t kfuzz_jmp_buf[9];   /* rbx rbp r12 r13 r14 r15 rsp ret rflags */
 int  kfuzz_setjmp(kfuzz_jmp_buf buf);
 void kfuzz_longjmp(kfuzz_jmp_buf buf, int val) __attribute__((noreturn));
 

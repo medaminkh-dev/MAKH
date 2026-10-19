@@ -12,6 +12,7 @@
 #include <ktest.h>
 #include <kfuzz.h>
 #include <mm/kheap.h>
+#include <irq.h>
 
 /* -------- core mechanics -------- */
 
@@ -50,6 +51,39 @@ KTEST(kfuzz, setjmp_longjmp_round_trips) {
         KASSERT_TEST(0);                        /* unreachable */
     }
     KEXPECT_EQ(v, 42);                          /* came back via longjmp */
+}
+
+/* Audit F6: a real fault reaches kfuzz_longjmp through an interrupt gate (IF
+ * cleared), but the recovery must land in exactly the interrupt state setjmp
+ * captured, not a blanket sti. If the harness were inside a critical section at
+ * setjmp, an unconditional sti would reopen it early. These verify longjmp
+ * restores IF for both the enabled and the disabled case. */
+static inline int read_if(void) {
+    unsigned long f;
+    __asm__ volatile("pushfq; pop %0" : "=r"(f) :: "memory");
+    return (int)((f >> 9) & 1);
+}
+KTEST(kfuzz, longjmp_restores_interrupt_flag) {
+    irqflags_t saved = local_irq_save();        /* leave the system as found   */
+
+    kfuzz_jmp_buf jb;
+    volatile int stage = 0, if_enabled = -1, if_disabled = -1;
+
+    __asm__ volatile("sti");                    /* IF = 1 at setjmp            */
+    (void)kfuzz_setjmp(jb);
+    if (stage == 0) { stage = 1; kfuzz_longjmp(jb, 1); }
+    if_enabled = read_if();                     /* must be 1                   */
+
+    __asm__ volatile("cli");                    /* IF = 0 at setjmp            */
+    kfuzz_jmp_buf jb2;
+    volatile int stage2 = 0;
+    (void)kfuzz_setjmp(jb2);
+    if (stage2 == 0) { stage2 = 1; kfuzz_longjmp(jb2, 1); }
+    if_disabled = read_if();                    /* must be 0 (old code: 1)     */
+
+    local_irq_restore(saved);
+    KEXPECT_EQ(if_enabled, 1);
+    KEXPECT_EQ(if_disabled, 0);
 }
 
 /* -------- the ring-0 sandbox catches and recovers from a real fault -------- */

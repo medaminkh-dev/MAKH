@@ -13,7 +13,7 @@
 ;                                                 the longjmp value on return
 ;   void kfuzz_longjmp(kfuzz_jmp_buf buf, int val);
 ;
-; jmp_buf layout (8 qwords): rbx rbp r12 r13 r14 r15 rsp ret
+; jmp_buf layout (9 qwords): rbx rbp r12 r13 r14 r15 rsp ret rflags
 ; =============================================================================
 
 global kfuzz_setjmp
@@ -30,6 +30,9 @@ kfuzz_setjmp:
     mov [rdi + 48], rax
     mov rax, [rsp]              ; return address
     mov [rdi + 56], rax
+    pushfq                      ; caller's RFLAGS (captures its IF for longjmp)
+    pop rax
+    mov [rdi + 64], rax
     xor eax, eax               ; first return: 0
     ret
 
@@ -46,7 +49,14 @@ kfuzz_longjmp:
     jnz .go
     mov eax, 1                 ; ...never 0 (longjmp(buf,0) returns 1)
 .go:
-    ; A longjmp always recovers from a trap taken through an interrupt gate,
-    ; which cleared IF. Re-enable interrupts before resuming the harness.
+    ; A fault is taken through an interrupt gate, which clears IF. Recovery must
+    ; land in exactly the IF state setjmp captured, not blindly enable: if the
+    ; harness was in a critical section (IF=0) at setjmp, re-enabling here would
+    ; reopen it early (see irq.h: restore the saved flags, never a bare sti).
+    test qword [rdi + 64], 0x200   ; IF (bit 9) of the saved RFLAGS
+    jz .irq_off
     sti
+    jmp [rdi + 56]
+.irq_off:
+    cli
     jmp [rdi + 56]
