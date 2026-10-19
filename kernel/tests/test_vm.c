@@ -14,6 +14,9 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <lib/string.h>
+#include <fs/vfs.h>
+#include <elf.h>
+#include <errno.h>
 
 #define TEST_VA  0x0000200000010000ULL   /* inside the user PML4 slot (64) */
 
@@ -125,4 +128,63 @@ KTEST(mmio, window_is_high_and_shared) {
     vmspace_destroy(&as);
 
     pmm_free_page(f);
+}
+
+
+/* Audit F3: two PT_LOAD segments whose pages overlap must not leak a frame.
+ * The loader allocates a fresh frame per page and vmspace_map()s it; if a later
+ * segment maps a page an earlier one already backed, the old frame must be
+ * released, not orphaned. Oracle: create -> load -> destroy is net-zero pages.
+ * The two segments here (vaddr 0x400000 and 0x400800) share page 0x400000. */
+#ifndef O_RDWR
+#define O_RDWR  0x0002
+#endif
+#ifndef O_CREAT
+#define O_CREAT 0x0040
+#endif
+KTEST(vm, elf_overlapping_segments_no_frame_leak) {
+    uint8_t elf[0x300];
+    memset(elf, 0, sizeof elf);
+    *(uint32_t*)(elf + 0)  = 0x464C457Fu;      /* \x7fELF           */
+    elf[4] = 2; elf[5] = 1; elf[6] = 1;        /* ELFCLASS64, LE, v1 */
+    *(uint16_t*)(elf + 16) = 2;                /* ET_EXEC            */
+    *(uint16_t*)(elf + 18) = 0x3E;             /* x86-64             */
+    *(uint64_t*)(elf + 24) = 0x400000ULL;      /* e_entry            */
+    *(uint64_t*)(elf + 32) = 64;               /* e_phoff            */
+    *(uint16_t*)(elf + 54) = 56;               /* e_phentsize        */
+    *(uint16_t*)(elf + 56) = 2;                /* e_phnum            */
+    uint8_t* p0 = elf + 64;
+    *(uint32_t*)(p0 + 0)  = 1;                 /* PT_LOAD            */
+    *(uint32_t*)(p0 + 4)  = 6;                 /* RW                 */
+    *(uint64_t*)(p0 + 8)  = 0x200;             /* p_offset           */
+    *(uint64_t*)(p0 + 16) = 0x400000ULL;       /* p_vaddr            */
+    *(uint64_t*)(p0 + 32) = 0x40;              /* p_filesz           */
+    *(uint64_t*)(p0 + 40) = 0x40;              /* p_memsz            */
+    uint8_t* p1 = elf + 120;
+    *(uint32_t*)(p1 + 0)  = 1;                 /* PT_LOAD            */
+    *(uint32_t*)(p1 + 4)  = 6;                 /* RW                 */
+    *(uint64_t*)(p1 + 8)  = 0x240;             /* p_offset           */
+    *(uint64_t*)(p1 + 16) = 0x400800ULL;       /* same page 0x400000 */
+    *(uint64_t*)(p1 + 32) = 0x40;              /* p_filesz           */
+    *(uint64_t*)(p1 + 40) = 0x40;              /* p_memsz            */
+    for (int i = 0; i < 0x40; i++) { elf[0x200 + i] = 0x11; elf[0x240 + i] = 0x22; }
+
+    const char* path = "/elf_overlap";
+    vfs_unlink(path);
+    int fd = vfs_open(path, O_CREAT | O_RDWR);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, elf, 0x280), 0x280);
+    vfs_close(fd);
+    vnode_t* vn = vfs_resolve(path);
+    KASSERT_TEST(vn != NULL);
+
+    size_t snap = pmm_get_free_memory();
+    address_space_t as;
+    KASSERT_TEST(vmspace_create(&as) == 0);
+    uint64_t entry = 0;
+    int r = elf_load(vn, &as, &entry, NULL);
+    KEXPECT_EQ(r, 0);                               /* a valid (if odd) ELF loads */
+    vmspace_destroy(&as);
+    KEXPECT_EQ(pmm_get_free_memory(), snap);        /* no orphaned frame */
+    vfs_unlink(path);
 }

@@ -90,6 +90,14 @@ int vmspace_create(address_space_t* as) {
 int vmspace_map(address_space_t* as, uint64_t va, uint64_t phys, uint64_t flags) {
     uint64_t* slot = leaf_slot(as->pml4_phys, va, 1);
     if (!slot) return -1;
+    /* Replacing a live mapping with a *different* frame (e.g. overlapping ELF
+     * PT_LOAD segments) must release the old one, or it is orphaned until the
+     * space dies — the slot only remembers the last frame (Audit F3). A re-map
+     * of the same frame (the W^X re-protect pass) keeps its refcount. */
+    if ((*slot & PAGE_PRESENT)) {
+        uint64_t old = *slot & PTE_PHYS_MASK;
+        if (old != (phys & PTE_PHYS_MASK)) page_decref(old);
+    }
     *slot = (phys & PTE_PHYS_MASK) | (flags & 0xFFF) | (flags & PAGE_NO_EXECUTE) |
             PAGE_PRESENT | PAGE_USER;
     return 0;
