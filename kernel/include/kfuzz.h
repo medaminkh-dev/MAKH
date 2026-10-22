@@ -39,8 +39,9 @@ typedef enum {
     KFUZZ_T_PATH   = 1u << 12,  /* path canonicalisation (Phase 20-C)            */
     KFUZZ_T_OOM    = 1u << 13,  /* OOM rollback under allocation fault injection (v2) */
     KFUZZ_T_UACCESS= 1u << 14,  /* copy_to/from_user with adversarial pointers (v2.4) */
+    KFUZZ_T_EXT2   = 1u << 15,  /* ext2 superblock geometry vs the mount gate (v2.4) */
     KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10) |
-                     (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14),
+                     (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 15),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 

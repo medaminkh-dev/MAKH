@@ -818,6 +818,54 @@ static int t_uaccess(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 15. ext2 geometry: adversarial superblock geometry vs the mount gate         */
+/* -------------------------------------------------------------------------- */
+/*
+ * AUD-05 was an ext2 mount that read s_log_block_size / blocks_per_group /
+ * inodes_per_group straight from an untrusted superblock and used them raw:
+ * block_size = 1024 << log_bs (a shift wider than the word for a large log) and,
+ * on the first inode lookup, group = (ino-1) / inodes_per_group — a divide by
+ * zero when that field is 0. The fix is ext2_geometry_ok(), the gate mount now
+ * consults before any shift or division.
+ *
+ * This target models that gate. It throws adversarial geometry at
+ * ext2_geometry_ok and, ONLY when the gate accepts (exactly as mount then
+ * proceeds), performs the same shift and the same inode/block-group divisions
+ * the driver performs. The divisions are the teeth: if the gate is ever
+ * weakened to admit a zero divisor — its pre-AUD-05 state was no gate at all —
+ * a division raises #DE (vector 0), which the ring-0 sandbox catches as a
+ * finding; a block_size the gate let through that is not a MAKH-supported power
+ * of two trips the explicit oracle. On the fixed gate every admitted geometry
+ * is safe, so a campaign runs clean.
+ */
+static int t_ext2geo(kfuzz_rng_t* r, uint32_t iters) {
+    for (uint32_t it = 0; it < iters; it++) {
+        /* Draw geometry the way a malformed superblock presents it: 0 and huge
+         * shift counts deliberately frequent, the rest wild. */
+        uint32_t log_bs = (kfuzz_rand(r) & 1) ? kfuzz_rand_below(r, 64)   /* huge shift */
+                                              : kfuzz_rand_below(r, 4);   /* near-valid */
+        uint32_t bpg = (kfuzz_rand(r) & 3) ? (uint32_t)kfuzz_rand(r) : 0; /* ~1/4 zero  */
+        uint32_t ipg = (kfuzz_rand(r) & 3) ? (uint32_t)kfuzz_rand(r) : 0; /* ~1/4 zero  */
+
+        if (!ext2_geometry_ok(log_bs, bpg, ipg)) continue;   /* mount would abort */
+
+        /* Gate admitted it: run exactly what the driver runs next. volatile so
+         * the divisions cannot be optimised away — they are the AUD-05 teeth. */
+        volatile uint32_t block_size = 1024u << log_bs;       /* safe iff log_bs<=2 */
+        volatile uint32_t spb        = block_size / 512u;
+        uint32_t ino   = 1u + (uint32_t)kfuzz_rand(r);
+        uint32_t block =       (uint32_t)kfuzz_rand(r);
+        volatile uint32_t group     = (ino - 1u) / ipg;       /* read_inode's divide */
+        volatile uint32_t blk_group = block / bpg;            /* bitmap-group divide */
+        (void)group; (void)blk_group;
+
+        /* A block_size the gate let through must be one MAKH supports (1/2/4 KiB). */
+        if (spb != 2u && spb != 4u && spb != 8u) return -1;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -852,6 +900,7 @@ static const kfuzz_target_t g_targets[] = {
     { "path",    t_path,    KFUZZ_T_PATH,    NULL },
     { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
     { "uaccess", t_uaccess, KFUZZ_T_UACCESS, NULL },
+    { "ext2geo", t_ext2geo, KFUZZ_T_EXT2,    NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 
