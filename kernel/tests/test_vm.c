@@ -156,14 +156,14 @@ KTEST(vm, elf_overlapping_segments_no_frame_leak) {
     *(uint16_t*)(elf + 56) = 2;                /* e_phnum            */
     uint8_t* p0 = elf + 64;
     *(uint32_t*)(p0 + 0)  = 1;                 /* PT_LOAD            */
-    *(uint32_t*)(p0 + 4)  = 6;                 /* RW                 */
+    *(uint32_t*)(p0 + 4)  = 5;                 /* R+X                 */
     *(uint64_t*)(p0 + 8)  = 0x200;             /* p_offset           */
     *(uint64_t*)(p0 + 16) = 0x400000ULL;       /* p_vaddr            */
     *(uint64_t*)(p0 + 32) = 0x40;              /* p_filesz           */
     *(uint64_t*)(p0 + 40) = 0x40;              /* p_memsz            */
     uint8_t* p1 = elf + 120;
     *(uint32_t*)(p1 + 0)  = 1;                 /* PT_LOAD            */
-    *(uint32_t*)(p1 + 4)  = 6;                 /* RW                 */
+    *(uint32_t*)(p1 + 4)  = 5;                 /* R+X                 */
     *(uint64_t*)(p1 + 8)  = 0x240;             /* p_offset           */
     *(uint64_t*)(p1 + 16) = 0x400800ULL;       /* same page 0x400000 */
     *(uint64_t*)(p1 + 32) = 0x40;              /* p_filesz           */
@@ -219,4 +219,47 @@ KTEST(vm, fork_oom_rolls_back_cleanly) {
     KEXPECT_EQ(pmm_get_free_memory(), snap);         /* ...and leaked no page    */
 
     vmspace_destroy(&parent);
+}
+
+/* AUD-04: the ELF entry point must land inside an executable (PF_X) PT_LOAD
+ * segment. A malformed e_entry pointing outside any loaded executable segment
+ * is rejected (-ENOEXEC) rather than starting the process at a bad RIP. */
+static int build_and_load_elf(uint32_t seg_flags, uint64_t e_entry) {
+    uint8_t elf[0x200];
+    memset(elf, 0, sizeof elf);
+    *(uint32_t*)(elf + 0)  = 0x464C457Fu;
+    elf[4] = 2; elf[5] = 1; elf[6] = 1;
+    *(uint16_t*)(elf + 16) = 2;                 /* ET_EXEC */
+    *(uint16_t*)(elf + 18) = 0x3E;
+    *(uint64_t*)(elf + 24) = e_entry;           /* e_entry */
+    *(uint64_t*)(elf + 32) = 64;                /* e_phoff */
+    *(uint16_t*)(elf + 54) = 56;
+    *(uint16_t*)(elf + 56) = 1;                 /* e_phnum = 1 */
+    uint8_t* p = elf + 64;
+    *(uint32_t*)(p + 0)  = 1;                    /* PT_LOAD */
+    *(uint32_t*)(p + 4)  = seg_flags;
+    *(uint64_t*)(p + 8)  = 0x100;                /* p_offset */
+    *(uint64_t*)(p + 16) = 0x400000ULL;         /* p_vaddr  */
+    *(uint64_t*)(p + 32) = 0x40;                 /* p_filesz */
+    *(uint64_t*)(p + 40) = 0x40;                 /* p_memsz  */
+    const char* path = "/elf_entry";
+    vfs_unlink(path);
+    int fd = vfs_open(path, O_CREAT | O_RDWR);
+    if (fd < 0) return -1;
+    vfs_fd_write(fd, elf, 0x180); vfs_close(fd);
+    vnode_t* vn = vfs_resolve(path);
+    if (!vn) return -1;
+    address_space_t as; if (vmspace_create(&as) != 0) return -1;
+    uint64_t entry = 0;
+    int r = elf_load(vn, &as, &entry, NULL);
+    vmspace_destroy(&as); vfs_unlink(path);
+    return r;
+}
+KTEST(vm, elf_entry_must_be_in_executable_segment) {
+    /* entry at the start of an R+X segment: valid */
+    KEXPECT_EQ(build_and_load_elf(5, 0x400000ULL), 0);
+    /* entry past the segment's memsz: rejected */
+    KEXPECT_EQ(build_and_load_elf(5, 0x400000ULL + 0x80000ULL), -ENOEXEC);
+    /* entry inside a NON-executable (R+W) segment: rejected */
+    KEXPECT_EQ(build_and_load_elf(6, 0x400000ULL), -ENOEXEC);
 }
