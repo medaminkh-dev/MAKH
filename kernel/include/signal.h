@@ -76,6 +76,11 @@ int  signal_pending(void);
  */
 int  signal_take_terminate(void);
 
+/* Returns 1 if a sigreturn-restored (rip, rsp) is safe to return to user with:
+ * both canonical user-half addresses, rip off page 0. A non-canonical rip would
+ * make the SYSRET return #GP in ring 0 (CVE-2012-0217 class). AUD-02/03b. */
+int  signal_restore_ok(uint64_t rip, uint64_t rsp);
+
 /* Return-to-ring-3 hook: terminate the current user process (128+signo) if it
  * has a pending fatal signal with NO user handler. Called from the timer-preempt
  * (IRQ) path, which cannot build a handler frame; handler'd signals are left
