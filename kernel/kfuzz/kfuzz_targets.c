@@ -33,6 +33,7 @@
 #include <signal.h>
 #include <elf.h>
 #include <mm/uvm.h>
+#include <arch/usermode.h>
 #include <syscall.h>
 
 /* -------------------------------------------------------------------------- */
@@ -793,6 +794,30 @@ static int t_oom(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 14. uaccess: copy_to/from_user with adversarial user pointers (KFUZZ v2.4)   */
+/* -------------------------------------------------------------------------- */
+/*
+ * copy_to_user / copy_from_user must survive any user pointer: a bad source
+ * faults the load, a read-only or unmapped destination faults the store, and
+ * both must recover to -EFAULT, never fault the kernel. The fault recovery is
+ * a single fixup site, so a miss (e.g. the store half left uncovered, AUD-01)
+ * is a ring-0 #PF the sandbox catches as a finding. We throw random canonical
+ * user addresses — almost all unmapped in this (kernel) address space, so the
+ * store path is exercised heavily — and never write anywhere that is mapped.
+ */
+static int t_uaccess(kfuzz_rng_t* r, uint32_t iters) {
+    uint8_t buf[128];
+    for (uint32_t it = 0; it < iters; it++) {
+        uint64_t p = (uint64_t)kfuzz_rand(r) & 0x00007FFFFFFFF000ULL;  /* canonical user */
+        size_t n = 1 + kfuzz_rand_below(r, (uint32_t)sizeof buf);
+        if (kfuzz_rand(r) & 1) (void)copy_to_user((void*)(uintptr_t)p, buf, n);   /* store */
+        else                   (void)copy_from_user(buf, (void*)(uintptr_t)p, n); /* load  */
+    }
+    return 0;    /* oracle is implicit: a uaccess fault that is not recovered
+                    reaches the sandbox as a caught #PF (crash), not a clean -EFAULT */
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -826,6 +851,7 @@ static const kfuzz_target_t g_targets[] = {
     { "uvm",     t_uvm,     KFUZZ_T_UVM,     NULL },
     { "path",    t_path,    KFUZZ_T_PATH,    NULL },
     { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
+    { "uaccess", t_uaccess, KFUZZ_T_UACCESS, NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 
