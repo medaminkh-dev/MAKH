@@ -12,6 +12,8 @@
 #include <ktest.h>
 #include <arch/usermode.h>
 #include <proc.h>
+#include <errno.h>
+#include <lib/string.h>
 
 /* write(1, "hi\n", 3); exit(7);  -- builds "hi\n" on the stack */
 static const unsigned char prog_write_exit[] = {
@@ -102,4 +104,20 @@ KTEST(user, execute_nx_stack_faults) {
     user_stop_t r = run_user_program(prog_exec_stack, sizeof(prog_exec_stack), &status);
     KEXPECT_EQ(r, USER_FAULTED);
     KEXPECT_EQ(status, 14);            /* #PF: NX stops execution of data pages */
+}
+
+/* AUD-01: copy_to_user() to a canonical-but-unmapped user address faults on the
+ * STORE instruction (mov [rdi],cl), whose RIP differs from the load's fixup
+ * label (__copy_user_fault_ip labels the load mov cl,[rsi]). The page-fault
+ * handler must still recognise it as a uaccess fault and recover with -EFAULT,
+ * never panic the kernel. copy_from_user (a LOAD fault) is the control: it was
+ * always recovered. A user program could otherwise crash the kernel by passing
+ * a read-only or unmapped buffer to any syscall that writes back. */
+KTEST(user, copy_to_user_store_fault_returns_efault) {
+    char src[64]; memset(src, 0x5A, sizeof src);
+    char dst[64];
+    void* bad = (void*)0x0000600000000000ULL;   /* canonical user half, unmapped */
+
+    KEXPECT_EQ((int)copy_from_user(dst, bad, sizeof dst), -EFAULT);  /* control: load fault */
+    KEXPECT_EQ((int)copy_to_user(bad, src, sizeof src), -EFAULT);    /* the bug: store fault */
 }

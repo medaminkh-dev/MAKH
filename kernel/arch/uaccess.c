@@ -28,7 +28,17 @@ extern uint64_t __copy_user(void* dst, const void* src, uint64_t n);
  * byte-copy loop; a table generalises this when more uaccess sites appear.
  */
 uint64_t uaccess_fixup(uint64_t fault_rip) {
-    if (fault_rip == (uint64_t)(uintptr_t)__copy_user_fault_ip)
+    /* The copy loop touches memory twice per byte: the load `mov cl,[rsi]` at
+     * __copy_user_fault_ip and the store `mov [rdi],cl` right after it. Either
+     * can fault (a bad user source, or a read-only / unmapped user destination),
+     * and they have different RIPs. Match any RIP in the loop body
+     * [__copy_user_fault_ip, __copy_user_fault) — that whole range is the two
+     * memory ops plus the inc/dec/jnz — and resume at the fault label, which
+     * returns the uncopied count. Matching only the load left copy_to_user store
+     * faults unrecovered, panicking the kernel (AUD-01). */
+    uint64_t lo = (uint64_t)(uintptr_t)__copy_user_fault_ip;
+    uint64_t hi = (uint64_t)(uintptr_t)__copy_user_fault;
+    if (fault_rip >= lo && fault_rip < hi)
         return (uint64_t)(uintptr_t)__copy_user_fault;
     return 0;
 }
