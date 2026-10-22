@@ -847,6 +847,18 @@ static vfs_ops_t ext2_ops = {
 
 /* Mount the ext2 filesystem on virtio-blk `unit`; returns its root vnode or
  * NULL if `unit` does not hold a valid ext2 image. */
+/* Validate the superblock geometry before any shift or division uses it
+ * (AUD-05). block_size = 1024 << s_log_block_size, and MAKH supports up to
+ * 4 KiB, so the log must be 0..2 — a larger value makes the shift undefined
+ * and exceeds support. blocks_per_group and inodes_per_group are divisors all
+ * over the driver; a zero divides by zero on the first allocation. */
+int ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
+                     uint32_t inodes_per_group) {
+    if (s_log_block_size > 2) return 0;
+    if (blocks_per_group == 0 || inodes_per_group == 0) return 0;
+    return 1;
+}
+
 static vnode_t* ext2_mount_unit(int unit) {
     uint8_t* sb = blk_alloc();
     if (!sb) return NULL;
@@ -857,7 +869,7 @@ static vnode_t* ext2_mount_unit(int unit) {
     ext2_fs_t* fs = kcalloc(1, sizeof(*fs));
     if (!fs) { blk_free(sb); return NULL; }
     fs->unit             = unit;
-    fs->block_size       = 1024u << rd32(sb + 24);               /* s_log_block_size */
+    uint32_t log_bs      = rd32(sb + 24);                        /* s_log_block_size */
     fs->blocks_count     = rd32(sb + 4);
     fs->inodes_count     = rd32(sb + 0);
     fs->blocks_per_group = rd32(sb + 32);
@@ -865,14 +877,17 @@ static vnode_t* ext2_mount_unit(int unit) {
     fs->first_data_block = rd32(sb + 20);
     uint16_t isz         = rd16(sb + 88);                        /* s_inode_size */
     fs->inode_size       = isz ? isz : 128;                      /* rev0 = 128 */
-    fs->spb              = fs->block_size / 512;
     fs->gdt_block        = fs->first_data_block + 1;
     blk_free(sb);
 
-    if (fs->block_size > 4096 || fs->spb == 0 || fs->inodes_per_group == 0) {
-        KLOG_E("EXT2", "unsupported geometry (bs=%u)\n", fs->block_size);
+    /* Reject malformed geometry before it reaches a shift or a divisor. */
+    if (!ext2_geometry_ok(log_bs, fs->blocks_per_group, fs->inodes_per_group)) {
+        KLOG_E("EXT2", "unsupported geometry (log_bs=%u bpg=%u ipg=%u)\n",
+               log_bs, fs->blocks_per_group, fs->inodes_per_group);
         kfree(fs); return NULL;
     }
+    fs->block_size = 1024u << log_bs;          /* safe: log_bs <= 2 (<= 4 KiB) */
+    fs->spb        = fs->block_size / 512;      /* 2, 4 or 8 — never 0 */
 
     vnode_t* root = make_vnode(fs, EXT2_ROOT_INO);
     if (!root) { kfree(fs); return NULL; }

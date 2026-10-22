@@ -222,5 +222,9 @@ vnode_t*  tmpfs_link(vnode_t* dir, const char* name, vnode_t* child);
 void      devfs_mount(const char* dir);   /* fs/devfs.c: populate a dir with devices */
 int       tar_load_initrd(const void* data, size_t len);   /* fs/tar.c */
 int       ext2_mount_any(const char* path);  /* fs/ext2.c: mount an ext2 virtio-blk disk */
+/* Returns 1 if the on-disk geometry is usable, 0 if malformed (a shift that
+ * would be undefined, or a zero divisor that would divide by zero). AUD-05. */
+int       ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
+                           uint32_t inodes_per_group);
 
 #endif /* MAKHOS_FS_VFS_H */

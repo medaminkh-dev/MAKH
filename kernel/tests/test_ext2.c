@@ -273,3 +273,16 @@ KTEST(ext2, rmdir_refuses_dir_with_only_long_name) {
     KEXPECT_NE(vfs_unlink("/mnt/longonly"), 0);
     KEXPECT(vfs_resolve("/mnt/longonly") != NULL);
 }
+
+/* AUD-05: the superblock geometry must be validated before a shift or a divisor
+ * uses it. blocks_per_group / inodes_per_group are divisors throughout the
+ * driver (a zero divides by zero -> #DE), and 1024 << s_log_block_size is
+ * undefined for a large log. The mount path rejects all of these up front. */
+KTEST(ext2, rejects_malformed_geometry) {
+    KEXPECT_EQ(ext2_geometry_ok(0, 8192, 2048), 1);   /* 1 KiB blocks, valid   */
+    KEXPECT_EQ(ext2_geometry_ok(2, 256, 128), 1);     /* 4 KiB blocks, valid   */
+    KEXPECT_EQ(ext2_geometry_ok(0, 0, 2048), 0);      /* blocks_per_group == 0 */
+    KEXPECT_EQ(ext2_geometry_ok(1, 8192, 0), 0);      /* inodes_per_group == 0 */
+    KEXPECT_EQ(ext2_geometry_ok(3, 8192, 2048), 0);   /* block_size > 4 KiB    */
+    KEXPECT_EQ(ext2_geometry_ok(31, 8192, 2048), 0);  /* shift would be UB     */
+}
