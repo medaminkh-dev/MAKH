@@ -740,7 +740,7 @@ static int t_path(kfuzz_rng_t* r, uint32_t iters) {
 static int t_oom(kfuzz_rng_t* r, uint32_t iters) {
     for (uint32_t it = 0; it < iters; it++) {
         uint32_t fail_at = kfuzz_rand_below(r, 6);   /* fail the (fail_at+1)-th alloc */
-        switch (kfuzz_rand_below(r, 3)) {
+        switch (kfuzz_rand_below(r, 4)) {
         case 0: {                                    /* heap expansion (F5 class) */
             /* A big kmalloc goes through kheap_expand via the real allocator, so
              * the heap stays structured. A successful alloc legitimately grows
@@ -785,6 +785,59 @@ static int t_oom(kfuzz_rng_t* r, uint32_t iters) {
                 pmm_test_fail_after(-1);
                 vmspace_destroy(&as);
             }
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 3: {                                    /* ELF loader frame leak (AUD-07) */
+            /* elf_load allocates a segment frame, then vmspace_map()s it — and
+             * vmspace_map itself allocates intermediate page tables. A plentiful
+             * campaign (t_elf) never fails either allocation, so the error path
+             * where vmspace_map fails *after* the segment frame was taken — the
+             * frame is then mapped nowhere and vmspace_destroy cannot reclaim it
+             * (AUD-07) — is unreachable. Here an injected failure lands inside
+             * elf_load: on a segment-frame alloc (earlier frames are mapped and
+             * freed by destroy, no leak) or on a vmspace_map table alloc (the
+             * AUD-07 path, where the just-taken frame must be freed by the
+             * loader). The oracle is strict page conservation across
+             * create -> load -> destroy. The ELF is built with injection
+             * disarmed so only elf_load's own allocations can fail. */
+            const char* path = "/fz_elfoom";
+            uint8_t buf[0x200];
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;        /* \x7fELF           */
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;          /* ELFCLASS64, LE, v1 */
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC           */
+            *(uint16_t*)(buf + 18) = 0x3E;               /* x86-64            */
+            *(uint64_t*)(buf + 24) = 0x400000ull;        /* e_entry (in seg)  */
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff           */
+            *(uint16_t*)(buf + 54) = 56;                 /* e_phentsize       */
+            *(uint16_t*)(buf + 56) = 1;                  /* e_phnum           */
+            uint8_t* ph = buf + 64;
+            *(uint32_t*)(ph + 0)  = 1;                    /* PT_LOAD          */
+            *(uint32_t*)(ph + 4)  = 5;                    /* R + X (entry ok) */
+            *(uint64_t*)(ph + 8)  = 0x100;                /* p_offset         */
+            *(uint64_t*)(ph + 16) = 0x400000ull;          /* p_vaddr          */
+            *(uint64_t*)(ph + 32) = 0x40;                 /* p_filesz         */
+            *(uint64_t*)(ph + 40) = (uint64_t)(2 + kfuzz_rand_below(r, 4)) * 4096; /* 2-5 pages */
+
+            vfs_unlink(path);
+            int fd = vfs_open(path, O_CREAT | O_RDWR);
+            if (fd < 0) break;
+            vfs_fd_write(fd, buf, 0x180);
+            vfs_close(fd);
+            vnode_t* vn = vfs_resolve(path);
+            if (!vn) { vfs_unlink(path); break; }
+
+            size_t snap = pmm_get_free_memory();
+            address_space_t as;
+            if (vmspace_create(&as) == 0) {
+                uint64_t entry = 0;
+                pmm_test_fail_after(fail_at);
+                (void)elf_load(vn, &as, &entry, NULL);   /* must return, never leak */
+                pmm_test_fail_after(-1);
+                vmspace_destroy(&as);
+            }
+            vfs_unlink(path);
             if (pmm_get_free_memory() != snap) return -1;
             break;
         }
