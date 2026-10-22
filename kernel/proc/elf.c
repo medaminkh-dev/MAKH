@@ -104,6 +104,8 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
     uint64_t phdr_va = 0;              /* from PT_PHDR (p_vaddr) */
     uint64_t phdr_va_fallback = 0;     /* from the LOAD covering e_phoff */
     uint64_t total_mem = 0;            /* summed PT_LOAD memsz (bounded work) */
+    uint64_t entry_va  = bias + eh.e_entry;   /* must land in an exec segment  */
+    int      entry_in_x = 0;
 
     for (uint16_t i = 0; i < eh.e_phnum; i++) {
         elf64_phdr_t ph;
@@ -161,8 +163,18 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
                 vfs_read(file, fv + (copy_from - va),
                          (size_t)(copy_to - copy_from), foff);
             }
-            if (vmspace_map(as, va, pf, flags) != 0) return -ENOMEM;
+            if (vmspace_map(as, va, pf, flags) != 0) {
+                page_decref(pf);        /* AUD-07: free the frame we just took,
+                                           it was never linked into `as` */
+                return -ENOMEM;
+            }
         }
+
+        /* AUD-04: remember whether the entry point lands in an executable
+         * segment, so a malformed e_entry cannot start the process at an
+         * address it never loaded (or outside any segment). */
+        if ((ph.p_flags & PF_X) && entry_va >= seg && entry_va < seg + ph.p_memsz)
+            entry_in_x = 1;
 
         /* Re-map with the segment's real protection (W^X): an executable
          * segment becomes read-only + executable; a writable segment RW + NX;
@@ -175,7 +187,8 @@ int elf_load(vnode_t* file, address_space_t* as, uint64_t* entry, elf_aux_t* aux
             vmspace_map(as, va, vmspace_phys(as, va), prot);
     }
 
-    *entry = bias + eh.e_entry;
+    if (!entry_in_x) return -ENOEXEC;       /* AUD-04: entry outside any exec segment */
+    *entry = entry_va;
     if (aux) {
         aux->at_phdr = phdr_va ? phdr_va : phdr_va_fallback;
         aux->at_phent = eh.e_phentsize;

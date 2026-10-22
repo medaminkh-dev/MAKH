@@ -86,7 +86,7 @@ KTEST(vfs, readdir_lists_children) {
     KASSERT_TEST(dir != (void*)0 && dir->ops->readdir);
     int seen = 0;
     char name[VFS_NAME_MAX + 1];
-    for (uint32_t i = 0; dir->ops->readdir(dir, i, name) == 0; i++) {
+    for (uint32_t i = 0; dir->ops->readdir(dir, i, name, sizeof name) == 0; i++) {
         if (!strcmp(name, "one") || !strcmp(name, "two")) seen++;
     }
     KEXPECT_EQ(seen, 2);

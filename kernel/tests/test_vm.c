@@ -14,6 +14,10 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <lib/string.h>
+#include <fs/vfs.h>
+#include <elf.h>
+#include <errno.h>
+#include <irq.h>
 
 #define TEST_VA  0x0000200000010000ULL   /* inside the user PML4 slot (64) */
 
@@ -125,4 +129,137 @@ KTEST(mmio, window_is_high_and_shared) {
     vmspace_destroy(&as);
 
     pmm_free_page(f);
+}
+
+
+/* Audit F3: two PT_LOAD segments whose pages overlap must not leak a frame.
+ * The loader allocates a fresh frame per page and vmspace_map()s it; if a later
+ * segment maps a page an earlier one already backed, the old frame must be
+ * released, not orphaned. Oracle: create -> load -> destroy is net-zero pages.
+ * The two segments here (vaddr 0x400000 and 0x400800) share page 0x400000. */
+#ifndef O_RDWR
+#define O_RDWR  0x0002
+#endif
+#ifndef O_CREAT
+#define O_CREAT 0x0040
+#endif
+KTEST(vm, elf_overlapping_segments_no_frame_leak) {
+    uint8_t elf[0x300];
+    memset(elf, 0, sizeof elf);
+    *(uint32_t*)(elf + 0)  = 0x464C457Fu;      /* \x7fELF           */
+    elf[4] = 2; elf[5] = 1; elf[6] = 1;        /* ELFCLASS64, LE, v1 */
+    *(uint16_t*)(elf + 16) = 2;                /* ET_EXEC            */
+    *(uint16_t*)(elf + 18) = 0x3E;             /* x86-64             */
+    *(uint64_t*)(elf + 24) = 0x400000ULL;      /* e_entry            */
+    *(uint64_t*)(elf + 32) = 64;               /* e_phoff            */
+    *(uint16_t*)(elf + 54) = 56;               /* e_phentsize        */
+    *(uint16_t*)(elf + 56) = 2;                /* e_phnum            */
+    uint8_t* p0 = elf + 64;
+    *(uint32_t*)(p0 + 0)  = 1;                 /* PT_LOAD            */
+    *(uint32_t*)(p0 + 4)  = 5;                 /* R+X                 */
+    *(uint64_t*)(p0 + 8)  = 0x200;             /* p_offset           */
+    *(uint64_t*)(p0 + 16) = 0x400000ULL;       /* p_vaddr            */
+    *(uint64_t*)(p0 + 32) = 0x40;              /* p_filesz           */
+    *(uint64_t*)(p0 + 40) = 0x40;              /* p_memsz            */
+    uint8_t* p1 = elf + 120;
+    *(uint32_t*)(p1 + 0)  = 1;                 /* PT_LOAD            */
+    *(uint32_t*)(p1 + 4)  = 5;                 /* R+X                 */
+    *(uint64_t*)(p1 + 8)  = 0x240;             /* p_offset           */
+    *(uint64_t*)(p1 + 16) = 0x400800ULL;       /* same page 0x400000 */
+    *(uint64_t*)(p1 + 32) = 0x40;              /* p_filesz           */
+    *(uint64_t*)(p1 + 40) = 0x40;              /* p_memsz            */
+    for (int i = 0; i < 0x40; i++) { elf[0x200 + i] = 0x11; elf[0x240 + i] = 0x22; }
+
+    const char* path = "/elf_overlap";
+    vfs_unlink(path);
+    int fd = vfs_open(path, O_CREAT | O_RDWR);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, elf, 0x280), 0x280);
+    vfs_close(fd);
+    vnode_t* vn = vfs_resolve(path);
+    KASSERT_TEST(vn != NULL);
+
+    size_t snap = pmm_get_free_memory();
+    address_space_t as;
+    KASSERT_TEST(vmspace_create(&as) == 0);
+    uint64_t entry = 0;
+    int r = elf_load(vn, &as, &entry, NULL);
+    KEXPECT_EQ(r, 0);                               /* a valid (if odd) ELF loads */
+    vmspace_destroy(&as);
+    KEXPECT_EQ(pmm_get_free_memory(), snap);        /* no orphaned frame */
+    vfs_unlink(path);
+}
+
+
+/* Audit F4: a fork that runs out of memory mid-copy must leak nothing. The
+ * parent is mapped across two page tables (VAs 4 MiB apart -> two PD entries);
+ * injection fails the allocation for the second PT, after the first PT and its
+ * leaf's COW incref are already built. copy_level() must unwind that partial
+ * subtree (free the tables, drop the leaf ref) so create->fork(fail)->destroy
+ * returns every page. Runs IRQs-off so the fault lands on exactly the fork. */
+KTEST(vm, fork_oom_rolls_back_cleanly) {
+    address_space_t parent;
+    KASSERT_TEST(vmspace_create(&parent) == 0);
+    void* fa = pmm_alloc_page(); void* fb = pmm_alloc_page();
+    KASSERT_TEST(fa && fb);
+    page_setref((uint64_t)(uintptr_t)fa, 1);
+    page_setref((uint64_t)(uintptr_t)fb, 1);
+    KASSERT_TEST(vmspace_map(&parent, 0x400000, (uint64_t)(uintptr_t)fa, PAGE_WRITABLE) == 0);
+    KASSERT_TEST(vmspace_map(&parent, 0x600000, (uint64_t)(uintptr_t)fb, PAGE_WRITABLE) == 0);
+
+    size_t snap = pmm_get_free_memory();
+    address_space_t child;
+    irqflags_t fl = local_irq_save();
+    pmm_test_fail_after(4);          /* child PML4, PDPT, PD, PT#1 ok; PT#2 fails */
+    int r = vmspace_fork(&parent, &child);
+    pmm_test_fail_after(-1);         /* disarm */
+    local_irq_restore(fl);
+
+    KEXPECT_EQ(r, -1);                               /* fork reported OOM        */
+    KEXPECT_EQ(pmm_get_free_memory(), snap);         /* ...and leaked no page    */
+
+    vmspace_destroy(&parent);
+}
+
+/* AUD-04: the ELF entry point must land inside an executable (PF_X) PT_LOAD
+ * segment. A malformed e_entry pointing outside any loaded executable segment
+ * is rejected (-ENOEXEC) rather than starting the process at a bad RIP. */
+static int build_and_load_elf(uint32_t seg_flags, uint64_t e_entry) {
+    uint8_t elf[0x200];
+    memset(elf, 0, sizeof elf);
+    *(uint32_t*)(elf + 0)  = 0x464C457Fu;
+    elf[4] = 2; elf[5] = 1; elf[6] = 1;
+    *(uint16_t*)(elf + 16) = 2;                 /* ET_EXEC */
+    *(uint16_t*)(elf + 18) = 0x3E;
+    *(uint64_t*)(elf + 24) = e_entry;           /* e_entry */
+    *(uint64_t*)(elf + 32) = 64;                /* e_phoff */
+    *(uint16_t*)(elf + 54) = 56;
+    *(uint16_t*)(elf + 56) = 1;                 /* e_phnum = 1 */
+    uint8_t* p = elf + 64;
+    *(uint32_t*)(p + 0)  = 1;                    /* PT_LOAD */
+    *(uint32_t*)(p + 4)  = seg_flags;
+    *(uint64_t*)(p + 8)  = 0x100;                /* p_offset */
+    *(uint64_t*)(p + 16) = 0x400000ULL;         /* p_vaddr  */
+    *(uint64_t*)(p + 32) = 0x40;                 /* p_filesz */
+    *(uint64_t*)(p + 40) = 0x40;                 /* p_memsz  */
+    const char* path = "/elf_entry";
+    vfs_unlink(path);
+    int fd = vfs_open(path, O_CREAT | O_RDWR);
+    if (fd < 0) return -1;
+    vfs_fd_write(fd, elf, 0x180); vfs_close(fd);
+    vnode_t* vn = vfs_resolve(path);
+    if (!vn) return -1;
+    address_space_t as; if (vmspace_create(&as) != 0) return -1;
+    uint64_t entry = 0;
+    int r = elf_load(vn, &as, &entry, NULL);
+    vmspace_destroy(&as); vfs_unlink(path);
+    return r;
+}
+KTEST(vm, elf_entry_must_be_in_executable_segment) {
+    /* entry at the start of an R+X segment: valid */
+    KEXPECT_EQ(build_and_load_elf(5, 0x400000ULL), 0);
+    /* entry past the segment's memsz: rejected */
+    KEXPECT_EQ(build_and_load_elf(5, 0x400000ULL + 0x80000ULL), -ENOEXEC);
+    /* entry inside a NON-executable (R+W) segment: rejected */
+    KEXPECT_EQ(build_and_load_elf(6, 0x400000ULL), -ENOEXEC);
 }

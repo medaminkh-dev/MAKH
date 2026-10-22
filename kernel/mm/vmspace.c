@@ -51,6 +51,11 @@ static uint64_t* ensure(uint64_t* table, int idx, int create) {
 
 /* Pointer to the leaf PTE slot for `va`, creating the walk if asked. */
 static uint64_t* leaf_slot(uint64_t pml4_phys, uint64_t va, int create) {
+    /* Only the lower (user) half is a space's own: PML4 slots 256..511 are the
+     * shared kernel tables. Never walk into them — ensure() would taint the
+     * shared entries with PAGE_USER, and this is the hard backstop behind the
+     * range checks in uvm.c (Audit F2). A non-canonical VA also lands here. */
+    if (VMM_PML4_INDEX(va) >= 256) return NULL;
     uint64_t* pml4 = tbl(pml4_phys);
     uint64_t* pdpt = ensure(pml4, VMM_PML4_INDEX(va), create);
     if (!pdpt) return NULL;
@@ -85,6 +90,14 @@ int vmspace_create(address_space_t* as) {
 int vmspace_map(address_space_t* as, uint64_t va, uint64_t phys, uint64_t flags) {
     uint64_t* slot = leaf_slot(as->pml4_phys, va, 1);
     if (!slot) return -1;
+    /* Replacing a live mapping with a *different* frame (e.g. overlapping ELF
+     * PT_LOAD segments) must release the old one, or it is orphaned until the
+     * space dies — the slot only remembers the last frame (Audit F3). A re-map
+     * of the same frame (the W^X re-protect pass) keeps its refcount. */
+    if ((*slot & PAGE_PRESENT)) {
+        uint64_t old = *slot & PTE_PHYS_MASK;
+        if (old != (phys & PTE_PHYS_MASK)) page_decref(old);
+    }
     *slot = (phys & PTE_PHYS_MASK) | (flags & 0xFFF) | (flags & PAGE_NO_EXECUTE) |
             PAGE_PRESENT | PAGE_USER;
     return 0;
@@ -100,12 +113,18 @@ uint64_t vmspace_phys(address_space_t* as, uint64_t va) {
 /* fork: deep-copy the user page-table structure, share data frames as COW     */
 /* -------------------------------------------------------------------------- */
 
+static void free_level(uint64_t phys, int level);   /* fwd: used for OOM rollback */
+
 /* Copy one user table level. level 3 = PDPT, 2 = PD, 1 = PT (leaves). Returns
- * the new table's physical address, or 0 on OOM. */
+ * the new table's physical address, or 0 on OOM. On failure it frees the whole
+ * partial subtree it built (tables + the leaf refs it took), so a fork that
+ * runs out of memory leaks nothing — the parent keeps its (now-COW) pages,
+ * which self-heal on the next write (Audit F4). */
 static uint64_t copy_level(uint64_t src_phys, int level) {
     void* f = pmm_alloc_page();
     if (!f) return 0;
-    uint64_t* dst = tbl((uint64_t)(uintptr_t)f);
+    uint64_t dst_phys = (uint64_t)(uintptr_t)f;
+    uint64_t* dst = tbl(dst_phys);
     uint64_t* src = tbl(src_phys);
     memset(dst, 0, 4096);
 
@@ -122,11 +141,11 @@ static uint64_t copy_level(uint64_t src_phys, int level) {
             page_incref(phys);
         } else {
             uint64_t sub = copy_level(src[i] & PTE_PHYS_MASK, level - 1);
-            if (!sub) return 0;                 /* caller frees partial tree */
+            if (!sub) { free_level(dst_phys, level); return 0; }  /* roll back */
             dst[i] = (src[i] & 0xFFF) | sub;
         }
     }
-    return (uint64_t)(uintptr_t)f;
+    return dst_phys;
 }
 
 int vmspace_fork(address_space_t* parent, address_space_t* child) {

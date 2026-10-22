@@ -42,7 +42,10 @@ typedef struct vfs_ops {
     long (*write)(struct vnode* vn, const void* buf, size_t n, uint64_t off);
     struct vnode* (*lookup)(struct vnode* dir, const char* name);          /* child or NULL */
     struct vnode* (*create)(struct vnode* dir, const char* name, vtype_t t);/* new child    */
-    int  (*readdir)(struct vnode* dir, uint32_t index, char* name_out);     /* 0 / -1 at end */
+    /* Writes the index-th name (NUL-terminated, at most cap bytes incl. the
+     * NUL) to name_out. 0, or -1 past the end. Names longer than VFS_NAME_MAX
+     * are not reported, so every listed name can also be looked up. */
+    int  (*readdir)(struct vnode* dir, uint32_t index, char* name_out, size_t cap);
     int  (*unlink)(struct vnode* dir, const char* name);
     int  (*truncate)(struct vnode* vn, uint64_t len);
     int  (*rename)(struct vnode* olddir, const char* oldname,
@@ -219,5 +222,9 @@ vnode_t*  tmpfs_link(vnode_t* dir, const char* name, vnode_t* child);
 void      devfs_mount(const char* dir);   /* fs/devfs.c: populate a dir with devices */
 int       tar_load_initrd(const void* data, size_t len);   /* fs/tar.c */
 int       ext2_mount_any(const char* path);  /* fs/ext2.c: mount an ext2 virtio-blk disk */
+/* Returns 1 if the on-disk geometry is usable, 0 if malformed (a shift that
+ * would be undefined, or a zero divisor that would divide by zero). AUD-05. */
+int       ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
+                           uint32_t inodes_per_group);
 
 #endif /* MAKHOS_FS_VFS_H */

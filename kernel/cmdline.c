@@ -8,6 +8,7 @@
 #include <cmdline.h>
 #include <multiboot.h>
 #include <klog.h>
+#include <lib/string.h>
 
 static char cmdline_buf[256];
 
@@ -65,6 +66,24 @@ int cmdline_has(const char* flag) {
         while (*s == ' ' || *s == '\t') s++;
         if (*s == '\0') break;
         if (token_matches(s, flag)) return 1;
+        while (*s && *s != ' ' && *s != '\t') s++;
+    }
+    return 0;
+}
+
+int cmdline_value(const char* key, char* out, size_t outsz) {
+    size_t klen = strlen(key);
+    const char* s = cmdline_buf;
+    while (*s) {
+        while (*s == ' ' || *s == '\t') s++;
+        if (*s == '\0') break;
+        if (strncmp(s, key, klen) == 0 && s[klen] == '=') {
+            const char* v = s + klen + 1;
+            size_t n = 0;
+            while (v[n] && v[n] != ' ' && v[n] != '\t' && n + 1 < outsz) { out[n] = v[n]; n++; }
+            out[n] = '\0';
+            return n > 0;
+        }
         while (*s && *s != ' ' && *s != '\t') s++;
     }
     return 0;

@@ -69,11 +69,12 @@ static vnode_t* tmpfs_create(vnode_t* dir, const char* name, vtype_t type) {
     return vn;
 }
 
-static int tmpfs_readdir(vnode_t* dir, uint32_t index, char* name_out) {
-    if (dir->type != VNODE_DIR) return -1;
+static int tmpfs_readdir(vnode_t* dir, uint32_t index, char* name_out, size_t cap) {
+    if (dir->type != VNODE_DIR || cap == 0) return -1;
     for (tmpfs_dirent_t* e = ((tmpfs_dir_t*)dir->priv)->head; e; e = e->next) {
         if (index == 0) {
-            int i = 0; for (; e->name[i]; i++) name_out[i] = e->name[i]; name_out[i] = '\0';
+            size_t i = 0; for (; e->name[i] && i + 1 < cap; i++) name_out[i] = e->name[i];
+            name_out[i] = '\0';
             return 0;
         }
         index--;

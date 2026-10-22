@@ -33,6 +33,7 @@
 #include <signal.h>
 #include <elf.h>
 #include <mm/uvm.h>
+#include <arch/usermode.h>
 #include <syscall.h>
 
 /* -------------------------------------------------------------------------- */
@@ -430,7 +431,7 @@ static int t_vfs(kfuzz_rng_t* r, uint32_t iters) {
             vnode_t* d = vfs_resolve("/fz");
             if (d && d->ops && d->ops->readdir) {
                 char nm[VFS_NAME_MAX + 1];
-                for (uint32_t i = 0; i < 64 && d->ops->readdir(d, i, nm) == 0; i++) { }
+                for (uint32_t i = 0; i < 64 && d->ops->readdir(d, i, nm, sizeof nm) == 0; i++) { }
             }
             break;
         }
@@ -513,6 +514,33 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
         if (kfuzz_rand_below(r, 4) == 0) {
             n = kfuzz_rand_below(r, ELF_FZ_MAX + 1);     /* pure garbage */
             kfuzz_fill(r, buf, n);
+        } else if (kfuzz_rand_below(r, 3) == 0) {
+            /* A VALID two-segment ELF whose PT_LOADs may share a page. Kept
+             * valid (no byte mutation) so elf_load actually maps both segments:
+             * if the loader orphans a frame when a later segment overwrites a
+             * page an earlier one backed (mm audit F3), the per-iteration page
+             * conservation check below breaks. */
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC */
+            *(uint16_t*)(buf + 18) = 0x3E;
+            *(uint64_t*)(buf + 24) = 0x400000ull;        /* e_entry */
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff */
+            *(uint16_t*)(buf + 54) = 56;
+            *(uint16_t*)(buf + 56) = 2;                  /* e_phnum = 2 */
+            uint64_t off2 = (uint64_t)kfuzz_rand_below(r, 2) * 0x800;  /* same page */
+            for (int sg = 0; sg < 2; sg++) {
+                uint8_t* p = buf + 64 + sg * 56;
+                *(uint32_t*)(p + 0)  = 1;                /* PT_LOAD */
+                *(uint32_t*)(p + 4)  = 6;                /* RW      */
+                *(uint64_t*)(p + 8)  = 0x100;            /* p_offset */
+                *(uint64_t*)(p + 16) = 0x400000ull + (uint64_t)sg * off2;  /* p_vaddr */
+                *(uint64_t*)(p + 32) = 0x40;             /* p_filesz */
+                *(uint64_t*)(p + 40) = 0x40;             /* p_memsz  */
+            }
+            n = 0x180;
+            goto write_elf;
         } else {
             memset(buf, 0, sizeof(buf));
             *(uint32_t*)(buf + 0)  = 0x464C457Fu;        /* \x7fELF */
@@ -543,6 +571,7 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
             if (kfuzz_rand_below(r, 4) == 0) *(uint16_t*)(buf + 56) = (uint16_t)kfuzz_rand(r);
         }
 
+    write_elf:;
         /* Fresh scratch file each time (unlink first so there is no stale tail). */
         vfs_unlink(path);
         int fd = vfs_open(path, O_CREAT | O_RDWR);
@@ -588,8 +617,33 @@ static int t_uvm(kfuzz_rng_t* r, uint32_t iters) {
     struct { uint64_t va, len; } live[UVM_FZ_LIVE];
     int nlive = 0;
 
+    /* Addresses from the whole 64-bit space, not just regions we mmap'd: a
+     * kernel-half VA, the non-canonical gap, page 0, the user ceiling, and wild
+     * aligned values. mprotect/munmap must reject every one before touching a
+     * page table; the strict page-conservation oracle at the end catches a
+     * munmap that wrongly frees a frame it never owned (mm audit F2). */
+    static const uint64_t adversarial[] = {
+        0xFFFF900000000000ULL,      /* kernel heap window        */
+        0xFFFF800000000000ULL,      /* first kernel-half VA      */
+        0x0000800000000000ULL,      /* non-canonical gap / ceiling */
+        0x0000000000000000ULL,      /* page 0                    */
+        0xFFFFFFFFFFFFF000ULL,      /* wraps on addr+len         */
+        0xDEADBEEF000ULL,           /* wild but canonical-low    */
+    };
+
     for (uint32_t it = 0; it < iters; it++) {
-        switch (kfuzz_rand_below(r, 5)) {
+        switch (kfuzz_rand_below(r, 7)) {
+        case 5: {                                   /* adversarial munmap */
+            uint64_t va = adversarial[kfuzz_rand_below(r, 6)];
+            uvm_munmap(&as, va, (uint64_t)(1 + kfuzz_rand_below(r, 4)) * 4096);
+            break;
+        }
+        case 6: {                                   /* adversarial mprotect */
+            uint64_t va = adversarial[kfuzz_rand_below(r, 6)];
+            int prot = (kfuzz_rand(r) & 1) ? (PROT_READ | PROT_WRITE) : PROT_READ;
+            uvm_mprotect(&as, va, (uint64_t)(1 + kfuzz_rand_below(r, 4)) * 4096, prot);
+            break;
+        }
         case 0: {                                   /* mmap */
             uint64_t len = (1 + (uint64_t)kfuzz_rand_below(r, 8)) * 4096;
             int prot = PROT_READ | ((kfuzz_rand(r) & 1) ? PROT_WRITE : 0);
@@ -670,6 +724,201 @@ static int t_path(kfuzz_rng_t* r, uint32_t iters) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* 13. OOM rollback under allocation fault injection (KFUZZ v2)                 */
+/* -------------------------------------------------------------------------- */
+/*
+ * The error paths a plentiful-memory campaign never reaches. Every allocation
+ * succeeds when RAM is free, so rollback code — fork's page-table copy, heap
+ * expansion, mmap's map_anon — is dead weight the fuzzer cannot see. This
+ * target arms pmm_test_fail_after() so an allocation fails partway through a
+ * multi-page operation, then checks strict page conservation. A
+ * create -> op -> destroy sequence is net-zero whether the op succeeds or
+ * fails; a frame leaked on the rollback path breaks it. This is exactly the
+ * class the mm audit's fork-OOM (F4) and kheap-expand (F5) leaks fell into,
+ * and which v1 could not reach because it never made an allocation fail.
+ */
+static int t_oom(kfuzz_rng_t* r, uint32_t iters) {
+    for (uint32_t it = 0; it < iters; it++) {
+        uint32_t fail_at = kfuzz_rand_below(r, 6);   /* fail the (fail_at+1)-th alloc */
+        switch (kfuzz_rand_below(r, 4)) {
+        case 0: {                                    /* heap expansion (F5 class) */
+            /* A big kmalloc goes through kheap_expand via the real allocator, so
+             * the heap stays structured. A successful alloc legitimately grows
+             * the heap (not net-zero) — free it and move on; a *failed* one must
+             * have rolled back every page it mapped (buggy expand leaks them). */
+            size_t snap = pmm_get_free_memory();
+            pmm_test_fail_after(fail_at);
+            void* p = kmalloc((size_t)(1 + kfuzz_rand_below(r, 8)) * PAGE_SIZE);
+            pmm_test_fail_after(-1);
+            if (p) kfree(p);
+            else if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 1: {                                    /* fork page-table copy (F4 class) */
+            size_t snap = pmm_get_free_memory();
+            address_space_t parent, child;
+            if (vmspace_create(&parent) == 0) {
+                for (int j = 0; j < 2; j++) {        /* two pages, two PTs apart */
+                    void* f = pmm_alloc_page();
+                    if (!f) break;
+                    uint64_t pf = (uint64_t)(uintptr_t)f;
+                    page_setref(pf, 1);
+                    vmspace_map(&parent, 0x400000 + (uint64_t)j * 0x200000, pf, PAGE_WRITABLE);
+                }
+                pmm_test_fail_after(fail_at);
+                int rc = vmspace_fork(&parent, &child);
+                pmm_test_fail_after(-1);
+                if (rc == 0) vmspace_destroy(&child);
+                vmspace_destroy(&parent);
+            }
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 2: {                                    /* mmap rollback (map_anon) */
+            size_t snap = pmm_get_free_memory();
+            address_space_t as;
+            if (vmspace_create(&as) == 0) {
+                uint64_t cur = USER_MMAP_BASE;
+                pmm_test_fail_after(fail_at);
+                (void)uvm_mmap(&as, &cur, (1 + (uint64_t)kfuzz_rand_below(r, 6)) * 4096,
+                               PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE);
+                pmm_test_fail_after(-1);
+                vmspace_destroy(&as);
+            }
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        case 3: {                                    /* ELF loader frame leak (AUD-07) */
+            /* elf_load allocates a segment frame, then vmspace_map()s it — and
+             * vmspace_map itself allocates intermediate page tables. A plentiful
+             * campaign (t_elf) never fails either allocation, so the error path
+             * where vmspace_map fails *after* the segment frame was taken — the
+             * frame is then mapped nowhere and vmspace_destroy cannot reclaim it
+             * (AUD-07) — is unreachable. Here an injected failure lands inside
+             * elf_load: on a segment-frame alloc (earlier frames are mapped and
+             * freed by destroy, no leak) or on a vmspace_map table alloc (the
+             * AUD-07 path, where the just-taken frame must be freed by the
+             * loader). The oracle is strict page conservation across
+             * create -> load -> destroy. The ELF is built with injection
+             * disarmed so only elf_load's own allocations can fail. */
+            const char* path = "/fz_elfoom";
+            uint8_t buf[0x200];
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;        /* \x7fELF           */
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;          /* ELFCLASS64, LE, v1 */
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC           */
+            *(uint16_t*)(buf + 18) = 0x3E;               /* x86-64            */
+            *(uint64_t*)(buf + 24) = 0x400000ull;        /* e_entry (in seg)  */
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff           */
+            *(uint16_t*)(buf + 54) = 56;                 /* e_phentsize       */
+            *(uint16_t*)(buf + 56) = 1;                  /* e_phnum           */
+            uint8_t* ph = buf + 64;
+            *(uint32_t*)(ph + 0)  = 1;                    /* PT_LOAD          */
+            *(uint32_t*)(ph + 4)  = 5;                    /* R + X (entry ok) */
+            *(uint64_t*)(ph + 8)  = 0x100;                /* p_offset         */
+            *(uint64_t*)(ph + 16) = 0x400000ull;          /* p_vaddr          */
+            *(uint64_t*)(ph + 32) = 0x40;                 /* p_filesz         */
+            *(uint64_t*)(ph + 40) = (uint64_t)(2 + kfuzz_rand_below(r, 4)) * 4096; /* 2-5 pages */
+
+            vfs_unlink(path);
+            int fd = vfs_open(path, O_CREAT | O_RDWR);
+            if (fd < 0) break;
+            vfs_fd_write(fd, buf, 0x180);
+            vfs_close(fd);
+            vnode_t* vn = vfs_resolve(path);
+            if (!vn) { vfs_unlink(path); break; }
+
+            size_t snap = pmm_get_free_memory();
+            address_space_t as;
+            if (vmspace_create(&as) == 0) {
+                uint64_t entry = 0;
+                pmm_test_fail_after(fail_at);
+                (void)elf_load(vn, &as, &entry, NULL);   /* must return, never leak */
+                pmm_test_fail_after(-1);
+                vmspace_destroy(&as);
+            }
+            vfs_unlink(path);
+            if (pmm_get_free_memory() != snap) return -1;
+            break;
+        }
+        }
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 14. uaccess: copy_to/from_user with adversarial user pointers (KFUZZ v2.4)   */
+/* -------------------------------------------------------------------------- */
+/*
+ * copy_to_user / copy_from_user must survive any user pointer: a bad source
+ * faults the load, a read-only or unmapped destination faults the store, and
+ * both must recover to -EFAULT, never fault the kernel. The fault recovery is
+ * a single fixup site, so a miss (e.g. the store half left uncovered, AUD-01)
+ * is a ring-0 #PF the sandbox catches as a finding. We throw random canonical
+ * user addresses — almost all unmapped in this (kernel) address space, so the
+ * store path is exercised heavily — and never write anywhere that is mapped.
+ */
+static int t_uaccess(kfuzz_rng_t* r, uint32_t iters) {
+    uint8_t buf[128];
+    for (uint32_t it = 0; it < iters; it++) {
+        uint64_t p = (uint64_t)kfuzz_rand(r) & 0x00007FFFFFFFF000ULL;  /* canonical user */
+        size_t n = 1 + kfuzz_rand_below(r, (uint32_t)sizeof buf);
+        if (kfuzz_rand(r) & 1) (void)copy_to_user((void*)(uintptr_t)p, buf, n);   /* store */
+        else                   (void)copy_from_user(buf, (void*)(uintptr_t)p, n); /* load  */
+    }
+    return 0;    /* oracle is implicit: a uaccess fault that is not recovered
+                    reaches the sandbox as a caught #PF (crash), not a clean -EFAULT */
+}
+
+/* -------------------------------------------------------------------------- */
+/* 15. ext2 geometry: adversarial superblock geometry vs the mount gate         */
+/* -------------------------------------------------------------------------- */
+/*
+ * AUD-05 was an ext2 mount that read s_log_block_size / blocks_per_group /
+ * inodes_per_group straight from an untrusted superblock and used them raw:
+ * block_size = 1024 << log_bs (a shift wider than the word for a large log) and,
+ * on the first inode lookup, group = (ino-1) / inodes_per_group — a divide by
+ * zero when that field is 0. The fix is ext2_geometry_ok(), the gate mount now
+ * consults before any shift or division.
+ *
+ * This target models that gate. It throws adversarial geometry at
+ * ext2_geometry_ok and, ONLY when the gate accepts (exactly as mount then
+ * proceeds), performs the same shift and the same inode/block-group divisions
+ * the driver performs. The divisions are the teeth: if the gate is ever
+ * weakened to admit a zero divisor — its pre-AUD-05 state was no gate at all —
+ * a division raises #DE (vector 0), which the ring-0 sandbox catches as a
+ * finding; a block_size the gate let through that is not a MAKH-supported power
+ * of two trips the explicit oracle. On the fixed gate every admitted geometry
+ * is safe, so a campaign runs clean.
+ */
+static int t_ext2geo(kfuzz_rng_t* r, uint32_t iters) {
+    for (uint32_t it = 0; it < iters; it++) {
+        /* Draw geometry the way a malformed superblock presents it: 0 and huge
+         * shift counts deliberately frequent, the rest wild. */
+        uint32_t log_bs = (kfuzz_rand(r) & 1) ? kfuzz_rand_below(r, 64)   /* huge shift */
+                                              : kfuzz_rand_below(r, 4);   /* near-valid */
+        uint32_t bpg = (kfuzz_rand(r) & 3) ? (uint32_t)kfuzz_rand(r) : 0; /* ~1/4 zero  */
+        uint32_t ipg = (kfuzz_rand(r) & 3) ? (uint32_t)kfuzz_rand(r) : 0; /* ~1/4 zero  */
+
+        if (!ext2_geometry_ok(log_bs, bpg, ipg)) continue;   /* mount would abort */
+
+        /* Gate admitted it: run exactly what the driver runs next. volatile so
+         * the divisions cannot be optimised away — they are the AUD-05 teeth. */
+        volatile uint32_t block_size = 1024u << log_bs;       /* safe iff log_bs<=2 */
+        volatile uint32_t spb        = block_size / 512u;
+        uint32_t ino   = 1u + (uint32_t)kfuzz_rand(r);
+        uint32_t block =       (uint32_t)kfuzz_rand(r);
+        volatile uint32_t group     = (ino - 1u) / ipg;       /* read_inode's divide */
+        volatile uint32_t blk_group = block / bpg;            /* bitmap-group divide */
+        (void)group; (void)blk_group;
+
+        /* A block_size the gate let through must be one MAKH supports (1/2/4 KiB). */
+        if (spb != 2u && spb != 4u && spb != 8u) return -1;
+    }
+    return 0;
+}
+
+/* -------------------------------------------------------------------------- */
 /* 7. Fault injection: proves the ring-0 sandbox actually recovers             */
 /* -------------------------------------------------------------------------- */
 /*
@@ -702,6 +951,9 @@ static const kfuzz_target_t g_targets[] = {
     { "elf",     t_elf,     KFUZZ_T_ELF,     NULL },
     { "uvm",     t_uvm,     KFUZZ_T_UVM,     NULL },
     { "path",    t_path,    KFUZZ_T_PATH,    NULL },
+    { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
+    { "uaccess", t_uaccess, KFUZZ_T_UACCESS, NULL },
+    { "ext2geo", t_ext2geo, KFUZZ_T_EXT2,    NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

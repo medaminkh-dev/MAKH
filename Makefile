@@ -345,7 +345,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test smoke stress check-license list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -397,7 +397,7 @@ list-objects:
 clean:
 	@echo "Cleaning..."
 	@rm -f $(OBJECTS) $(C_SOURCES:.c=.d) $(KERNEL) $(ISO) $(TEST_ISO)
-	@rm -rf isodir isodir-test
+	@rm -rf isodir isodir-test isodir-suite $(SUITE_ISO)
 	@echo "Clean complete."
 
 # =============================================================================
@@ -449,6 +449,18 @@ $(TEST_ISO): $(TESTDISK) $(EXT2IMG)
 
 test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 	@python3 tools/run_tests.py $(TEST_ISO) --timeout 240
+
+# Fast inner loop: `make test-suite SUITE=ext2` boots a test ISO whose GRUB line
+# adds makh.suite=SUITE, so only that KTEST suite runs.
+SUITE_ISO = makhos-suite.iso
+test-suite: $(KERNEL) $(INITRD) $(TESTDISK) $(EXT2IMG)
+	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite>"; exit 2)
+	@rm -rf isodir-suite && mkdir -p isodir-suite/boot/grub
+	@sed 's/makh.test/makh.test makh.suite=$(SUITE)/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
+	@cp $(KERNEL) $(INITRD) isodir-suite/boot/
+	@grub-mkrescue -o $(SUITE_ISO) isodir-suite 2>/dev/null
+	@rm -rf isodir-suite
+	@python3 tools/run_tests.py $(SUITE_ISO) --timeout 240
 
 # Boot the normal image, type commands through the emulated PS/2 keyboard and
 # check what the shell prints (ping over the real e1000, arp, mem, ...).

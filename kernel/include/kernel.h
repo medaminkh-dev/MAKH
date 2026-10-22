@@ -12,8 +12,8 @@
 
 /* Kernel version */
 #define KERNEL_NAME     "MakhOS"
-#define KERNEL_VERSION  "1.1.0"
-#define KERNEL_PHASE    "Phase 35 (net tools, editor, self-hosting cc)"
+#define KERNEL_VERSION  "1.2.0"
+#define KERNEL_PHASE    "security audit + KFUZZ v2 (self-fuzzer hardening)"
 
 /* Kernel main entry point - called from boot.asm */
 void kernel_main(void);

@@ -155,7 +155,11 @@ int signal_take_terminate(void) {
     process_t* cur = current_process;
     if (!cur) return 0;
     irqflags_t f = local_irq_save();
-    uint64_t deliverable = cur->sig_pending & ~cur->sig_blocked;
+    /* SIGKILL and SIGSTOP are uncatchable: deliver them even if the mask claims
+     * to block them (a crafted sigreturn could set those bits — AUD-03a). The
+     * mask is honored for every other signal. */
+    uint64_t deliverable = cur->sig_pending &
+                           (~cur->sig_blocked | sigmask(SIGKILL) | sigmask(SIGSTOP));
     cur->sig_interrupt = 0;
     for (int sig = 1; sig < NSIG; sig++) {
         if (!(deliverable & sigmask(sig))) continue;
@@ -236,7 +240,11 @@ void signal_deliver(trapframe_t* tf) {
     process_t* cur = current_process;
     if (!cur || !cur->is_user) return;
     irqflags_t f = local_irq_save();
-    uint64_t deliverable = cur->sig_pending & ~cur->sig_blocked;
+    /* SIGKILL and SIGSTOP are uncatchable: deliver them even if the mask claims
+     * to block them (a crafted sigreturn could set those bits — AUD-03a). The
+     * mask is honored for every other signal. */
+    uint64_t deliverable = cur->sig_pending &
+                           (~cur->sig_blocked | sigmask(SIGKILL) | sigmask(SIGSTOP));
     cur->sig_interrupt = 0;
     for (int sig = 1; sig < NSIG; sig++) {
         if (!(deliverable & sigmask(sig))) continue;
@@ -253,11 +261,26 @@ void signal_deliver(trapframe_t* tf) {
     local_irq_restore(f);
 }
 
+/* A sigreturn frame is attacker-controlled, and the kernel returns to user via
+ * SYSRET, which #GPs in ring 0 (after swapgs) on a non-canonical RIP — the
+ * CVE-2012-0217 class. Require the restored RIP and RSP to be canonical
+ * user-half addresses before trusting them (AUD-02/03b). */
+int signal_restore_ok(uint64_t rip, uint64_t rsp) {
+    const uint64_t USER_END = 0x0000800000000000ULL;   /* first kernel-half VA */
+    if (rip < 0x1000ULL || rip >= USER_END) return 0;
+    if (rsp == 0ULL || rsp >= USER_END) return 0;
+    return 1;
+}
+
 long signal_sigreturn(trapframe_t* tf) {
     process_t* cur = current_process;
     sigcontext_t sc;
     if (copy_from_user(&sc, (const void*)(uintptr_t)tf->rsp, sizeof(sc)) < 0)
         thread_exit(128 + SIGSEGV);                 /* forged/clobbered frame */
+
+    /* Reject a forged non-canonical return state before it reaches SYSRET. */
+    if (!signal_restore_ok(sc.rip, sc.rsp))
+        thread_exit(128 + SIGSEGV);                 /* noreturn */
 
     tf->r15 = sc.r15; tf->r14 = sc.r14; tf->r13 = sc.r13; tf->r12 = sc.r12;
     tf->r11 = sc.r11; tf->r10 = sc.r10; tf->r9 = sc.r9;  tf->r8  = sc.r8;
@@ -267,7 +290,10 @@ long signal_sigreturn(trapframe_t* tf) {
     /* Sanitise RFLAGS: keep only the user-settable arithmetic/direction flags,
      * force IF=1 and the reserved bit, and never let ring 3 raise IOPL. */
     tf->rflags = (sc.rflags & 0x00000CD5ULL) | 0x202ULL;
-    if (cur) cur->sig_blocked = sc.blocked;         /* restore pre-handler mask */
+    /* Restore the pre-handler mask, but SIGKILL/SIGSTOP can never be blocked —
+     * strip them, as signal_procmask does, so a crafted frame cannot make the
+     * process unkillable (AUD-03a). */
+    if (cur) cur->sig_blocked = sc.blocked & ~(sigmask(SIGKILL) | sigmask(SIGSTOP));
     return (long)sc.rax;                            /* dispatcher sets tf->rax */
 }
 

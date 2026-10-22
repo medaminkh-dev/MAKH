@@ -12,7 +12,7 @@
 #include <types.h>
 
 /* Callee-saved regs + rsp + return address (see kernel/kfuzz/jmp.asm). */
-typedef uint64_t kfuzz_jmp_buf[8];
+typedef uint64_t kfuzz_jmp_buf[9];   /* rbx rbp r12 r13 r14 r15 rsp ret rflags */
 int  kfuzz_setjmp(kfuzz_jmp_buf buf);
 void kfuzz_longjmp(kfuzz_jmp_buf buf, int val) __attribute__((noreturn));
 
@@ -37,8 +37,11 @@ typedef enum {
     KFUZZ_T_ELF    = 1u << 10,  /* ELF64 loader on malformed images (Phase 20-A) */
     KFUZZ_T_UVM    = 1u << 11,  /* anonymous mmap/munmap/brk/mprotect (Phase 20-B) */
     KFUZZ_T_PATH   = 1u << 12,  /* path canonicalisation (Phase 20-C)            */
+    KFUZZ_T_OOM    = 1u << 13,  /* OOM rollback under allocation fault injection (v2) */
+    KFUZZ_T_UACCESS= 1u << 14,  /* copy_to/from_user with adversarial pointers (v2.4) */
+    KFUZZ_T_EXT2   = 1u << 15,  /* ext2 superblock geometry vs the mount gate (v2.4) */
     KFUZZ_T_ALL    = 0x3f | (1u << 7) | (1u << 8) | (1u << 9) | (1u << 10) |
-                     (1u << 11) | (1u << 12),
+                     (1u << 11) | (1u << 12) | (1u << 13) | (1u << 14) | (1u << 15),
     KFUZZ_T_FAULT  = 1u << 6,   /* deliberate #PF; tests sandbox recovery */
 } kfuzz_target_mask_t;
 

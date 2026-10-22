@@ -33,6 +33,7 @@
 #include <pthread.h>
 #include <ktime.h>
 #include <mm/kheap.h>
+#include <mm/pmm.h>
 #include <lib/string.h>
 #include <vga.h>
 
@@ -205,6 +206,8 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
         sb.cleanup = NULL;
         terminal_set_quiet(0);    /* a target that muted the console (t_shell)
                                      must not leave it muted after a caught fault */
+        pmm_test_fail_after(-1);  /* a fault mid-injection (t_oom) skipped its own
+                                     disarm; never let it leak into the next target */
         if (res) {
             res->crashes++;
             res->last_crash_seed   = seed;
@@ -219,14 +222,24 @@ static int run_one(const kfuzz_target_t* t, uint64_t seed, uint32_t iters,
     }
 
     sb.active = 1;
-    t->fn(&rng, iters);
+    int target_rc = t->fn(&rng, iters);
     sb.active = 0;
     sb.cleanup = NULL;
     terminal_set_quiet(0);        /* belt-and-suspenders: no target leaves the
                                      console muted once it has returned */
+    pmm_test_fail_after(-1);      /* nor the allocation-fault injector armed */
 
-    const char* why = "";
-    if (!oracles_ok(&why)) {
+    /* A target's own verdict counts. Several targets already compute a strict
+     * oracle — page conservation (t_vmspace/t_uvm/t_elf), buffer guards
+     * (t_path/t_heap), unique allocations (t_pmm) — and return non-zero when it
+     * breaks. run_one() used to throw that away and run only the global
+     * invariants (heap/bad-free/proc-tree), which do NOT check page
+     * conservation, so a leaked frame on an executed path was invisible. Honor
+     * the target's return, then the global oracles (KFUZZ v2.0). */
+    const char* why = NULL;
+    if (target_rc != 0) why = "target self-check failed (leak / corruption)";
+    else (void)oracles_ok(&why);
+    if (why) {
         if (res) res->oracle_fails++;
         KLOG_E("KFUZZ", "ORACLE FAIL target=%s seed=0x%lx (%s)  "
                         "replay: fuzz replay 0x%lx %s\n",

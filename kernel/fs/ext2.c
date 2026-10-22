@@ -227,7 +227,8 @@ static long ext2_read(vnode_t* vn, void* buf, size_t n, uint64_t off) {
  * so lookup and readdir share the walk. `want` is a name to match (lookup) or
  * NULL; `index` selects the nth entry (readdir). */
 static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
-                    uint32_t* out_ino, uint8_t* out_ftype, char* out_name) {
+                    uint32_t* out_ino, uint8_t* out_ftype, char* out_name, size_t cap,
+                    int all) {
     ext2_vinfo_t* vi = (ext2_vinfo_t*)dir->priv;
     if (!vi || dir->type != VNODE_DIR) return -1;
     ext2_fs_t* fs = vi->fs;
@@ -245,7 +246,9 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
             uint16_t rlen  = rd16(blk + o + 4);
             uint8_t  nlen  = blk[o + 6];
             uint8_t  ftype = blk[o + 7];
-            if (rlen < 8) break;                                 /* corrupt: stop */
+            /* A record must lie inside the block and hold its own name; a disk
+             * that says otherwise is corrupt (or hostile): stop, never over-read. */
+            if (rlen < 8 || o + rlen > fs->block_size || 8u + nlen > rlen) break;
             if (ino != 0 && nlen != 0) {
                 const char* name = (const char*)(blk + o + 8);
                 if (want) {
@@ -253,13 +256,15 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
                         *out_ino = ino; *out_ftype = ftype;
                         blk_free(blk); return 0;
                     }
-                } else if (seen == index) {
-                    uint8_t k = nlen; if (k > 254) k = 254;
-                    memcpy(out_name, name, k); out_name[k] = '\0';
-                    *out_ino = ino; *out_ftype = ftype;
-                    blk_free(blk); return 0;
+                } else if (all || nlen <= VFS_NAME_MAX) {      /* listable unless all  */
+                    if (seen == index) {
+                        size_t k = nlen; if (k + 1 > cap) k = cap ? cap - 1 : 0;
+                        if (cap) { memcpy(out_name, name, k); out_name[k] = '\0'; }
+                        *out_ino = ino; *out_ftype = ftype;
+                        blk_free(blk); return 0;
+                    }
+                    seen++;
                 }
-                seen++;
             }
             o += rlen;
         }
@@ -270,15 +275,15 @@ static int dir_walk(vnode_t* dir, const char* want, uint32_t index,
 
 static vnode_t* ext2_lookup(vnode_t* dir, const char* name) {
     uint32_t ino; uint8_t ftype;
-    if (dir_walk(dir, name, 0, &ino, &ftype, NULL) != 0) return NULL;
+    if (dir_walk(dir, name, 0, &ino, &ftype, NULL, 0, 0) != 0) return NULL;
     (void)ftype;                                 /* type comes from the inode */
     ext2_vinfo_t* vi = (ext2_vinfo_t*)dir->priv;
     return make_vnode(vi->fs, ino);
 }
 
-static int ext2_readdir(vnode_t* dir, uint32_t index, char* name_out) {
+static int ext2_readdir(vnode_t* dir, uint32_t index, char* name_out, size_t cap) {
     uint32_t ino; uint8_t ftype;
-    if (dir_walk(dir, NULL, index, &ino, &ftype, name_out) != 0) return -1;
+    if (dir_walk(dir, NULL, index, &ino, &ftype, name_out, cap, 0) != 0) return -1;
     return 0;
 }
 
@@ -685,10 +690,11 @@ static int dir_remove_entry(vnode_t* dir, const char* name, uint32_t* out_ino) {
     return -ENOENT;
 }
 
-/* True if `dir` holds only "." and "..". */
+/* True if `dir` holds only "." and "..". Counts every entry, including names
+ * too long for readdir to list, so rmdir never orphans one. */
 static int dir_is_empty(vnode_t* dir) {
     char nm[256]; uint32_t ino; uint8_t ft; uint32_t idx = 0, real = 0;
-    while (dir_walk(dir, NULL, idx, &ino, &ft, nm) == 0) {
+    while (dir_walk(dir, NULL, idx, &ino, &ft, nm, sizeof nm, 1) == 0) {
         if (!(nm[0] == '.' && (nm[1] == '\0' || (nm[1] == '.' && nm[2] == '\0')))) real++;
         idx++;
     }
@@ -758,7 +764,7 @@ static int ext2_unlink(vnode_t* dir, const char* name) {
 
     /* Find the child first so we can handle a directory (rmdir) vs a file. */
     uint32_t ino = 0; uint8_t ft = 0;
-    if (dir_walk(dir, name, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    if (dir_walk(dir, name, 0, &ino, &ft, NULL, 0, 0) != 0) return -ENOENT;
     ext2_vinfo_t cvi;
     if (read_inode(fs, ino, &cvi) != 0) return -EIO;
 
@@ -798,13 +804,13 @@ static int ext2_rename(vnode_t* olddir, const char* oldname,
     ext2_fs_t* fs = ovi->fs;
 
     uint32_t ino = 0; uint8_t ft = 0;
-    if (dir_walk(olddir, oldname, 0, &ino, &ft, NULL) != 0) return -ENOENT;
+    if (dir_walk(olddir, oldname, 0, &ino, &ft, NULL, 0, 0) != 0) return -ENOENT;
     ext2_vinfo_t cvi;
     if (read_inode(fs, ino, &cvi) != 0) return -EIO;
     int is_dir = (cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR;
 
     uint32_t existing = 0;                                /* replace a target if present */
-    if (dir_walk(newdir, newname, 0, &existing, &ft, NULL) == 0) {
+    if (dir_walk(newdir, newname, 0, &existing, &ft, NULL, 0, 0) == 0) {
         if (ext2_unlink(newdir, newname) != 0) return -EEXIST;
     }
 
@@ -841,6 +847,18 @@ static vfs_ops_t ext2_ops = {
 
 /* Mount the ext2 filesystem on virtio-blk `unit`; returns its root vnode or
  * NULL if `unit` does not hold a valid ext2 image. */
+/* Validate the superblock geometry before any shift or division uses it
+ * (AUD-05). block_size = 1024 << s_log_block_size, and MAKH supports up to
+ * 4 KiB, so the log must be 0..2 — a larger value makes the shift undefined
+ * and exceeds support. blocks_per_group and inodes_per_group are divisors all
+ * over the driver; a zero divides by zero on the first allocation. */
+int ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
+                     uint32_t inodes_per_group) {
+    if (s_log_block_size > 2) return 0;
+    if (blocks_per_group == 0 || inodes_per_group == 0) return 0;
+    return 1;
+}
+
 static vnode_t* ext2_mount_unit(int unit) {
     uint8_t* sb = blk_alloc();
     if (!sb) return NULL;
@@ -851,7 +869,7 @@ static vnode_t* ext2_mount_unit(int unit) {
     ext2_fs_t* fs = kcalloc(1, sizeof(*fs));
     if (!fs) { blk_free(sb); return NULL; }
     fs->unit             = unit;
-    fs->block_size       = 1024u << rd32(sb + 24);               /* s_log_block_size */
+    uint32_t log_bs      = rd32(sb + 24);                        /* s_log_block_size */
     fs->blocks_count     = rd32(sb + 4);
     fs->inodes_count     = rd32(sb + 0);
     fs->blocks_per_group = rd32(sb + 32);
@@ -859,14 +877,17 @@ static vnode_t* ext2_mount_unit(int unit) {
     fs->first_data_block = rd32(sb + 20);
     uint16_t isz         = rd16(sb + 88);                        /* s_inode_size */
     fs->inode_size       = isz ? isz : 128;                      /* rev0 = 128 */
-    fs->spb              = fs->block_size / 512;
     fs->gdt_block        = fs->first_data_block + 1;
     blk_free(sb);
 
-    if (fs->block_size > 4096 || fs->spb == 0 || fs->inodes_per_group == 0) {
-        KLOG_E("EXT2", "unsupported geometry (bs=%u)\n", fs->block_size);
+    /* Reject malformed geometry before it reaches a shift or a divisor. */
+    if (!ext2_geometry_ok(log_bs, fs->blocks_per_group, fs->inodes_per_group)) {
+        KLOG_E("EXT2", "unsupported geometry (log_bs=%u bpg=%u ipg=%u)\n",
+               log_bs, fs->blocks_per_group, fs->inodes_per_group);
         kfree(fs); return NULL;
     }
+    fs->block_size = 1024u << log_bs;          /* safe: log_bs <= 2 (<= 4 KiB) */
+    fs->spb        = fs->block_size / 512;      /* 2, 4 or 8 — never 0 */
 
     vnode_t* root = make_vnode(fs, EXT2_ROOT_INO);
     if (!root) { kfree(fs); return NULL; }

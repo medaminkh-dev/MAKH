@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kernel.c
- * Version: 1.1.0
+ * Version: 1.2.0
  * Main kernel entry point
  */
 
@@ -915,7 +915,10 @@ void kernel_main(void) {
      * This is what `make test` and CI drive.
      * ------------------------------------------------------------------- */
     if (cmdline_has("makh.test")) {
-        int fails = ktest_run_all();
+        /* "makh.suite=NAME" narrows the run to one suite (make test-suite). */
+        char suite[32];
+        int fails = cmdline_value("makh.suite", suite, sizeof suite)
+                  ? ktest_run_suite(suite) : ktest_run_all();
         kprintf("\n[TEST] finished: %d failing test(s)\n", fails);
         qemu_debug_exit(fails == 0 ? 0 : 1);
         kernel_halt();  /* unreached if isa-debug-exit is present */

@@ -54,4 +54,7 @@ KTEST(string, strchr) {
     KEXPECT_EQ(strchr(s, '/') - s, 1);
     KEXPECT_EQ(strrchr(s, '/') - s, 3);
     KEXPECT((void*)strchr(s, 'z') == (void*)0);
+    /* The terminating NUL is part of the string: strchr(s,0) returns a pointer
+     * to it, not NULL (found by KFUZZ once run_one honored the target verdict). */
+    KEXPECT_EQ(strchr(s, '\0') - s, 5);
 }

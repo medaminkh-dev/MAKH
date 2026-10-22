@@ -48,6 +48,10 @@ void pmm_reserve_region(uint64_t phys_addr, uint64_t len);
  */
 void* pmm_alloc_page(void);
 
+/* Test-only: fail the (n+1)-th subsequent single-page allocation once, then
+ * disarm. n<0 disables. Used by KTESTs to exercise OOM rollback paths. */
+void pmm_test_fail_after(int64_t n);
+
 /**
  * pmm_alloc_pages - Allocate n physically-contiguous 4KB pages
  * @n: number of consecutive pages

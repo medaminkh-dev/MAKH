@@ -385,7 +385,7 @@ long vfs_getdents(int fd, void* buf, size_t n) {
 
     for (;;) {
         uint32_t idx = (uint32_t)f->offset;
-        if (dir->ops->readdir(dir, idx, name) != 0) break;       /* end of dir */
+        if (dir->ops->readdir(dir, idx, name, sizeof name) != 0) break;       /* end of dir */
         size_t namelen = strlen(name);
         size_t reclen = (hdr + namelen + 1 + 7) & ~(size_t)7;    /* 8-aligned */
         if (used + reclen > n) {
