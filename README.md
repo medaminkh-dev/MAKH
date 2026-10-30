@@ -11,7 +11,7 @@
 [![Commercial license](https://img.shields.io/badge/commercial-available-success.svg)](LICENSING.md)
 ![Arch](https://img.shields.io/badge/arch-x86--64-informational)
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
-![Tests](https://img.shields.io/badge/in--kernel%20tests-183%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/in--kernel%20tests-204%20passing-brightgreen)
 
 [Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 
@@ -31,7 +31,7 @@ ring 0** (KFUZZ), survives the CPU faults it provokes, and prints the exact seed
 to reproduce each one.
 
 Everything is built **brick by brick** (طوبة طوبة): a phase lands only when its
-tests are green — **183 in-kernel tests**, a stress runner, and CI on every push.
+tests are green — **204 in-kernel tests**, a stress runner, and CI on every push.
 
 ```console
 $ help

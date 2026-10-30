@@ -147,24 +147,35 @@ and a bad `block_size` trips an explicit oracle.
 
 ### 3.5 The honest gaps — findings v2 fixes but does **not** yet fuzz
 
-Three findings are fixed and covered by **regression KTESTs**, but have **no
-fuzzer target yet**, because faithfully fuzzing them needs machinery MAKH hasn't
-built. Pretending otherwise would be exactly the self-congratulation this
-document exists to avoid.
+In 1.2.0 three findings were fixed and covered by **regression KTESTs** but had
+**no fuzzer target**, because faithfully reaching them needed machinery MAKH
+hadn't built. **1.3.0 built that machinery and closed all three** — the update
+below records how, and keeps the same honesty rule: a "yes" means the exact fix
+was reverted and the fuzzer (or the ring-3 harness) caught the regression; where
+an emulator can't show the regression, it says so instead of rounding up.
 
+- **AUD-04** (ELF entry point outside any executable segment): closed in 1.3.0
+  by giving `t_elf` a *known-verdict* oracle — the generator now emits images
+  whose correct accept/reject outcome it knows, so an entry point placed one
+  byte past the executable segment is a verdict mismatch the target reports.
 - **F1** (ext2 `readdir` name overflow) and the ext2 *on-disk* parsing surface:
-  a faithful target needs an in-memory virtio-blk backend to mount a mutated
-  image. `t_ext2geo` covers the *geometry-arithmetic* slice of the ext2 attack
-  surface; the directory/inode-walking slice still waits on that RAM-disk.
-- **AUD-03** (`sigreturn` trusting attacker RIP/RSP/mask): faithfully fuzzing it
-  means driving the signal-delivery path from a ring-3 context, which the ring-0
-  sandbox can't stand in for. Fixed and KTEST-covered; not yet fuzzed.
-- **AUD-04** (ELF entry point outside any executable segment): a defense-in-depth
-  check, regression-tested. The ELF generator could be extended to target it.
+  closed in 1.3.0 by `t_ext2img`. A copy-on-write `blkdev` overlay (fs/blkdev.h)
+  mounts the test's own ext2 image with a few mutated metadata sectors, then
+  walks it into a guarded buffer; the 200-byte name under `/longdir` exercises
+  the `readdir` bound every clean mount. `t_ext2geo` still covers the
+  geometry-arithmetic slice; `t_ext2img` adds the directory/inode-walking slice.
+- **AUD-03** (`sigreturn` trusting attacker RIP/RSP/mask): closed in 1.3.0 by
+  `/bin/sigfuzz`, a ring-3 adversary that forges the saved frame from inside a
+  signal handler and lets the real `rt_sigreturn` run. Reverting the RFLAGS
+  sanitise or the SIGKILL/SIGSTOP mask-strip flips its exit status, so those two
+  are true oracles; the non-canonical RIP/RSP rejection asserts the safe
+  end-to-end outcome but cannot flip under QEMU-TCG (the ring-0 SYSRET `#GP` it
+  guards — CVE-2012-0217 — is Intel-silicon behaviour the emulator does not
+  model), so the validator's logic stays pinned by its white-box KTEST.
 
-These are the honest edges of the bet, and they are the roadmap: a RAM-backed
-block device unlocks the ext2 on-disk surface, and a userspace-fuzzing harness
-unlocks the syscall-boundary surface (sigreturn among them).
+The machinery that unlocked them — a block-device abstraction with a RAM/COW
+backend, and a ring-3 syscall-boundary harness — is the same machinery the
+roadmap needs for the on-disk and userspace surfaces at large.
 
 ---
 
@@ -186,14 +197,17 @@ proofs live in the commit messages for each target.
 | AUD-01 — copy_to_user store fault | ring-0 `#PF` | ✗ | no uaccess target | v2.4 `t_uaccess` | ✓ caught `#PF`, vector 14 |
 | AUD-05 — ext2 geometry | `#DE` + shift UB | ✗ | no ext2 geometry target | v2.4 `t_ext2geo` | ✓ caught `#DE` (vector 0) + oracle |
 | AUD-07 — ELF frame orphaned on map fail | frame leak | ✗ | `t_elf` ran memory-plentiful | v2.4 ELF fault injection in `t_oom` | ✓ page-conservation oracle |
-| F1 — ext2 readdir name overflow | stack smash | ✗ | no ext2 on-disk target | — (needs RAM-disk) | ✗ fix + KTEST only |
-| AUD-03 — sigreturn trusts user state | priv / UB | ✗ | no ring-3 syscall harness | — (needs userspace fuzzing) | ✗ fix + KTEST only |
-| AUD-04 — ELF entry outside exec seg | hardening | ✗ | — | — (generator could extend) | ✗ fix + KTEST only |
+| AUD-04 — ELF entry outside exec seg | hardening | ✗ | `t_elf` had no verdict oracle | **v2.5** known-verdict `t_elf` | ✓ verdict-mismatch oracle |
+| F1 — ext2 readdir name overflow | stack smash | ✗ | no ext2 on-disk target | **v2.5** `t_ext2img` (COW blkdev) | ✓ guard-clobber oracle |
+| AUD-03 — sigreturn trusts user state | priv / UB | ✗ | no ring-3 syscall harness | **v2.5** `/bin/sigfuzz` ring-3 harness | ◑ mask + RFLAGS flip; RIP/RSP not shown by TCG |
 
-**Tally:** of 8 findings whose class is reachable from the ring-0 sandbox, v1
-caught **0** and v2 catches **8**. Three further findings (F1, AUD-03, AUD-04)
-are fixed and regression-tested but remain outside the fuzzer's current reach —
-named here rather than rounded up.
+**Tally:** v1 caught **0** of these 11 findings; **v2** (1.2.0) reached the **8**
+whose class the ring-0 sandbox can exercise, and **v2.5** (1.3.0) reached the
+last three — AUD-04 and F1 as full oracles, AUD-03 as two oracles (the mask and
+RFLAGS defenses) plus one end-to-end safety assertion (the non-canonical RIP/RSP
+rejection, whose ring-0 `#GP` regression QEMU-TCG does not model). So **10 of 11
+flip when their fix is reverted**, and the 11th is pinned end-to-end plus by a
+white-box validator test — named precisely rather than rounded up to 11/11.
 
 ### 4.2 Engine capabilities
 
