@@ -65,7 +65,7 @@ KTEST(usignal, sigkill_delivers_even_if_mask_blocks_it) {
 static int run_sigfuzz(const char* mode) {
     char* argv[] = { "/bin/sigfuzz", (char*)mode, 0 };
     int pid = proc_spawn_user_argv("/bin/sigfuzz", argv);
-    KASSERT_TEST(pid > 0);
+    if (pid <= 0) return -1;         /* spawn failed: never equals an expected status */
     int status = -1;
     sys_waitpid(pid, &status);
     return status;
