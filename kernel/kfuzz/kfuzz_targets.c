@@ -35,6 +35,7 @@
 #include <mm/uvm.h>
 #include <arch/usermode.h>
 #include <syscall.h>
+#include <errno.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -510,6 +511,7 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
     for (uint32_t it = 0; it < iters; it++) {
         uint8_t buf[ELF_FZ_MAX];
         uint32_t n;
+        int expect = 0, has_expect = 0;   /* AUD-04: known-verdict modes set these */
 
         if (kfuzz_rand_below(r, 4) == 0) {
             n = kfuzz_rand_below(r, ELF_FZ_MAX + 1);     /* pure garbage */
@@ -539,6 +541,41 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
                 *(uint64_t*)(p + 32) = 0x40;             /* p_filesz */
                 *(uint64_t*)(p + 40) = 0x40;             /* p_memsz  */
             }
+            n = 0x180;
+            goto write_elf;
+        } else if (kfuzz_rand_below(r, 2) == 0) {
+            /* AUD-04: structured entry test with a KNOWN verdict. A valid single
+             * PT_LOAD at 0x400000; e_entry is placed inside / at the edge of /
+             * just past the segment, or inside a non-exec segment. The loader
+             * must REJECT an entry outside any executable segment and ACCEPT one
+             * inside it — "did not fault" is not enough; the verdict must match. */
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC */
+            *(uint16_t*)(buf + 18) = 0x3E;
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff */
+            *(uint16_t*)(buf + 54) = 56;
+            *(uint16_t*)(buf + 56) = 1;                  /* e_phnum = 1 */
+            {
+                uint8_t* ph    = buf + 64;
+                uint64_t seg   = 0x400000ull, memsz = 0x1000ull;
+                *(uint32_t*)(ph + 0)  = 1;               /* PT_LOAD */
+                *(uint64_t*)(ph + 8)  = 0x100;           /* p_offset */
+                *(uint64_t*)(ph + 16) = seg;             /* p_vaddr  */
+                *(uint64_t*)(ph + 32) = 0x40;            /* p_filesz */
+                *(uint64_t*)(ph + 40) = memsz;           /* p_memsz  */
+                uint32_t flags; uint64_t entry;
+                switch (kfuzz_rand_below(r, 4)) {
+                case 0:  flags = 5; entry = seg;             expect = 0;        break; /* in X seg   */
+                case 1:  flags = 5; entry = seg + memsz - 1; expect = 0;        break; /* last byte  */
+                case 2:  flags = 5; entry = seg + memsz;     expect = -ENOEXEC; break; /* one past   */
+                default: flags = 6; entry = seg;             expect = -ENOEXEC; break; /* non-X seg  */
+                }
+                *(uint32_t*)(ph + 4)   = flags;          /* p_flags */
+                *(uint64_t*)(buf + 24) = entry;          /* e_entry */
+            }
+            has_expect = 1;
             n = 0x180;
             goto write_elf;
         } else {
@@ -586,9 +623,13 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
         address_space_t as;
         if (vmspace_create(&as) != 0) continue;
         uint64_t entry = 0;
-        (void)elf_load(vn, &as, &entry, NULL); /* must return, never fault */
+        int rc = elf_load(vn, &as, &entry, NULL); /* must return, never fault */
         vmspace_destroy(&as);
         if (pmm_get_free_memory() != snap) { vfs_unlink(path); return -1; }
+        /* AUD-04: in known-verdict modes the loader must return EXACTLY the
+         * expected result — reject an entry outside an executable segment,
+         * accept one inside it. */
+        if (has_expect && rc != expect) { vfs_unlink(path); return -1; }
     }
     vfs_unlink(path);
     return 0;
