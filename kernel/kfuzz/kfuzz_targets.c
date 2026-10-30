@@ -29,6 +29,8 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <fs/vfs.h>
+#include <fs/blkdev.h>
+#include <drivers/virtio_blk.h>
 #include <tty.h>
 #include <signal.h>
 #include <elf.h>
@@ -979,6 +981,124 @@ static int t_fault(kfuzz_rng_t* r, uint32_t iters) {
 /* Registry                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* 16. ext2 image: mount a malformed ext2 and walk it (1.3.0 / closes F1)      */
+/* -------------------------------------------------------------------------- */
+/*
+ * t_ext2geo fuzzes the geometry *values*; this fuzzes a whole ext2 *image*
+ * through the real path: mount -> read_inode -> readdir -> read. The disk is
+ * the test's own ext2 (found by its magic); we never touch it — a copy-on-write
+ * overlay serves our mutated sectors and the driver's writes, and every other
+ * sector passes through to the real disk read-only. Each iteration seeds a few
+ * mutated low (metadata) sectors, mounts through the blkdev overlay, and walks.
+ *
+ * Oracle (F1 and its class): readdir must never write past the caller's buffer
+ * cap, whatever name_len the disk claims. The test image already carries a
+ * 200-byte name under /longdir, so reading it into a 64-byte guarded buffer
+ * exercises the bound even unmutated; mutation extends the reach to corrupted
+ * rec_len / inode / geometry. A fault reaches the sandbox as a crash; a clobbered
+ * guard is an oracle failure; and at least one clean mount must succeed per
+ * campaign (a fuzzer that only ever sees -EIO would be blind).
+ */
+#define EXT2IMG_OVL 128        /* copy-on-write overlay: how many sectors we diverge */
+typedef struct {
+    int      unit;
+    uint32_t n;
+    struct { uint64_t lba; uint8_t d[512]; } s[EXT2IMG_OVL];
+} ext2cow_t;
+static ext2cow_t g_ext2cow;    /* BSS, not heap: keeps run_target's heap check honest */
+
+static int ext2cow_find(ext2cow_t* c, uint64_t lba) {
+    for (uint32_t i = 0; i < c->n; i++) if (c->s[i].lba == lba) return (int)i;
+    return -1;
+}
+static int ext2cow_read(void* ctx, uint64_t lba, void* buf, uint32_t cnt) {
+    ext2cow_t* c = (ext2cow_t*)ctx;
+    for (uint32_t k = 0; k < cnt; k++) {
+        int i = ext2cow_find(c, lba + k);
+        if (i >= 0) memcpy((uint8_t*)buf + 512 * k, c->s[i].d, 512);
+        else if (virtio_blk_read(c->unit, lba + k, (uint8_t*)buf + 512 * k, 1) != 0) return -5;
+    }
+    return 0;
+}
+static int ext2cow_write(void* ctx, uint64_t lba, const void* buf, uint32_t cnt) {
+    ext2cow_t* c = (ext2cow_t*)ctx;
+    for (uint32_t k = 0; k < cnt; k++) {
+        int i = ext2cow_find(c, lba + k);
+        if (i < 0) { if (c->n >= EXT2IMG_OVL) continue; i = (int)c->n++; c->s[i].lba = lba + k; }
+        memcpy(c->s[i].d, (const uint8_t*)buf + 512 * k, 512);
+    }
+    return 0;
+}
+/* Overlay one mutated copy of real sector `lba`: read it, flip bytes, store. */
+static void ext2cow_mutate(ext2cow_t* c, kfuzz_rng_t* r, uint64_t lba) {
+    if (c->n >= EXT2IMG_OVL) return;
+    uint8_t tmp[512];
+    if (virtio_blk_read(c->unit, lba, tmp, 1) != 0) return;
+    uint32_t flips = 1 + kfuzz_rand_below(r, 8);
+    for (uint32_t f = 0; f < flips; f++) tmp[kfuzz_rand_below(r, 512)] = (uint8_t)kfuzz_rand(r);
+    (void)ext2cow_write(c, lba, tmp, 1);
+}
+
+static int ext2img_find_unit(void) {
+    int n = virtio_blk_count();
+    void* pg = pmm_alloc_page();
+    if (!pg) return -1;
+    uint8_t* sb = (uint8_t*)P2V((uint64_t)(uintptr_t)pg);
+    int found = -1;
+    for (int u = 0; u < n; u++) {
+        if (virtio_blk_read(u, 2, sb, 2) == 0 &&
+            (uint16_t)(sb[56] | (sb[57] << 8)) == 0xEF53) { found = u; break; }
+    }
+    pmm_free_page(pg);
+    return found;
+}
+
+static int t_ext2img(kfuzz_rng_t* r, uint32_t iters) {
+    int unit = ext2img_find_unit();
+    if (unit < 0) return 0;                 /* no ext2 disk in this boot: skip */
+    uint64_t cap = virtio_blk_capacity(unit);
+    int mounted_ok = 0;
+
+    for (uint32_t it = 0; it < iters; it++) {
+        g_ext2cow.unit = unit;
+        g_ext2cow.n    = 0;
+
+        /* Seed a few mutated metadata sectors (group 0 holds sb/GDT/bitmaps/
+         * inode table/root dir for the test image). Half the iterations stay
+         * unmutated so the clean mount + the 200-byte-name readdir always run. */
+        if (kfuzz_rand(r) & 1) {
+            uint32_t m = 1 + kfuzz_rand_below(r, 6);
+            for (uint32_t j = 0; j < m; j++)
+                ext2cow_mutate(&g_ext2cow, r, 2 + kfuzz_rand_below(r, 300));
+        }
+
+        blkdev_t dev = { .ctx = &g_ext2cow, .nsectors = cap,
+                         .read = ext2cow_read, .write = ext2cow_write };
+        vnode_t* root = ext2_mount_dev(&dev);
+        if (!root) continue;                 /* mutation broke the superblock: fine */
+        mounted_ok++;
+
+        /* Guarded name buffer: readdir must never write past its `cap`. */
+        struct { char name[64]; uint8_t guard[16]; } gb;
+        int clobber = 0;
+
+        for (int pass = 0; pass < 2 && !clobber; pass++) {
+            vnode_t* dir = root;
+            if (pass == 1) dir = root->ops->lookup ? root->ops->lookup(root, "longdir") : NULL;
+            if (!dir) continue;
+            for (int g = 0; g < 16; g++) gb.guard[g] = 0xAB;
+            for (uint32_t idx = 0; idx < 64; idx++)
+                if (dir->ops->readdir(dir, idx, gb.name, sizeof gb.name) != 0) break;
+            for (int g = 0; g < 16; g++) if (gb.guard[g] != 0xAB) clobber = 1;
+        }
+
+        ext2_unmount(root);
+        if (clobber) return -1;              /* F1: readdir wrote past the buffer */
+    }
+    return mounted_ok ? 0 : -1;              /* never mounting cleanly = blind fuzzer */
+}
+
 static const kfuzz_target_t g_targets[] = {
     { "heap",    t_heap,    KFUZZ_T_HEAP,    NULL },
     { "pmm",     t_pmm,     KFUZZ_T_PMM,     NULL },
@@ -995,6 +1115,7 @@ static const kfuzz_target_t g_targets[] = {
     { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
     { "uaccess", t_uaccess, KFUZZ_T_UACCESS, NULL },
     { "ext2geo", t_ext2geo, KFUZZ_T_EXT2,    NULL },
+    { "ext2img", t_ext2img, KFUZZ_T_EXT2IMG, NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

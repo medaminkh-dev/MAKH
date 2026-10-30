@@ -66,6 +66,7 @@ typedef struct ext2_fs {
     uint32_t inode_size;
     uint32_t first_data_block;
     uint32_t gdt_block;              /* first block of the group-descriptor table */
+    struct vnode* gc_head;           /* list of vnodes this fs created, for unmount */
 } ext2_fs_t;
 
 typedef struct ext2_vinfo {
@@ -76,6 +77,7 @@ typedef struct ext2_vinfo {
     uint16_t   links;                /* i_links_count */
     uint32_t   blocks512;            /* i_blocks (512-byte units) */
     uint32_t   i_block[15];          /* the inode's block map */
+    struct vnode* gc_next;           /* next vnode in this fs's created list */
 } ext2_vinfo_t;
 
 #define EXT2_S_IFMT  0xF000
@@ -181,6 +183,8 @@ static vnode_t* make_vnode(ext2_fs_t* fs, uint32_t ino) {
     vn->mode = vi->mode & 07777;          /* real on-disk permission bits      */
     vn->priv = vi;
     vn->ops  = &ext2_ops;
+    vi->gc_next = fs->gc_head;        /* thread onto the fs's created-vnode list */
+    fs->gc_head = vn;
     return vn;
 }
 
@@ -907,6 +911,23 @@ vnode_t* ext2_mount_dev(blkdev_t* dev) {
     KLOG_I("EXT2", "mounted: block_size=%u inode_size=%u\n",
            fs->block_size, fs->inode_size);
     return root;
+}
+
+/* Tear down a private ext2 mount: free every vnode the fs created (root plus
+ * any reached by lookup/readdir) and the fs itself. Does NOT free `dev` — the
+ * caller owns it. Only safe when no fd still references these vnodes, i.e. the
+ * KFUZZ ext2-image target; the real-disk mount is permanent and never calls it. */
+void ext2_unmount(vnode_t* root) {
+    if (!root || !root->priv) return;
+    ext2_fs_t* fs = ((ext2_vinfo_t*)root->priv)->fs;
+    vnode_t* vn = fs->gc_head;
+    while (vn) {
+        vnode_t* next = ((ext2_vinfo_t*)vn->priv)->gc_next;
+        kfree(vn->priv);             /* ext2_vinfo_t */
+        kfree(vn);
+        vn = next;
+    }
+    kfree(fs);
 }
 
 /* Mount the ext2 filesystem on virtio-blk `unit` (the real-disk path). The
