@@ -17,6 +17,7 @@
  */
 
 #include <fs/vfs.h>
+#include <fs/blkdev.h>
 #include <drivers/virtio_blk.h>
 #include <mm/pmm.h>
 #include <mm/vmm.h>
@@ -55,7 +56,7 @@ static inline void* blk_alloc(void) {
 static inline void blk_free(void* v) { if (v) pmm_free_page((void*)V2P(v)); }
 
 typedef struct ext2_fs {
-    int      unit;                   /* virtio-blk unit */
+    blkdev_t* dev;                   /* backing block device (virtio or ramdisk) */
     uint32_t block_size;             /* bytes per fs block */
     uint32_t spb;                    /* sectors per fs block (block_size/512) */
     uint32_t inodes_per_group;
@@ -85,11 +86,11 @@ static int write_inode(ext2_fs_t* fs, ext2_vinfo_t* vi);   /* forward (used by c
 
 /* Read one fs block into `dst` (dst must hold block_size bytes; a pmm page). */
 static int bread(ext2_fs_t* fs, uint32_t blk, void* dst) {
-    return virtio_blk_read(fs->unit, (uint64_t)blk * fs->spb, dst, fs->spb);
+    return fs->dev->read(fs->dev->ctx, (uint64_t)blk * fs->spb, dst, fs->spb);
 }
 /* Write one fs block from `src` (block_size bytes; a pmm page). */
 static int bwrite(ext2_fs_t* fs, uint32_t blk, const void* src) {
-    return virtio_blk_write(fs->unit, (uint64_t)blk * fs->spb, src, fs->spb);
+    return fs->dev->write(fs->dev->ctx, (uint64_t)blk * fs->spb, src, fs->spb);
 }
 
 /* Load inode `ino` into `vi` (block map + size). Returns 0 or -errno. */
@@ -374,10 +375,10 @@ static void adj_free_counts(ext2_fs_t* fs, uint32_t g, uint32_t gd_off16,
         if (delta < 0) { if (v) wr16(b + o, v - 1); } else wr16(b + o, (uint16_t)(v + 1));
         bwrite(fs, gdblk, b);
     }
-    if (virtio_blk_read(fs->unit, 2, b, 2) == 0) {       /* superblock @ byte 1024 */
+    if (fs->dev->read(fs->dev->ctx, 2, b, 2) == 0) {     /* superblock @ byte 1024 */
         uint32_t v = rd32(b + sb_off32);
         if (delta < 0) { if (v) wr32(b + sb_off32, v - 1); } else wr32(b + sb_off32, v + 1);
-        virtio_blk_write(fs->unit, 2, b, 2);
+        fs->dev->write(fs->dev->ctx, 2, b, 2);
     }
     blk_free(b);
 }
@@ -859,16 +860,28 @@ int ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
     return 1;
 }
 
-static vnode_t* ext2_mount_unit(int unit) {
+/* ---- virtio-blk backend for the generic block interface ---- */
+static int ev_read(void* ctx, uint64_t lba, void* buf, uint32_t cnt) {
+    return virtio_blk_read((int)(uintptr_t)ctx, lba, buf, cnt);
+}
+static int ev_write(void* ctx, uint64_t lba, const void* buf, uint32_t cnt) {
+    return virtio_blk_write((int)(uintptr_t)ctx, lba, buf, cnt);
+}
+
+/* Mount ext2 from any block device. The caller owns `dev`: ext2 keeps the
+ * pointer and reads/writes through it, and ext2_unmount() frees only ext2's
+ * own allocations (fs + the vnodes it made), never `dev`. Returns the root
+ * vnode, or NULL if `dev` holds no valid/supported ext2 image. */
+vnode_t* ext2_mount_dev(blkdev_t* dev) {
     uint8_t* sb = blk_alloc();
     if (!sb) return NULL;
     /* Superblock lives at byte offset 1024 — sector 2, two 512-byte sectors. */
-    if (virtio_blk_read(unit, 2, sb, 2) != 0) { blk_free(sb); return NULL; }
+    if (dev->read(dev->ctx, 2, sb, 2) != 0) { blk_free(sb); return NULL; }
     if (rd16(sb + 56) != EXT2_MAGIC) { blk_free(sb); return NULL; }
 
     ext2_fs_t* fs = kcalloc(1, sizeof(*fs));
     if (!fs) { blk_free(sb); return NULL; }
-    fs->unit             = unit;
+    fs->dev              = dev;
     uint32_t log_bs      = rd32(sb + 24);                        /* s_log_block_size */
     fs->blocks_count     = rd32(sb + 4);
     fs->inodes_count     = rd32(sb + 0);
@@ -891,8 +904,23 @@ static vnode_t* ext2_mount_unit(int unit) {
 
     vnode_t* root = make_vnode(fs, EXT2_ROOT_INO);
     if (!root) { kfree(fs); return NULL; }
-    KLOG_I("EXT2", "mounted unit %d: block_size=%u inode_size=%u\n",
-           unit, fs->block_size, fs->inode_size);
+    KLOG_I("EXT2", "mounted: block_size=%u inode_size=%u\n",
+           fs->block_size, fs->inode_size);
+    return root;
+}
+
+/* Mount the ext2 filesystem on virtio-blk `unit` (the real-disk path). The
+ * virtio block device it builds lives for the life of the system; the mount
+ * is permanent, so it is never unmounted or freed. */
+static vnode_t* ext2_mount_unit(int unit) {
+    blkdev_t* dev = kcalloc(1, sizeof(*dev));
+    if (!dev) return NULL;
+    dev->ctx      = (void*)(uintptr_t)unit;
+    dev->nsectors = virtio_blk_capacity(unit);
+    dev->read     = ev_read;
+    dev->write    = ev_write;
+    vnode_t* root = ext2_mount_dev(dev);
+    if (!root) { kfree(dev); return NULL; }
     return root;
 }
 
