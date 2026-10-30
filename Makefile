@@ -232,7 +232,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/forktest build/user/forkexec build/user/forkcow \
             build/user/readline build/user/sh build/user/echo \
             build/user/execargs build/user/spinner build/user/jobtest \
-            build/user/sigtest build/user/sigmask build/user/tlstest \
+            build/user/sigtest build/user/sigmask build/user/sigfuzz build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
             build/user/iovtest build/user/lowexec build/user/unametest \
