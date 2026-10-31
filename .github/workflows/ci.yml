@@ -45,7 +45,11 @@ jobs:
         run: make CC=$CC all makhos-test.iso
 
       - name: Run in-kernel test suite
-        run: python3 tools/run_tests.py makhos-test.iso --timeout 240
+        # The full suite is ~175s locally; shared TCG runners run it well over
+        # the old 240s (they are ~1.5x slower and 1.3.0's ext2-image fuzz target
+        # adds real block I/O), which timed the run out mid-suite. Give generous
+        # headroom — well under the 20-minute job cap.
+        run: python3 tools/run_tests.py makhos-test.iso --timeout 900
 
   stress:
     runs-on: ubuntu-latest

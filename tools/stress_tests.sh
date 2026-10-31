@@ -12,7 +12,10 @@ ISO=${3:-makhos-test.iso}
 OUT=$(mktemp -d)
 
 run_one() {
-    python3 tools/run_tests.py "$ISO" --timeout 180 > "$OUT/run_$1.log" 2>&1
+    # Generous per-run timeout: the suite is ~175s locally but much slower on a
+    # shared/parallel TCG host. (run_tests.py now prints a RESULT: FAIL marker on
+    # timeout, so a timed-out run is counted as a failure below, not missed.)
+    python3 tools/run_tests.py "$ISO" --timeout 420 > "$OUT/run_$1.log" 2>&1
 }
 
 i=0
