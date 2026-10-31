@@ -11,6 +11,19 @@ on:
     branches: [ "**" ]
   pull_request:
 
+# Pin the compiler. The runner's default `gcc` tracks the newest packaged GCC,
+# which has twice broken this build out from under us: GCC 14 promoted
+# -Wreturn-mismatch to a hard error, and a still-newer GCC isolates an early
+# pmm_init() path to a `ud2` (invalid-opcode #UD) that triple-faults at boot —
+# a path GCC 13 and GCC 14 both compile to correct, passing code (204/204
+# locally), so it reads as compiler over-aggression on sound code rather than a
+# reproduced defect. Until that is root-caused against a local GCC 15, build
+# with the validated GCC 13 (the Ubuntu 24.04 base compiler) so CI is
+# reproducible. The early-IDT change in 1.3.0 is what turned that silent triple
+# fault into a diagnosable exception dump; see docs/RELEASE_1.3.0.md.
+env:
+  CC: gcc-13
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -25,14 +38,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential nasm grub-pc-bin grub-common xorriso mtools \
+            build-essential gcc-13 nasm grub-pc-bin grub-common xorriso mtools \
             qemu-system-x86 e2fsprogs
 
       - name: Build kernel + ISOs
-        run: make all makhos-test.iso
+        run: make CC=$CC all makhos-test.iso
 
       - name: Run in-kernel test suite
-        run: python3 tools/run_tests.py makhos-test.iso --timeout 240
+        # The full suite is ~175s locally; shared TCG runners run it well over
+        # the old 240s (they are ~1.5x slower and 1.3.0's ext2-image fuzz target
+        # adds real block I/O), which timed the run out mid-suite. Give generous
+        # headroom — well under the 20-minute job cap.
+        run: python3 tools/run_tests.py makhos-test.iso --timeout 900
 
   stress:
     runs-on: ubuntu-latest
@@ -44,11 +61,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential nasm grub-pc-bin grub-common xorriso mtools \
+            build-essential gcc-13 nasm grub-pc-bin grub-common xorriso mtools \
             qemu-system-x86 e2fsprogs
 
       - name: Build test ISO
-        run: make makhos-test.iso
+        run: make CC=$CC makhos-test.iso
 
       - name: Stress the suite (12 runs, 4 in parallel)
         run: bash tools/stress_tests.sh 12 4 makhos-test.iso

@@ -18,6 +18,11 @@
 #   - Added kernel/proc/tree/tree.c
 # =============================================================================
 
+# Build the whole OS (kernel + ISO) on a bare `make`. Without this the default
+# goal would be the first rule in the file (build/user/start.o), since the user-
+# program rules are defined before `all:`.
+.DEFAULT_GOAL := all
+
 # Toolchain
 CC = gcc
 AS = nasm
@@ -232,7 +237,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/forktest build/user/forkexec build/user/forkcow \
             build/user/readline build/user/sh build/user/echo \
             build/user/execargs build/user/spinner build/user/jobtest \
-            build/user/sigtest build/user/sigmask build/user/tlstest \
+            build/user/sigtest build/user/sigmask build/user/sigfuzz build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
             build/user/iovtest build/user/lowexec build/user/unametest \

@@ -328,7 +328,7 @@ static int64_t do_uname(uint64_t ubuf, int from_user) {
     char uts[6 * 65];
     memset(uts, 0, sizeof uts);
     static const char* const f[6] = {
-        "MAKH", "makh", "1.2.0", "MAKH 1.2.0 x86_64", "x86_64", "(none)"
+        "MAKH", "makh", "1.3.0", "MAKH 1.3.0 x86_64", "x86_64", "(none)"
     };
     for (int i = 0; i < 6; i++) {
         size_t l = strlen(f[i]); if (l > 64) l = 64;

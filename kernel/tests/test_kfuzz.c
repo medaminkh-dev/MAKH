@@ -137,6 +137,7 @@ KTEST(kfuzz, target_path)    { run_target(KFUZZ_T_PATH,    "path");    }
 KTEST(kfuzz, target_oom)     { run_target(KFUZZ_T_OOM,     "oom");     }
 KTEST(kfuzz, target_uaccess) { run_target(KFUZZ_T_UACCESS, "uaccess"); }
 KTEST(kfuzz, target_ext2geo) { run_target(KFUZZ_T_EXT2,    "ext2geo"); }
+KTEST(kfuzz, target_ext2img) { run_target(KFUZZ_T_EXT2IMG, "ext2img"); }
 
 KTEST(kfuzz, campaign_over_all_targets_builds_coverage) {
     kfuzz_cov_reset();

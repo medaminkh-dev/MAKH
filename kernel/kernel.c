@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kernel.c
- * Version: 1.2.0
+ * Version: 1.3.0
  * Main kernel entry point
  */
 
@@ -710,6 +710,18 @@ void kernel_main(void) {
     if (cmdline_has("makh.debug"))      klog_set_level(KLOG_DEBUG);
     else if (cmdline_has("makh.test"))  klog_set_level(KLOG_WARN);
 
+    /* Load the IDT before the first memory-touching init (the multiboot scan,
+     * PMM, the heap, the framebuffer map). Those early steps read bootloader-
+     * and firmware-supplied layout — the mmap, module extents, the framebuffer
+     * tag — that varies across QEMU/GRUB builds, so a malformed or unexpected
+     * one must surface as a diagnosable CPU exception (exception_report dumps
+     * the vector + faulting RIP + CR2 and, under makh.test, powers off with a
+     * FAIL code) rather than a silent triple fault with no IDT to catch it.
+     * idt_init only builds the static table and lidt's it (selector 0x08 is
+     * valid from the boot GDT); it enables no interrupts — that is still
+     * idt_enable_interrupts() after the PIC and timer come up. */
+    idt_init();
+
     /*
      * Verbose boot (pass "makh.verbose"): the old brick-by-brick status lines
      * and the in-kernel smoke tests (VMM/heap/GDT/timer/syscall/context-switch/
@@ -849,10 +861,9 @@ void kernel_main(void) {
     /* Run heap tests */
     if (verbose) test_kheap();
 
-    /* Initialize IDT */
-    if (verbose) { print_check(); terminal_writestring("Initializing Interrupt Descriptor Table...\n"); }
-    idt_init();
-    
+    /* IDT was loaded early (right after the command line) so faults in the
+     * memory-bring-up above are caught; nothing to do here. */
+
     // Initialize TSS first
     tss_init();
     

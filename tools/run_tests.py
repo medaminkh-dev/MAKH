@@ -83,6 +83,11 @@ def main():
         status = proc.returncode
     except subprocess.TimeoutExpired as e:
         sys.stdout.write(e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or ""))
+        # Emit the FAIL marker on stdout too: a timeout is a failure, and
+        # stress_tests.sh detects failures by grepping the logs for it — without
+        # this a timed-out run was silently counted as a pass.
+        print("\n=== qemu exit status: TIMEOUT ===")
+        print("=== RESULT: FAIL (timeout: kernel did not power off in time) ===")
         print("\n=== TIMEOUT: kernel did not power off in time (likely a hang) ===",
               file=sys.stderr)
         return 1

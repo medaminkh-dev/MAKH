@@ -29,12 +29,15 @@
 #include <mm/pmm.h>
 #include <mm/page.h>
 #include <fs/vfs.h>
+#include <fs/blkdev.h>
+#include <drivers/virtio_blk.h>
 #include <tty.h>
 #include <signal.h>
 #include <elf.h>
 #include <mm/uvm.h>
 #include <arch/usermode.h>
 #include <syscall.h>
+#include <errno.h>
 
 /* -------------------------------------------------------------------------- */
 /* 1. Heap: random malloc/free/realloc/calloc with overlap + payload checks    */
@@ -510,6 +513,7 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
     for (uint32_t it = 0; it < iters; it++) {
         uint8_t buf[ELF_FZ_MAX];
         uint32_t n;
+        int expect = 0, has_expect = 0;   /* AUD-04: known-verdict modes set these */
 
         if (kfuzz_rand_below(r, 4) == 0) {
             n = kfuzz_rand_below(r, ELF_FZ_MAX + 1);     /* pure garbage */
@@ -539,6 +543,41 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
                 *(uint64_t*)(p + 32) = 0x40;             /* p_filesz */
                 *(uint64_t*)(p + 40) = 0x40;             /* p_memsz  */
             }
+            n = 0x180;
+            goto write_elf;
+        } else if (kfuzz_rand_below(r, 2) == 0) {
+            /* AUD-04: structured entry test with a KNOWN verdict. A valid single
+             * PT_LOAD at 0x400000; e_entry is placed inside / at the edge of /
+             * just past the segment, or inside a non-exec segment. The loader
+             * must REJECT an entry outside any executable segment and ACCEPT one
+             * inside it — "did not fault" is not enough; the verdict must match. */
+            memset(buf, 0, sizeof(buf));
+            *(uint32_t*)(buf + 0)  = 0x464C457Fu;
+            buf[4] = 2; buf[5] = 1; buf[6] = 1;
+            *(uint16_t*)(buf + 16) = 2;                  /* ET_EXEC */
+            *(uint16_t*)(buf + 18) = 0x3E;
+            *(uint64_t*)(buf + 32) = 64;                 /* e_phoff */
+            *(uint16_t*)(buf + 54) = 56;
+            *(uint16_t*)(buf + 56) = 1;                  /* e_phnum = 1 */
+            {
+                uint8_t* ph    = buf + 64;
+                uint64_t seg   = 0x400000ull, memsz = 0x1000ull;
+                *(uint32_t*)(ph + 0)  = 1;               /* PT_LOAD */
+                *(uint64_t*)(ph + 8)  = 0x100;           /* p_offset */
+                *(uint64_t*)(ph + 16) = seg;             /* p_vaddr  */
+                *(uint64_t*)(ph + 32) = 0x40;            /* p_filesz */
+                *(uint64_t*)(ph + 40) = memsz;           /* p_memsz  */
+                uint32_t flags; uint64_t entry;
+                switch (kfuzz_rand_below(r, 4)) {
+                case 0:  flags = 5; entry = seg;             expect = 0;        break; /* in X seg   */
+                case 1:  flags = 5; entry = seg + memsz - 1; expect = 0;        break; /* last byte  */
+                case 2:  flags = 5; entry = seg + memsz;     expect = -ENOEXEC; break; /* one past   */
+                default: flags = 6; entry = seg;             expect = -ENOEXEC; break; /* non-X seg  */
+                }
+                *(uint32_t*)(ph + 4)   = flags;          /* p_flags */
+                *(uint64_t*)(buf + 24) = entry;          /* e_entry */
+            }
+            has_expect = 1;
             n = 0x180;
             goto write_elf;
         } else {
@@ -586,9 +625,13 @@ static int t_elf(kfuzz_rng_t* r, uint32_t iters) {
         address_space_t as;
         if (vmspace_create(&as) != 0) continue;
         uint64_t entry = 0;
-        (void)elf_load(vn, &as, &entry, NULL); /* must return, never fault */
+        int rc = elf_load(vn, &as, &entry, NULL); /* must return, never fault */
         vmspace_destroy(&as);
         if (pmm_get_free_memory() != snap) { vfs_unlink(path); return -1; }
+        /* AUD-04: in known-verdict modes the loader must return EXACTLY the
+         * expected result — reject an entry outside an executable segment,
+         * accept one inside it. */
+        if (has_expect && rc != expect) { vfs_unlink(path); return -1; }
     }
     vfs_unlink(path);
     return 0;
@@ -938,6 +981,124 @@ static int t_fault(kfuzz_rng_t* r, uint32_t iters) {
 /* Registry                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------- */
+/* 16. ext2 image: mount a malformed ext2 and walk it (1.3.0 / closes F1)      */
+/* -------------------------------------------------------------------------- */
+/*
+ * t_ext2geo fuzzes the geometry *values*; this fuzzes a whole ext2 *image*
+ * through the real path: mount -> read_inode -> readdir -> read. The disk is
+ * the test's own ext2 (found by its magic); we never touch it — a copy-on-write
+ * overlay serves our mutated sectors and the driver's writes, and every other
+ * sector passes through to the real disk read-only. Each iteration seeds a few
+ * mutated low (metadata) sectors, mounts through the blkdev overlay, and walks.
+ *
+ * Oracle (F1 and its class): readdir must never write past the caller's buffer
+ * cap, whatever name_len the disk claims. The test image already carries a
+ * 200-byte name under /longdir, so reading it into a 64-byte guarded buffer
+ * exercises the bound even unmutated; mutation extends the reach to corrupted
+ * rec_len / inode / geometry. A fault reaches the sandbox as a crash; a clobbered
+ * guard is an oracle failure; and at least one clean mount must succeed per
+ * campaign (a fuzzer that only ever sees -EIO would be blind).
+ */
+#define EXT2IMG_OVL 128        /* copy-on-write overlay: how many sectors we diverge */
+typedef struct {
+    int      unit;
+    uint32_t n;
+    struct { uint64_t lba; uint8_t d[512]; } s[EXT2IMG_OVL];
+} ext2cow_t;
+static ext2cow_t g_ext2cow;    /* BSS, not heap: keeps run_target's heap check honest */
+
+static int ext2cow_find(ext2cow_t* c, uint64_t lba) {
+    for (uint32_t i = 0; i < c->n; i++) if (c->s[i].lba == lba) return (int)i;
+    return -1;
+}
+static int ext2cow_read(void* ctx, uint64_t lba, void* buf, uint32_t cnt) {
+    ext2cow_t* c = (ext2cow_t*)ctx;
+    for (uint32_t k = 0; k < cnt; k++) {
+        int i = ext2cow_find(c, lba + k);
+        if (i >= 0) memcpy((uint8_t*)buf + 512 * k, c->s[i].d, 512);
+        else if (virtio_blk_read(c->unit, lba + k, (uint8_t*)buf + 512 * k, 1) != 0) return -5;
+    }
+    return 0;
+}
+static int ext2cow_write(void* ctx, uint64_t lba, const void* buf, uint32_t cnt) {
+    ext2cow_t* c = (ext2cow_t*)ctx;
+    for (uint32_t k = 0; k < cnt; k++) {
+        int i = ext2cow_find(c, lba + k);
+        if (i < 0) { if (c->n >= EXT2IMG_OVL) continue; i = (int)c->n++; c->s[i].lba = lba + k; }
+        memcpy(c->s[i].d, (const uint8_t*)buf + 512 * k, 512);
+    }
+    return 0;
+}
+/* Overlay one mutated copy of real sector `lba`: read it, flip bytes, store. */
+static void ext2cow_mutate(ext2cow_t* c, kfuzz_rng_t* r, uint64_t lba) {
+    if (c->n >= EXT2IMG_OVL) return;
+    uint8_t tmp[512];
+    if (virtio_blk_read(c->unit, lba, tmp, 1) != 0) return;
+    uint32_t flips = 1 + kfuzz_rand_below(r, 8);
+    for (uint32_t f = 0; f < flips; f++) tmp[kfuzz_rand_below(r, 512)] = (uint8_t)kfuzz_rand(r);
+    (void)ext2cow_write(c, lba, tmp, 1);
+}
+
+static int ext2img_find_unit(void) {
+    int n = virtio_blk_count();
+    void* pg = pmm_alloc_page();
+    if (!pg) return -1;
+    uint8_t* sb = (uint8_t*)P2V((uint64_t)(uintptr_t)pg);
+    int found = -1;
+    for (int u = 0; u < n; u++) {
+        if (virtio_blk_read(u, 2, sb, 2) == 0 &&
+            (uint16_t)(sb[56] | (sb[57] << 8)) == 0xEF53) { found = u; break; }
+    }
+    pmm_free_page(pg);
+    return found;
+}
+
+static int t_ext2img(kfuzz_rng_t* r, uint32_t iters) {
+    int unit = ext2img_find_unit();
+    if (unit < 0) return 0;                 /* no ext2 disk in this boot: skip */
+    uint64_t cap = virtio_blk_capacity(unit);
+    int mounted_ok = 0;
+
+    for (uint32_t it = 0; it < iters; it++) {
+        g_ext2cow.unit = unit;
+        g_ext2cow.n    = 0;
+
+        /* Seed a few mutated metadata sectors (group 0 holds sb/GDT/bitmaps/
+         * inode table/root dir for the test image). Half the iterations stay
+         * unmutated so the clean mount + the 200-byte-name readdir always run. */
+        if (kfuzz_rand(r) & 1) {
+            uint32_t m = 1 + kfuzz_rand_below(r, 6);
+            for (uint32_t j = 0; j < m; j++)
+                ext2cow_mutate(&g_ext2cow, r, 2 + kfuzz_rand_below(r, 300));
+        }
+
+        blkdev_t dev = { .ctx = &g_ext2cow, .nsectors = cap,
+                         .read = ext2cow_read, .write = ext2cow_write };
+        vnode_t* root = ext2_mount_dev(&dev);
+        if (!root) continue;                 /* mutation broke the superblock: fine */
+        mounted_ok++;
+
+        /* Guarded name buffer: readdir must never write past its `cap`. */
+        struct { char name[64]; uint8_t guard[16]; } gb;
+        int clobber = 0;
+
+        for (int pass = 0; pass < 2 && !clobber; pass++) {
+            vnode_t* dir = root;
+            if (pass == 1) dir = root->ops->lookup ? root->ops->lookup(root, "longdir") : NULL;
+            if (!dir) continue;
+            for (int g = 0; g < 16; g++) gb.guard[g] = 0xAB;
+            for (uint32_t idx = 0; idx < 64; idx++)
+                if (dir->ops->readdir(dir, idx, gb.name, sizeof gb.name) != 0) break;
+            for (int g = 0; g < 16; g++) if (gb.guard[g] != 0xAB) clobber = 1;
+        }
+
+        ext2_unmount(root);
+        if (clobber) return -1;              /* F1: readdir wrote past the buffer */
+    }
+    return mounted_ok ? 0 : -1;              /* never mounting cleanly = blind fuzzer */
+}
+
 static const kfuzz_target_t g_targets[] = {
     { "heap",    t_heap,    KFUZZ_T_HEAP,    NULL },
     { "pmm",     t_pmm,     KFUZZ_T_PMM,     NULL },
@@ -954,6 +1115,7 @@ static const kfuzz_target_t g_targets[] = {
     { "oom",     t_oom,     KFUZZ_T_OOM,     NULL },
     { "uaccess", t_uaccess, KFUZZ_T_UACCESS, NULL },
     { "ext2geo", t_ext2geo, KFUZZ_T_EXT2,    NULL },
+    { "ext2img", t_ext2img, KFUZZ_T_EXT2IMG, NULL },
     { "fault",   t_fault,   KFUZZ_T_FAULT,   NULL },
 };
 

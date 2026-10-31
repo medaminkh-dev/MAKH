@@ -226,5 +226,11 @@ int       ext2_mount_any(const char* path);  /* fs/ext2.c: mount an ext2 virtio-
  * would be undefined, or a zero divisor that would divide by zero). AUD-05. */
 int       ext2_geometry_ok(uint32_t s_log_block_size, uint32_t blocks_per_group,
                            uint32_t inodes_per_group);
+/* Mount ext2 from any block device (fs/blkdev.h); the caller owns the device.
+ * ext2_unmount frees ext2's own allocations (fs + the vnodes it created) —
+ * only safe on a private mount with no open fds (the KFUZZ ext2-image target). */
+struct blkdev;
+struct vnode* ext2_mount_dev(struct blkdev* dev);
+void          ext2_unmount(struct vnode* root);
 
 #endif /* MAKHOS_FS_VFS_H */
