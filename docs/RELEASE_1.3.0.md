@@ -48,6 +48,15 @@ table are in **`docs/KFUZZ_V2_STATIC_ANALYSIS.md`**.
 - **Build.** `make` with no target now builds the whole OS again
   (`.DEFAULT_GOAL := all`); it previously fell through to the first user-program
   rule.
+- **CI compiler pin.** The runner's default `gcc` tracks the newest packaged
+  GCC, which broke the build twice: GCC 14 made `-Wreturn-mismatch` a hard error
+  (a test helper is fixed), and a still-newer GCC isolates an early `pmm_init()`
+  path to a `ud2` that #UD-triple-faults at boot — a path GCC 13 and GCC 14 both
+  compile to correct, passing code (204/204), so it reads as compiler
+  over-aggression on sound code, not a reproduced defect. CI now pins the
+  validated GCC 13 for reproducibility; the early-IDT change above is what turned
+  that previously-silent triple fault into the diagnosable exception dump that
+  located it. Root-causing it against a local GCC 15 is tracked follow-up.
 
 ## Assets
 
