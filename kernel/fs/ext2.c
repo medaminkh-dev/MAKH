@@ -173,6 +173,24 @@ static uint32_t map_block(ext2_fs_t* fs, ext2_vinfo_t* vi, uint32_t fblk) {
  * is authoritative (independent of whether the fs has the dir-entry filetype
  * feature). */
 static vnode_t* make_vnode(ext2_fs_t* fs, uint32_t ino) {
+    /* Inode-keyed vnode cache (T-M01). Without it, every path resolution built
+     * a *fresh* vnode per component and never freed it (file_put only frees
+     * pipe/socket vnodes, and the fs gc list is reclaimed only at unmount, which
+     * the permanent real-disk mount never does) — so repeated open/stat of the
+     * same file grew the heap without bound. Return the vnode we already built
+     * for this inode instead, refreshing it from the on-disk inode: writes
+     * always write_inode(), so disk is authoritative, and refreshing also keeps
+     * a *reused* inode number from handing back stale cached metadata. The scan
+     * is linear over this fs's created-vnode list; fine at this scale. */
+    for (vnode_t* v = fs->gc_head; v; v = ((ext2_vinfo_t*)v->priv)->gc_next) {
+        ext2_vinfo_t* vvi = (ext2_vinfo_t*)v->priv;
+        if (vvi->ino != ino) continue;
+        if (read_inode(fs, ino, vvi) != 0) return NULL;   /* refresh from disk */
+        v->type = ((vvi->mode & EXT2_S_IFMT) == EXT2_S_IFDIR) ? VNODE_DIR : VNODE_REG;
+        v->size = vvi->size;
+        v->mode = vvi->mode & 07777;
+        return v;
+    }
     ext2_vinfo_t* vi = kcalloc(1, sizeof(*vi));
     if (!vi) return NULL;
     if (read_inode(fs, ino, vi) != 0) { kfree(vi); return NULL; }
@@ -776,9 +794,11 @@ static int ext2_unlink(vnode_t* dir, const char* name) {
     if ((cvi.mode & EXT2_S_IFMT) == EXT2_S_IFDIR) {      /* rmdir path */
         vnode_t* cv = make_vnode(fs, ino);
         if (!cv) return -EIO;
-        int empty = dir_is_empty(cv);
-        kfree(cv->priv); kfree(cv);
-        if (!empty) return -ENOTEMPTY;
+        /* cv is cached now (T-M01): do NOT free it here, or the fs gc list would
+         * dangle. If the rmdir goes through, the inode is freed below and the
+         * cached vnode is simply unreachable (its dirent is gone) until the inode
+         * number is reused, when make_vnode refreshes it from disk. */
+        if (!dir_is_empty(cv)) return -ENOTEMPTY;
     }
 
     uint32_t removed = 0;
