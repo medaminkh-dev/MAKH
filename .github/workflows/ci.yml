@@ -25,6 +25,17 @@ env:
   CC: gcc-13
 
 jobs:
+  abi-check:
+    # UFUZZ U0 gate: the ABI inventory (fuzz/abi/makh_syscalls.json) must stay
+    # consistent with the real kernel syscall table, and docs/UFUZZ_ABI.md must
+    # be regenerated from it. Pure Python, no toolchain — fast.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate UFUZZ ABI inventory against the kernel syscall table
+        run: python3 fuzz/abi/check_abi.py
+
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -1,0 +1,690 @@
+{
+  "schema": "makh-ufuzz-abi/1",
+  "abi_version": 1,
+  "generated_for_ref": "see git HEAD at commit time",
+  "source_of_truth": "kernel/include/syscall.h (numbers) + kernel/syscall/syscall.c (dispatch)",
+  "note": "This file is the single source of truth for the UFUZZ ABI contract (U0). docs/UFUZZ_ABI.md is generated from it and fuzz/abi/check_abi.py verifies it against the kernel syscall table. Do not hand-edit docs/UFUZZ_ABI.md.",
+
+  "vocab": {
+    "impl": {
+      "implemented": "full contract honoured for the supported argument domain",
+      "partial":     "dispatched and useful, but ignores or narrows some arguments/flags (documented per call)",
+      "stub":        "dispatched but returns a constant / no-op; performs no real work",
+      "unsupported": "not dispatched; returns -ENOSYS (listed only when a program is likely to try it)"
+    },
+    "arg_kind": {
+      "scalar": "passed by value in a register",
+      "ptr":    "a user virtual address; must carry dir + size"
+    },
+    "dir": {
+      "in":    "kernel reads from the pointed-to memory",
+      "out":   "kernel writes to the pointed-to memory",
+      "inout": "kernel both reads and writes"
+    },
+    "size": {
+      "cstr":            "NUL-terminated string (kernel copies until NUL, bounded)",
+      "len:ARG":         "byte length is the value of argument ARG",
+      "struct:NAME":     "fixed-size C struct NAME",
+      "arr:ARG:ELEM":    "array of ARG elements of type ELEM",
+      "fixed:N":         "exactly N bytes",
+      "cstr_arr":        "NULL-terminated array of cstr pointers (argv/envp)"
+    },
+    "resource": ["fd", "pid", "tid", "addr", "socket", "pipe_end", "path", "buffer", "signal_context"]
+  },
+
+  "syscalls": [
+    { "name": "read", "sys": "SYS_READ", "nr": 0, "impl": "implemented", "handler": "do_read", "src": "kernel/syscall/syscall.c",
+      "args": [
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"buf","kind":"ptr","ctype":"void*","dir":"out","size":"len:count"},
+        {"name":"count","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes read; 0 at EOF; -errno on error"},
+      "errno":["EBADF","EFAULT","EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"advances the open-file offset",
+      "concurrency":"may block on a pipe/tty until data or EOF" },
+
+    { "name": "write", "sys": "SYS_WRITE", "nr": 1, "impl": "implemented", "handler": "do_write", "src": "kernel/syscall/syscall.c",
+      "args": [
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"buf","kind":"ptr","ctype":"const void*","dir":"in","size":"len:count"},
+        {"name":"count","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes written; -errno on error"},
+      "errno":["EBADF","EFAULT","EPIPE"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"advances the open-file offset; may raise SIGPIPE on a broken pipe" },
+
+    { "name": "open", "sys": "SYS_OPEN", "nr": 2, "impl": "implemented", "handler": "do_open", "src": "kernel/syscall/syscall.c",
+      "args": [
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"flags","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"int","meaning":"new fd; -errno on error"},
+      "errno":["ENOENT","EFAULT","EMFILE","EEXIST"],
+      "resources":{"creates":["fd"],"consumes":[],"releases":[]},
+      "flags":{"supported":["O_CREAT","O_TRUNC","O_APPEND","O_ACCMODE"],"note":"mode argument is not consumed"} },
+
+    { "name": "close", "sys": "SYS_CLOSE", "nr": 3, "impl": "implemented", "handler": "vfs_close", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"fd","kind":"scalar","ctype":"int","res":"fd"}],
+      "ret":{"ctype":"int","meaning":"0 on success; -EBADF for a bad fd (fd 0/1/2 empty slot still succeeds)"},
+      "errno":["EBADF"],
+      "resources":{"creates":[],"consumes":[],"releases":["fd"]},
+      "side_effects":"last reference frees the open-file description; a pipe end detaches and may raise EOF/EPIPE on the peer" },
+
+    { "name": "stat", "sys": "SYS_STAT", "nr": 4, "impl": "implemented", "handler": "do_lstat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"statbuf","kind":"ptr","ctype":"struct stat*","dir":"out","size":"struct:stat"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"stat and lstat share do_lstat; symlink-following distinction is not modelled" },
+
+    { "name": "fstat", "sys": "SYS_FSTAT", "nr": 5, "impl": "implemented", "handler": "do_fstat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"statbuf","kind":"ptr","ctype":"struct stat*","dir":"out","size":"struct:stat"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EBADF","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "lstat", "sys": "SYS_LSTAT", "nr": 6, "impl": "implemented", "handler": "do_lstat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"statbuf","kind":"ptr","ctype":"struct stat*","dir":"out","size":"struct:stat"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "lseek", "sys": "SYS_LSEEK", "nr": 8, "impl": "implemented", "handler": "vfs_lseek", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"offset","kind":"scalar","ctype":"off_t"},
+        {"name":"whence","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"off_t","meaning":"resulting absolute offset; -errno"},
+      "errno":["EBADF","EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "flags":{"supported":["SEEK_SET","SEEK_CUR","SEEK_END"]} },
+
+    { "name": "mmap", "sys": "SYS_MMAP", "nr": 9, "impl": "partial", "handler": "do_mmap", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"addr","kind":"ptr","ctype":"void*","dir":"in","size":"fixed:0","notes":"hint only; ignored (bump allocator chooses the address)"},
+        {"name":"length","kind":"scalar","ctype":"size_t"},
+        {"name":"prot","kind":"scalar","ctype":"int"},
+        {"name":"flags","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"void*","meaning":"mapped base address; MAP_FAILED(-1) on error"},
+      "errno":["ENOMEM","EINVAL","ENOSYS"],
+      "resources":{"creates":["addr"],"consumes":[],"releases":[]},
+      "flags":{"supported":["PROT_NONE","PROT_READ","PROT_WRITE","PROT_EXEC","MAP_PRIVATE","MAP_ANONYMOUS"],"ignored":["fd","offset"]},
+      "notes":"anonymous private mappings only; no file-backed mappings; the addr hint is ignored" },
+
+    { "name": "mprotect", "sys": "SYS_MPROTECT", "nr": 10, "impl": "implemented", "handler": "do_mprotect", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"addr","kind":"ptr","ctype":"void*","dir":"inout","size":"len:len","res":"addr","notes":"must be a page-aligned base of an existing mapping"},
+        {"name":"len","kind":"scalar","ctype":"size_t"},
+        {"name":"prot","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},
+      "errno":["EINVAL","ENOMEM","EACCES"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "flags":{"supported":["PROT_NONE","PROT_READ","PROT_WRITE","PROT_EXEC"]} },
+
+    { "name": "munmap", "sys": "SYS_MUNMAP", "nr": 11, "impl": "implemented", "handler": "do_munmap", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"addr","kind":"ptr","ctype":"void*","dir":"in","size":"len:len","res":"addr"},
+        {"name":"len","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":["addr"]} },
+
+    { "name": "brk", "sys": "SYS_BRK", "nr": 12, "impl": "implemented", "handler": "do_brk", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"addr","kind":"scalar","ctype":"void*","notes":"new program break, or 0 to query"}],
+      "ret":{"ctype":"void*","meaning":"the resulting program break"},
+      "errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"grows/shrinks the process heap region" },
+
+    { "name": "rt_sigaction", "sys": "SYS_RT_SIGACTION", "nr": 13, "impl": "implemented", "handler": "do_sigaction", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"signum","kind":"scalar","ctype":"int"},
+        {"name":"act","kind":"ptr","ctype":"const struct sigaction*","dir":"in","size":"struct:sigaction"},
+        {"name":"oldact","kind":"ptr","ctype":"struct sigaction*","dir":"out","size":"struct:sigaction"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"installs a per-process signal disposition" },
+
+    { "name": "rt_sigprocmask", "sys": "SYS_RT_SIGPROCMASK", "nr": 14, "impl": "implemented", "handler": "do_sigprocmask", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"how","kind":"scalar","ctype":"int"},
+        {"name":"set","kind":"ptr","ctype":"const sigset_t*","dir":"in","size":"fixed:8"},
+        {"name":"oldset","kind":"ptr","ctype":"sigset_t*","dir":"out","size":"fixed:8"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "flags":{"supported":["SIG_BLOCK","SIG_UNBLOCK","SIG_SETMASK"]} },
+
+    { "name": "rt_sigreturn", "sys": "SYS_RT_SIGRETURN", "nr": 15, "impl": "implemented", "handler": "signal_sigreturn", "src": "kernel/syscall/syscall.c (syscall_dispatch)",
+      "args":[],
+      "ret":{"ctype":"n/a","meaning":"does not return normally; restores the pre-signal trapframe"},
+      "errno":[],
+      "resources":{"creates":[],"consumes":["signal_context"],"releases":[]},
+      "concurrency":"consumes the signal frame placed on the user stack by signal delivery",
+      "notes":"needs the live trapframe; dispatched specially in syscall_dispatch(), covered by /bin/sigfuzz" },
+
+    { "name": "ioctl", "sys": "SYS_IOCTL", "nr": 16, "impl": "partial", "handler": "do_ioctl", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"request","kind":"scalar","ctype":"unsigned long"},
+        {"name":"argp","kind":"ptr","ctype":"void*","dir":"inout","size":"struct:termios","notes":"interpretation depends on request; TCGETS/TCSETS use struct termios, TIOCGWINSZ uses struct winsize"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -ENOTTY for non-std fds or unknown request"},
+      "errno":["ENOTTY","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"only fd 0/1/2 (the TTY) are handled; a small set of termios/winsize requests" },
+
+    { "name": "readv", "sys": "SYS_READV", "nr": 19, "impl": "implemented", "handler": "do_readv", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"iov","kind":"ptr","ctype":"const struct iovec*","dir":"in","size":"arr:iovcnt:iovec","notes":"the iovec array is read; each iov_base buffer is written (out)"},
+        {"name":"iovcnt","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"total bytes read; -errno"},"errno":["EBADF","EFAULT","EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "writev", "sys": "SYS_WRITEV", "nr": 20, "impl": "implemented", "handler": "do_writev", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"iov","kind":"ptr","ctype":"const struct iovec*","dir":"in","size":"arr:iovcnt:iovec","notes":"the iovec array and each iov_base buffer are read"},
+        {"name":"iovcnt","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"total bytes written; -errno"},"errno":["EBADF","EFAULT","EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "access", "sys": "SYS_ACCESS", "nr": 21, "impl": "partial", "handler": "do_access", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"mode","kind":"scalar","ctype":"int","notes":"not consumed; existence check only"}
+      ],
+      "ret":{"ctype":"int","meaning":"0 if the path resolves; -ENOENT otherwise"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"existence-only: the access mode (R_OK/W_OK/X_OK) is ignored" },
+
+    { "name": "pipe", "sys": "SYS_PIPE", "nr": 22, "impl": "implemented", "handler": "do_pipe", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"pipefd","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:8","notes":"two ints: [0]=read end, [1]=write end"}],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EFAULT","EMFILE"],
+      "resources":{"creates":["pipe_end","pipe_end"],"consumes":[],"releases":[]} },
+
+    { "name": "madvise", "sys": "SYS_MADVISE", "nr": 28, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"addr","kind":"ptr","ctype":"void*","dir":"in","size":"len:length"},
+        {"name":"length","kind":"scalar","ctype":"size_t"},
+        {"name":"advice","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"int","meaning":"always 0 (advisory no-op)"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"accepted and ignored; does not validate addr/length" },
+
+    { "name": "dup2", "sys": "SYS_DUP2", "nr": 33, "impl": "implemented", "handler": "do_dup2", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"oldfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"newfd","kind":"scalar","ctype":"int","res":"fd"}
+      ],
+      "ret":{"ctype":"int","meaning":"newfd; -errno"},"errno":["EBADF"],
+      "resources":{"creates":["fd"],"consumes":[],"releases":[]},
+      "side_effects":"closes newfd first if it was open" },
+
+    { "name": "nanosleep", "sys": "SYS_NANOSLEEP", "nr": 35, "impl": "implemented", "handler": "do_nanosleep", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"req","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec"},
+        {"name":"rem","kind":"ptr","ctype":"struct timespec*","dir":"out","size":"struct:timespec"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -EINTR if a signal interrupts (remaining time written to rem)"},"errno":["EINTR","EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "concurrency":"blocks; interruptible by a signal" },
+
+    { "name": "getpid", "sys": "SYS_GETPID", "nr": 39, "impl": "implemented", "handler": "do_getpid", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"pid_t","meaning":"the caller's pid"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "socket", "sys": "SYS_SOCKET", "nr": 41, "impl": "partial", "handler": "do_socket", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"domain","kind":"scalar","ctype":"int"},
+        {"name":"type","kind":"scalar","ctype":"int"},
+        {"name":"protocol","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"int","meaning":"new socket fd; -errno"},"errno":["EAFNOSUPPORT","EINVAL","EMFILE"],
+      "resources":{"creates":["fd","socket"],"consumes":[],"releases":[]},
+      "notes":"limited address families/types (see net/socket.c)" },
+
+    { "name": "connect", "sys": "SYS_CONNECT", "nr": 42, "impl": "partial", "handler": "do_connect", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"socket"},
+        {"name":"addr","kind":"ptr","ctype":"const struct sockaddr*","dir":"in","size":"len:addrlen"},
+        {"name":"addrlen","kind":"scalar","ctype":"socklen_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOTSOCK","EFAULT","ECONNREFUSED"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "setsockopt", "sys": "SYS_SETSOCKOPT", "nr": 54, "impl": "partial", "handler": "do_setsockopt", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"socket"},
+        {"name":"level","kind":"scalar","ctype":"int"},
+        {"name":"optname","kind":"scalar","ctype":"int"},
+        {"name":"optval","kind":"ptr","ctype":"const void*","dir":"in","size":"struct:timeval","notes":"length inferred from optname: timeval for SO_RCVTIMEO/SO_SNDTIMEO, int otherwise"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOTSOCK","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"only SO_RCVTIMEO/SO_SNDTIMEO are meaningful" },
+
+    { "name": "clone", "sys": "SYS_CLONE", "nr": 56, "impl": "partial", "handler": "proc_clone", "src": "kernel/syscall/syscall.c (syscall_dispatch)",
+      "args":[
+        {"name":"flags","kind":"scalar","ctype":"unsigned long"},
+        {"name":"stack","kind":"ptr","ctype":"void*","dir":"in","size":"fixed:0","notes":"child stack top"},
+        {"name":"parent_tid","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:4"},
+        {"name":"child_tid","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:4"},
+        {"name":"tls","kind":"scalar","ctype":"unsigned long"}
+      ],
+      "ret":{"ctype":"pid_t","meaning":"child tid to parent, 0 to child; -errno"},"errno":["ENOMEM","EINVAL"],
+      "resources":{"creates":["tid"],"consumes":[],"releases":[]},
+      "concurrency":"creates a thread sharing the address space (CLONE_VM path used by musl)",
+      "notes":"needs the live trapframe; supports the musl posix_spawn/pthread clone shape" },
+
+    { "name": "fork", "sys": "SYS_FORK", "nr": 57, "impl": "implemented", "handler": "proc_fork", "src": "kernel/syscall/syscall.c (syscall_dispatch)",
+      "args":[],
+      "ret":{"ctype":"pid_t","meaning":"child pid to parent, 0 to child; -errno"},"errno":["ENOMEM"],
+      "resources":{"creates":["pid"],"consumes":[],"releases":[]},
+      "concurrency":"needs the live trapframe; child gets a copied address space (COW)" },
+
+    { "name": "execve", "sys": "SYS_EXECVE", "nr": 59, "impl": "implemented", "handler": "proc_execve", "src": "kernel/syscall/syscall.c (syscall_dispatch)",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"argv","kind":"ptr","ctype":"char* const*","dir":"in","size":"cstr_arr"},
+        {"name":"envp","kind":"ptr","ctype":"char* const*","dir":"in","size":"cstr_arr"}
+      ],
+      "ret":{"ctype":"int","meaning":"does not return on success; -errno on failure"},"errno":["ENOENT","ENOEXEC","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":["addr"]},
+      "side_effects":"replaces the image; needs the live trapframe to re-enter the new program" },
+
+    { "name": "exit", "sys": "SYS_EXIT", "nr": 60, "impl": "implemented", "handler": "thread_exit/usermode_exit", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"status","kind":"scalar","ctype":"int","notes":"low 8 bits used"}],
+      "ret":{"ctype":"n/a","meaning":"does not return; the process becomes a zombie"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":["pid","fd","addr"]},
+      "side_effects":"closes fds, wakes a waiter, raises SIGCHLD to the parent" },
+
+    { "name": "wait4", "sys": "SYS_WAIT4", "nr": 61, "impl": "partial", "handler": "do_wait4", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid"},
+        {"name":"wstatus","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:4"}
+      ],
+      "ret":{"ctype":"pid_t","meaning":"reaped child pid; -ECHILD; -EINTR if a signal interrupts the wait"},"errno":["ECHILD","EINTR","EFAULT"],
+      "resources":{"creates":[],"consumes":["pid"],"releases":[]},
+      "concurrency":"blocks until a child exits; interruptible by a signal (T-P01)",
+      "notes":"options and rusage arguments are not consumed" },
+
+    { "name": "kill", "sys": "SYS_KILL", "nr": 62, "impl": "implemented", "handler": "signal_kill", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid"},
+        {"name":"sig","kind":"scalar","ctype":"int","res":"signal_context"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ESRCH","EINVAL"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"sets a pending signal on the target; may wake a blocked target" },
+
+    { "name": "uname", "sys": "SYS_UNAME", "nr": 63, "impl": "implemented", "handler": "do_uname", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"buf","kind":"ptr","ctype":"struct utsname*","dir":"out","size":"struct:utsname"}],
+      "ret":{"ctype":"int","meaning":"0; -EFAULT"},"errno":["EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "fcntl", "sys": "SYS_FCNTL", "nr": 72, "impl": "partial", "handler": "do_fcntl", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"cmd","kind":"scalar","ctype":"int"},
+        {"name":"arg","kind":"scalar","ctype":"unsigned long","notes":"interpretation depends on cmd"}
+      ],
+      "ret":{"ctype":"int","meaning":"cmd-dependent; -errno"},"errno":["EBADF","EINVAL"],
+      "resources":{"creates":["fd"],"consumes":[],"releases":[]},
+      "notes":"a subset of commands (e.g. F_DUPFD / F_GETFD / F_SETFD / F_GETFL); creates an fd only for F_DUPFD" },
+
+    { "name": "getcwd", "sys": "SYS_GETCWD", "nr": 79, "impl": "implemented", "handler": "do_getcwd", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"buf","kind":"ptr","ctype":"char*","dir":"out","size":"len:size"},
+        {"name":"size","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"long","meaning":"length including NUL; -ERANGE if too small"},"errno":["ERANGE","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "chdir", "sys": "SYS_CHDIR", "nr": 80, "impl": "implemented", "handler": "do_chdir", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","ENOTDIR","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"changes the process working directory" },
+
+    { "name": "rename", "sys": "SYS_RENAME", "nr": 82, "impl": "implemented", "handler": "do_rename", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"oldpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"newpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EXDEV","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "mkdir", "sys": "SYS_MKDIR", "nr": 83, "impl": "implemented", "handler": "do_mkdir", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"mode","kind":"scalar","ctype":"mode_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EEXIST","ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "rmdir", "sys": "SYS_RMDIR", "nr": 84, "impl": "implemented", "handler": "do_unlink", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","ENOTEMPTY","ENOTDIR"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"ext2 unlink also removes empty directories, so rmdir maps to do_unlink" },
+
+    { "name": "unlink", "sys": "SYS_UNLINK", "nr": 87, "impl": "implemented", "handler": "do_unlink", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EISDIR","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "symlink", "sys": "SYS_SYMLINK", "nr": 88, "impl": "implemented", "handler": "do_symlink", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"target","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr"},
+        {"name":"linkpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EEXIST","ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "readlink", "sys": "SYS_READLINK", "nr": 89, "impl": "implemented", "handler": "do_readlink", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"buf","kind":"ptr","ctype":"char*","dir":"out","size":"len:bufsiz"},
+        {"name":"bufsiz","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes placed in buf (no NUL); -errno"},"errno":["EINVAL","ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "chmod", "sys": "SYS_CHMOD", "nr": 90, "impl": "implemented", "handler": "do_chmod", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"mode","kind":"scalar","ctype":"mode_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "side_effects":"persists the new permission bits to the inode" },
+
+    { "name": "gettimeofday", "sys": "SYS_GETTIMEOFDAY", "nr": 96, "impl": "implemented", "handler": "do_gettimeofday", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"tv","kind":"ptr","ctype":"struct timeval*","dir":"out","size":"struct:timeval"},
+        {"name":"tz","kind":"ptr","ctype":"void*","dir":"out","size":"fixed:8","notes":"timezone ignored"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -EFAULT"},"errno":["EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "getrlimit", "sys": "SYS_GETRLIMIT", "nr": 97, "impl": "partial", "handler": "do_getrlimit", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"resource","kind":"scalar","ctype":"int"},
+        {"name":"rlim","kind":"ptr","ctype":"struct rlimit*","dir":"out","size":"struct:rlimit"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"returns fixed/approximate limits" },
+
+    { "name": "getuid",  "sys": "SYS_GETUID",  "nr": 102, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"uid_t","meaning":"always 0 (single-user)"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+    { "name": "getgid",  "sys": "SYS_GETGID",  "nr": 104, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"gid_t","meaning":"always 0"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+    { "name": "geteuid", "sys": "SYS_GETEUID", "nr": 107, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"uid_t","meaning":"always 0"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+    { "name": "getegid", "sys": "SYS_GETEGID", "nr": 108, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"gid_t","meaning":"always 0"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "setpgid", "sys": "SYS_SETPGID", "nr": 109, "impl": "implemented", "handler": "sys_setpgid", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid"},{"name":"pgid","kind":"scalar","ctype":"pid_t"}],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ESRCH","EINVAL"],"resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "getppid", "sys": "SYS_GETPPID", "nr": 110, "impl": "implemented", "handler": "do_getppid", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"pid_t","meaning":"the parent pid"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "getpgrp", "sys": "SYS_GETPGRP", "nr": 111, "impl": "implemented", "handler": "sys_getpgid(0)", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"pid_t","meaning":"the caller's process group id"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "setsid", "sys": "SYS_SETSID", "nr": 112, "impl": "implemented", "handler": "sys_setsid", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"pid_t","meaning":"the new session id; -errno"},"errno":["EPERM"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},"side_effects":"starts a new session/process group" },
+
+    { "name": "getpgid", "sys": "SYS_GETPGID", "nr": 121, "impl": "implemented", "handler": "sys_getpgid", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid"}],
+      "ret":{"ctype":"pid_t","meaning":"the target's process group id; -errno"},"errno":["ESRCH"],"resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "arch_prctl", "sys": "SYS_ARCH_PRCTL", "nr": 158, "impl": "implemented", "handler": "do_arch_prctl", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"code","kind":"scalar","ctype":"int"},
+        {"name":"addr","kind":"ptr","ctype":"unsigned long","dir":"inout","size":"fixed:8","notes":"ARCH_SET_FS: addr is the value; ARCH_GET_FS: addr is an out pointer"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -EINVAL"},"errno":["EINVAL","ENOSYS"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "flags":{"supported":["ARCH_SET_FS","ARCH_GET_FS"]} },
+
+    { "name": "setrlimit", "sys": "SYS_SETRLIMIT", "nr": 160, "impl": "stub", "handler": "do_setrlimit", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"resource","kind":"scalar","ctype":"int"},{"name":"rlim","kind":"ptr","ctype":"const struct rlimit*","dir":"in","size":"struct:rlimit"}],
+      "ret":{"ctype":"int","meaning":"always 0 (no-op)"},"errno":[],"resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"accepted and ignored" },
+
+    { "name": "futex", "sys": "SYS_FUTEX", "nr": 202, "impl": "partial", "handler": "do_futex", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"uaddr","kind":"ptr","ctype":"int*","dir":"inout","size":"fixed:4"},
+        {"name":"op","kind":"scalar","ctype":"int"},
+        {"name":"val","kind":"scalar","ctype":"int"},
+        {"name":"timeout","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec"}
+      ],
+      "ret":{"ctype":"int","meaning":"op-dependent; -EAGAIN mismatch; -ETIMEDOUT; -EINTR"},"errno":["EAGAIN","ETIMEDOUT","EINTR","EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "concurrency":"FUTEX_WAIT blocks; FUTEX_WAKE wakes; PRIVATE/CLOCK flags stripped",
+      "flags":{"supported":["FUTEX_WAIT","FUTEX_WAKE"]} },
+
+    { "name": "sched_getaffinity", "sys": "SYS_SCHED_GETAFFINITY", "nr": 204, "impl": "partial", "handler": "do_sched_getaffinity", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"pid","kind":"scalar","ctype":"pid_t","notes":"ignored"},
+        {"name":"cpusetsize","kind":"scalar","ctype":"size_t"},
+        {"name":"mask","kind":"ptr","ctype":"unsigned long*","dir":"out","size":"len:cpusetsize"}
+      ],
+      "ret":{"ctype":"int","meaning":"bytes written; -EINVAL if too small"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"single CPU: always reports CPU 0 online" },
+
+    { "name": "getdents64", "sys": "SYS_GETDENTS64", "nr": 217, "impl": "implemented", "handler": "do_getdents64", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"dirp","kind":"ptr","ctype":"void*","dir":"out","size":"len:count"},
+        {"name":"count","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes of dirents; 0 at end; -errno"},"errno":["EBADF","EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "set_tid_address", "sys": "SYS_SET_TID_ADDRESS", "nr": 218, "impl": "implemented", "handler": "do_set_tid_address", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"tidptr","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:4","notes":"stored; cleared and futex-woken at thread exit"}],
+      "ret":{"ctype":"pid_t","meaning":"the caller's tid"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]} },
+
+    { "name": "clock_gettime", "sys": "SYS_CLOCK_GETTIME", "nr": 228, "impl": "implemented", "handler": "do_clock_gettime", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"clockid","kind":"scalar","ctype":"clockid_t"},
+        {"name":"tp","kind":"ptr","ctype":"struct timespec*","dir":"out","size":"struct:timespec"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "flags":{"supported":["CLOCK_REALTIME","CLOCK_MONOTONIC"]} },
+
+    { "name": "exit_group", "sys": "SYS_EXIT_GROUP", "nr": 231, "impl": "implemented", "handler": "thread_exit/usermode_exit", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"status","kind":"scalar","ctype":"int"}],
+      "ret":{"ctype":"n/a","meaning":"does not return"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":["pid","fd","addr"]},
+      "notes":"no thread groups: identical to exit" },
+
+    { "name": "openat", "sys": "SYS_OPENAT", "nr": 257, "impl": "implemented", "handler": "do_openat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd","notes":"AT_FDCWD(-100) means the cwd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"flags","kind":"scalar","ctype":"int"}
+      ],
+      "ret":{"ctype":"int","meaning":"new fd; -errno"},"errno":["ENOENT","EFAULT","EMFILE"],
+      "resources":{"creates":["fd"],"consumes":[],"releases":[]} },
+
+    { "name": "mkdirat", "sys": "SYS_MKDIRAT", "nr": 258, "impl": "partial", "handler": "do_mkdir", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd","notes":"ignored; path treated as absolute/cwd-relative"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"mode","kind":"scalar","ctype":"mode_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EEXIST","ENOENT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"dirfd not honoured (delegates to do_mkdir on the path)" },
+
+    { "name": "newfstatat", "sys": "SYS_NEWFSTATAT", "nr": 262, "impl": "partial", "handler": "do_newfstatat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"statbuf","kind":"ptr","ctype":"struct stat*","dir":"out","size":"struct:stat"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"AT_* flags argument is not consumed" },
+
+    { "name": "unlinkat", "sys": "SYS_UNLINKAT", "nr": 263, "impl": "partial", "handler": "do_unlinkat", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EISDIR"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"AT_REMOVEDIR flag not consumed" },
+
+    { "name": "renameat", "sys": "SYS_RENAMEAT", "nr": 264, "impl": "partial", "handler": "do_rename", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"olddirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"oldpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"newdirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"newpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"dirfds not honoured" },
+
+    { "name": "symlinkat", "sys": "SYS_SYMLINKAT", "nr": 266, "impl": "partial", "handler": "do_symlink", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"target","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr"},
+        {"name":"newdirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"linkpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EEXIST","ENOENT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"newdirfd not honoured" },
+
+    { "name": "readlinkat", "sys": "SYS_READLINKAT", "nr": 267, "impl": "partial", "handler": "do_readlink", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"buf","kind":"ptr","ctype":"char*","dir":"out","size":"len:bufsiz"},
+        {"name":"bufsiz","kind":"scalar","ctype":"size_t"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes placed in buf; -errno"},"errno":["EINVAL","ENOENT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"dirfd not honoured" },
+
+    { "name": "fchmodat", "sys": "SYS_FCHMODAT", "nr": 268, "impl": "partial", "handler": "do_chmod", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"mode","kind":"scalar","ctype":"mode_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"dirfd and flags not honoured" },
+
+    { "name": "faccessat", "sys": "SYS_FACCESSAT", "nr": 269, "impl": "partial", "handler": "do_access", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"dirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"path","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"}
+      ],
+      "ret":{"ctype":"int","meaning":"0 if the path resolves; -ENOENT"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"existence-only; dirfd and mode not honoured" },
+
+    { "name": "pipe2", "sys": "SYS_PIPE2", "nr": 293, "impl": "partial", "handler": "do_pipe", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"pipefd","kind":"ptr","ctype":"int*","dir":"out","size":"fixed:8"},
+        {"name":"flags","kind":"scalar","ctype":"int","notes":"ignored"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EFAULT","EMFILE"],
+      "resources":{"creates":["pipe_end","pipe_end"],"consumes":[],"releases":[]},
+      "notes":"O_CLOEXEC/O_NONBLOCK flags not honoured" },
+
+    { "name": "prlimit64", "sys": "SYS_PRLIMIT64", "nr": 302, "impl": "partial", "handler": "do_prlimit64", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid","notes":"ignored (self only)"},
+        {"name":"resource","kind":"scalar","ctype":"int"},
+        {"name":"new_limit","kind":"ptr","ctype":"const struct rlimit64*","dir":"in","size":"struct:rlimit64"},
+        {"name":"old_limit","kind":"ptr","ctype":"struct rlimit64*","dir":"out","size":"struct:rlimit64"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"reports fixed limits; new_limit is accepted but not enforced" },
+
+    { "name": "renameat2", "sys": "SYS_RENAMEAT2", "nr": 316, "impl": "partial", "handler": "do_rename", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"olddirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"oldpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"newdirfd","kind":"scalar","ctype":"int","res":"fd"},
+        {"name":"newpath","kind":"ptr","ctype":"const char*","dir":"in","size":"cstr","res":"path"},
+        {"name":"flags","kind":"scalar","ctype":"unsigned int","notes":"ignored"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["ENOENT","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"dirfds and flags (RENAME_NOREPLACE/EXCHANGE) not honoured" },
+
+    { "name": "getrandom", "sys": "SYS_GETRANDOM", "nr": 318, "impl": "partial", "handler": "do_getrandom", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"buf","kind":"ptr","ctype":"void*","dir":"out","size":"len:buflen"},
+        {"name":"buflen","kind":"scalar","ctype":"size_t"},
+        {"name":"flags","kind":"scalar","ctype":"unsigned int","notes":"ignored"}
+      ],
+      "ret":{"ctype":"ssize_t","meaning":"bytes written; -errno"},"errno":["EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"never blocks; GRND_* flags ignored" },
+
+    { "name": "makh_getticks", "sys": "SYS_MAKH_GETTICKS", "nr": 512, "impl": "implemented", "handler": "timer_get_ticks", "src": "kernel/syscall/syscall.c",
+      "args":[],"ret":{"ctype":"int64_t","meaning":"timer ticks since boot"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"MAKH-specific (0x200); above the Linux range" },
+
+    { "name": "makh_sleep_ms", "sys": "SYS_MAKH_SLEEP_MS", "nr": 513, "impl": "stub", "handler": "(inline)", "src": "kernel/syscall/syscall.c",
+      "args":[{"name":"ms","kind":"scalar","ctype":"uint32_t"}],
+      "ret":{"ctype":"int","meaning":"always 0 (no-op from the ring-3 brick)"},"errno":[],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"MAKH-specific (0x201); deliberately a no-op from ring 3" },
+
+    { "name": "makh_ping", "sys": "SYS_MAKH_PING", "nr": 514, "impl": "implemented", "handler": "do_makh_ping", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"ip","kind":"scalar","ctype":"uint32_t"},
+        {"name":"seq","kind":"scalar","ctype":"uint16_t"},
+        {"name":"timeout_ms","kind":"scalar","ctype":"uint32_t"}
+      ],
+      "ret":{"ctype":"int","meaning":"(ttl<<16)|rtt_ms on reply; -errno"},"errno":["ETIMEDOUT","EHOSTUNREACH"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"MAKH-specific (0x202); one ICMP echo" },
+
+    { "name": "makh_ifinfo", "sys": "SYS_MAKH_IFINFO", "nr": 515, "impl": "implemented", "handler": "do_makh_ifinfo", "src": "kernel/syscall/syscall.c",
+      "args":[
+        {"name":"index","kind":"scalar","ctype":"int"},
+        {"name":"buf","kind":"ptr","ctype":"struct makh_ifinfo*","dir":"out","size":"struct:makh_ifinfo"}
+      ],
+      "ret":{"ctype":"int","meaning":"0; -errno if no such interface"},"errno":["ENODEV","EFAULT"],
+      "resources":{"creates":[],"consumes":[],"releases":[]},
+      "notes":"MAKH-specific (0x203)" }
+  ]
+}

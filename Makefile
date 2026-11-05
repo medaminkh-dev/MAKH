@@ -351,9 +351,14 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
+
+# UFUZZ U0: validate the ABI inventory against the kernel syscall table and
+# verify docs/UFUZZ_ABI.md is up to date. Pure Python; no build needed.
+abi-check:
+	@python3 fuzz/abi/check_abi.py
 
 # Link kernel
 $(KERNEL): $(OBJECTS)
