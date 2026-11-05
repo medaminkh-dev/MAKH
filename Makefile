@@ -173,6 +173,7 @@ C_SOURCES_TESTS = \
     kernel/tests/test_thread.c \
     kernel/tests/test_rtc.c \
     kernel/tests/test_keyboard.c \
+    kernel/tests/test_ufuzz.c \
     kernel/tests/test_iov.c \
     kernel/tests/test_musl.c \
     kernel/tests/test_busybox.c \
@@ -238,6 +239,7 @@ USER_BINS = build/user/hello build/user/getpid build/user/spin build/user/faulte
             build/user/forktest build/user/forkexec build/user/forkcow \
             build/user/readline build/user/sh build/user/echo \
             build/user/execargs build/user/spinner build/user/jobtest \
+            build/user/ufuzz \
             build/user/sigtest build/user/sigmask build/user/sigfuzz build/user/tlstest \
             build/user/timetest build/user/statls build/user/pipetest \
             build/user/countin build/user/threadtest build/user/clktest \
