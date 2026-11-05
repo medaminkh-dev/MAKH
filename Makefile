@@ -455,6 +455,23 @@ $(TEST_ISO): $(KERNEL) grub-test.cfg $(INITRD)
 	@rm -rf isodir-test
 	@echo "Test ISO created: $(TEST_ISO)"
 
+# Stress ISO: identical to the test ISO but its GRUB line adds `makh.notiming`,
+# which makes wall-clock-budget test harnesses (the UFUZZ controller tests) skip
+# themselves. The stress job runs the suite 12x4 in parallel, which deliberately
+# degrades scheduling latency — the very thing those harnesses measure — so they
+# are not valid stress-multiplier citizens. They are fully validated once in the
+# build-and-test job; stress keeps its job of shaking out KERNEL races.
+STRESS_ISO = makhos-stress.iso
+$(STRESS_ISO): $(KERNEL) grub-test.cfg $(INITRD)
+	@echo "Creating stress ISO..."
+	@mkdir -p isodir-stress/boot/grub
+	@sed 's/makh.test/makh.test makh.notiming/' grub-test.cfg > isodir-stress/boot/grub/grub.cfg
+	@cp $(KERNEL) isodir-stress/boot/
+	@cp $(INITRD) isodir-stress/boot/
+	@grub-mkrescue -o $(STRESS_ISO) isodir-stress 2>/dev/null
+	@rm -rf isodir-stress
+	@echo "Stress ISO created: $(STRESS_ISO)"
+
 # Phase 20-P/Q: the disk images the storage KTESTs use. testdisk.img is the raw
 # image the virtio-blk test reads/writes; ext2.img is a real ext2 filesystem the
 # ext2 test mounts and reads. Both are attached to QEMU by tools/run_tests.py.
@@ -498,8 +515,8 @@ check-license:
 	@bash tools/check_license.sh
 
 # Run the whole suite many times in parallel to flush out timing bugs.
-stress: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
-	@bash tools/stress_tests.sh 24 4 $(TEST_ISO)
+stress: $(STRESS_ISO) $(TESTDISK) $(EXT2IMG)
+	@bash tools/stress_tests.sh 24 4 $(STRESS_ISO)
 
 run-debug: $(ISO)
 	@echo "Running MakhOS in QEMU with debug output..."

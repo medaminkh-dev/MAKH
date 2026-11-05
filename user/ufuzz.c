@@ -84,9 +84,11 @@ static void run_worker(int tc) {
     }
     case TC_FAULT: {
         /* A wild write: the kernel must terminate *this* process with SIGSEGV,
-         * leaving the controller untouched. Never returns. */
-        volatile char* bad = (volatile char*)0x1;
-        *bad = 0x7F;
+         * leaving the controller untouched. Never returns. The address comes
+         * through a volatile so the compiler can't prove it is near-zero and
+         * warn (-Warray-bounds) on an intentional fault. */
+        volatile unsigned long bad_addr = 0x1;
+        *(volatile char*)bad_addr = 0x7F;
         uexit(72);                            /* unreachable if the fault fires */
     }
     case TC_HANG:

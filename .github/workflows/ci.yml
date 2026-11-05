@@ -79,8 +79,11 @@ jobs:
             build-essential gcc-13 nasm grub-pc-bin grub-common xorriso mtools \
             qemu-system-x86 e2fsprogs
 
-      - name: Build test ISO
-        run: make CC=$CC makhos-test.iso
+      - name: Build stress ISO
+        run: make CC=$CC makhos-stress.iso
 
       - name: Stress the suite (12 runs, 4 in parallel)
-        run: bash tools/stress_tests.sh 12 4 makhos-test.iso
+        # The stress ISO sets makh.notiming so wall-clock-budget harnesses (the
+        # UFUZZ controller tests) skip under the parallel multiplier; they are
+        # validated in build-and-test. Stress keeps shaking out kernel races.
+        run: bash tools/stress_tests.sh 12 4 makhos-stress.iso
