@@ -35,16 +35,16 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 | 11 | `munmap` | implemented | `do_munmap` | addr (addr), len | -addr |
 | 12 | `brk` | implemented | `do_brk` | addr | — |
 | 13 | `rt_sigaction` | partial | `do_sigaction` | signum, handler (signal_context), restorer | — |
-| 14 | `rt_sigprocmask` | implemented | `do_sigprocmask` | how, set, oldset (out fixed:8) | — |
+| 14 | `rt_sigprocmask` | implemented | `do_sigprocmask` | how, set, oldset (out fixed:8)? | — |
 | 15 | `rt_sigreturn` | implemented | `signal_sigreturn` | — | ~signal_context |
-| 16 | `ioctl` | partial | `do_ioctl` | fd (fd), request, argp (inout struct:termios) | — |
+| 16 | `ioctl` | partial | `do_ioctl` | fd (fd), request, argp (variant/request) | — |
 | 19 | `readv` | implemented | `do_readv` | fd (fd), iov (in arr:iovcnt:iovec), iovcnt | — |
 | 20 | `writev` | implemented | `do_writev` | fd (fd), iov (in arr:iovcnt:iovec), iovcnt | — |
 | 21 | `access` | partial | `do_access` | path (in cstr), mode | — |
 | 22 | `pipe` | implemented | `do_pipe` | pipefd (out fixed:8) | +pipe_end +pipe_end |
 | 28 | `madvise` | stub | `(inline)` | addr (in len:length), length, advice | — |
 | 33 | `dup2` | implemented | `do_dup2` | oldfd (fd), newfd (fd) | +fd |
-| 35 | `nanosleep` | implemented | `do_nanosleep` | req (in struct:timespec), rem (out struct:timespec) | — |
+| 35 | `nanosleep` | implemented | `do_nanosleep` | req (in struct:timespec), rem (out struct:timespec)? | — |
 | 39 | `getpid` | implemented | `do_getpid` | — | — |
 | 41 | `socket` | partial | `do_socket` | domain, type, protocol | +fd +socket |
 | 42 | `connect` | partial | `do_connect` | fd (socket), addr (in len:addrlen), addrlen | — |
@@ -77,9 +77,9 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 | 111 | `getpgrp` | implemented | `sys_getpgid(0)` | — | — |
 | 112 | `setsid` | implemented | `sys_setsid` | — | — |
 | 121 | `getpgid` | implemented | `sys_getpgid` | pid (pid) | — |
-| 158 | `arch_prctl` | implemented | `do_arch_prctl` | code, addr (inout fixed:8) | — |
+| 158 | `arch_prctl` | implemented | `do_arch_prctl` | code, addr (variant/code) | — |
 | 160 | `setrlimit` | stub | `do_setrlimit` | resource, rlim (in struct:rlimit) | — |
-| 202 | `futex` | partial | `do_futex` | uaddr (in fixed:4), op, val, timeout (in struct:timespec) | — |
+| 202 | `futex` | partial | `do_futex` | uaddr (in fixed:4), op, val, timeout (in struct:timespec)? | — |
 | 204 | `sched_getaffinity` | partial | `do_sched_getaffinity` | pid, cpusetsize, mask (out len:cpusetsize) | — |
 | 217 | `getdents64` | implemented | `do_getdents64` | fd (fd), dirp (out len:count), count | — |
 | 218 | `set_tid_address` | implemented | `do_set_tid_address` | tidptr (out fixed:4) | — |
@@ -95,7 +95,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 | 268 | `fchmodat` | partial | `do_chmod` | dirfd (fd), path (in cstr), mode | — |
 | 269 | `faccessat` | partial | `do_access` | dirfd (fd), path (in cstr) | — |
 | 293 | `pipe2` | partial | `do_pipe` | pipefd (out fixed:8), flags | +pipe_end +pipe_end |
-| 302 | `prlimit64` | partial | `do_prlimit64` | pid (pid), resource, new_limit, old_limit (out struct:rlimit64) | — |
+| 302 | `prlimit64` | partial | `do_prlimit64` | pid (pid), resource, new_limit, old_limit (out struct:rlimit64)? | — |
 | 316 | `renameat2` | partial | `do_rename` | olddirfd (fd), oldpath (in cstr), newdirfd (fd), newpath (in cstr), flags | — |
 | 318 | `getrandom` | partial | `do_getrandom` | buf (out len:buflen), buflen, flags | — |
 | 512 | `makh_getticks` | implemented | `timer_get_ticks` | — | — |
@@ -259,7 +259,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **arguments:**
   - `how` : `int`
   - `set` : `unsigned long` — the new mask bits passed BY VALUE, not a sigset_t pointer; evidence: signal_procmask((int)how, set, &old)
-  - `oldset` : `sigset_t*` — ptr out, size `fixed:8` — optional; the previous mask is copy_to_user'd here when non-NULL
+  - `oldset` : `sigset_t*` — ptr out, size `fixed:8` — optional (may be NULL) — the previous mask is copy_to_user'd here when non-NULL
 - **returns:** `int` — 0; -errno
 - **errno:** `EINVAL`, `EFAULT`
 - **resources:** —
@@ -282,11 +282,15 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **arguments:**
   - `fd` : `int` — resource `fd`
   - `request` : `unsigned long`
-  - `argp` : `void*` — ptr inout, size `struct:termios` — interpretation depends on request; TCGETS/TCSETS use struct termios, TIOCGWINSZ uses struct winsize
-- **returns:** `int` — 0; -ENOTTY for non-std fds or unknown request
-- **errno:** `ENOTTY`, `EFAULT`
+  - `argp` : `void*` — variant on `request` — the argp shape is selected by request; these are exactly the requests do_ioctl() handles
+    - `TCGETS` → ptr out, size `struct:termios`
+    - `TCSETS` → ptr in, size `struct:termios`
+    - `TIOCGPGRP` → ptr out, size `fixed:4`
+    - `TIOCSPGRP` → ptr in, size `fixed:4`
+- **returns:** `int` — 0; -ENOTTY for non-std fds; -EINVAL for an unhandled request
+- **errno:** `ENOTTY`, `EINVAL`, `EFAULT`
 - **resources:** —
-- **notes:** only fd 0/1/2 (the TTY) are handled; a small set of termios/winsize requests
+- **notes:** SEMANTIC ABI (audited): only fd 0/1/2 (the TTY) are handled; do_ioctl() switches on request over exactly {TCGETS, TCSETS, TIOCGPGRP, TIOCSPGRP} and returns -EINVAL for anything else. No TIOCGWINSZ. See docs/UFUZZ_ABI_AUDIT.md.
 
 ### `readv` — SYS_READV (nr 19, implemented)
 
@@ -358,7 +362,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **handler:** `do_nanosleep` (`kernel/syscall/syscall.c`)
 - **arguments:**
   - `req` : `const struct timespec*` — ptr in, size `struct:timespec`
-  - `rem` : `struct timespec*` — ptr out, size `struct:timespec`
+  - `rem` : `struct timespec*` — ptr out, size `struct:timespec` — optional (may be NULL) — NULL is permitted; remaining time written only on -EINTR when non-NULL
 - **returns:** `int` — 0; -EINTR if a signal interrupts (remaining time written to rem)
 - **errno:** `EINTR`, `EINVAL`, `EFAULT`
 - **resources:** —
@@ -691,7 +695,9 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **handler:** `do_arch_prctl` (`kernel/syscall/syscall.c`)
 - **arguments:**
   - `code` : `int`
-  - `addr` : `unsigned long` — ptr inout, size `fixed:8` — ARCH_SET_FS: addr is the value; ARCH_GET_FS: addr is an out pointer
+  - `addr` : `unsigned long` — variant on `code` — ARCH_SET_FS takes addr BY VALUE (the new FS base); ARCH_GET_FS takes an out pointer to 8 bytes
+    - `ARCH_SET_FS` → scalar
+    - `ARCH_GET_FS` → ptr out, size `fixed:8`
 - **returns:** `int` — 0; -EINVAL
 - **errno:** `EINVAL`, `ENOSYS`
 - **resources:** —
@@ -715,7 +721,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
   - `uaddr` : `int*` — ptr in, size `fixed:4` — FUTEX_WAIT reads the 4-byte word to compare against val; FUTEX_WAKE does not read it (audited: not written by either)
   - `op` : `int`
   - `val` : `int`
-  - `timeout` : `const struct timespec*` — ptr in, size `struct:timespec` — read only on FUTEX_WAIT when non-NULL
+  - `timeout` : `const struct timespec*` — ptr in, size `struct:timespec` — optional (may be NULL) — read only on FUTEX_WAIT when non-NULL
 - **returns:** `int` — op-dependent; -EAGAIN mismatch; -ETIMEDOUT; -EINTR
 - **errno:** `EAGAIN`, `ETIMEDOUT`, `EINTR`, `EINVAL`, `EFAULT`
 - **resources:** —
@@ -900,7 +906,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
   - `pid` : `pid_t` — resource `pid` — ignored (self only)
   - `resource` : `int`
   - `new_limit` : `const struct rlimit64*` — NOT accessed by the implementation (do_prlimit64 never copy_from_user's it), so modelled as an ignored operand rather than an in pointer
-  - `old_limit` : `struct rlimit64*` — ptr out, size `struct:rlimit64` — optional; the fixed limit is copy_to_user'd here when non-NULL
+  - `old_limit` : `struct rlimit64*` — ptr out, size `struct:rlimit64` — optional (may be NULL) — the fixed limit is copy_to_user'd here when non-NULL
 - **returns:** `int` — 0; -errno
 - **errno:** `EINVAL`, `EFAULT`
 - **resources:** —
@@ -973,4 +979,10 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **errno:** `ENODEV`, `EFAULT`
 - **resources:** —
 - **notes:** MAKH-specific (0x203)
+
+## Struct layouts
+
+### `struct iovec` (16 bytes)
+- `iov_base` — ptr inout, size `len:iov_len` — direction follows the call: readv writes it (out), writev reads it (in)
+- `iov_len` — `size_t`
 

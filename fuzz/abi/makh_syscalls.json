@@ -32,6 +32,13 @@
     "resource": ["fd", "pid", "tid", "addr", "socket", "pipe_end", "path", "buffer", "signal_context"]
   },
 
+  "struct_defs": {
+    "iovec": { "size": 16, "fields": [
+      {"name":"iov_base","kind":"ptr","dir":"inout","size":"len:iov_len","notes":"direction follows the call: readv writes it (out), writev reads it (in)"},
+      {"name":"iov_len","kind":"scalar","ctype":"size_t"}
+    ]}
+  },
+
   "syscalls": [
     { "name": "read", "sys": "SYS_READ", "nr": 0, "impl": "implemented", "handler": "do_read", "src": "kernel/syscall/syscall.c",
       "args": [
@@ -163,7 +170,7 @@
       "args":[
         {"name":"how","kind":"scalar","ctype":"int"},
         {"name":"set","kind":"scalar","ctype":"unsigned long","notes":"the new mask bits passed BY VALUE, not a sigset_t pointer; evidence: signal_procmask((int)how, set, &old)"},
-        {"name":"oldset","kind":"ptr","ctype":"sigset_t*","dir":"out","size":"fixed:8","notes":"optional; the previous mask is copy_to_user'd here when non-NULL"}
+        {"name":"oldset","kind":"ptr","ctype":"sigset_t*","dir":"out","size":"fixed:8","optional":true,"notes":"the previous mask is copy_to_user'd here when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
@@ -182,12 +189,17 @@
       "args":[
         {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
         {"name":"request","kind":"scalar","ctype":"unsigned long"},
-        {"name":"argp","kind":"ptr","ctype":"void*","dir":"inout","size":"struct:termios","notes":"interpretation depends on request; TCGETS/TCSETS use struct termios, TIOCGWINSZ uses struct winsize"}
+        {"name":"argp","kind":"variant","ctype":"void*","selector":"request","variants":{
+           "TCGETS":   {"kind":"ptr","dir":"out","size":"struct:termios"},
+           "TCSETS":   {"kind":"ptr","dir":"in","size":"struct:termios"},
+           "TIOCGPGRP":{"kind":"ptr","dir":"out","size":"fixed:4"},
+           "TIOCSPGRP":{"kind":"ptr","dir":"in","size":"fixed:4"}},
+         "notes":"the argp shape is selected by request; these are exactly the requests do_ioctl() handles"}
       ],
-      "ret":{"ctype":"int","meaning":"0; -ENOTTY for non-std fds or unknown request"},
-      "errno":["ENOTTY","EFAULT"],
+      "ret":{"ctype":"int","meaning":"0; -ENOTTY for non-std fds; -EINVAL for an unhandled request"},
+      "errno":["ENOTTY","EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
-      "notes":"only fd 0/1/2 (the TTY) are handled; a small set of termios/winsize requests" },
+      "notes":"SEMANTIC ABI (audited): only fd 0/1/2 (the TTY) are handled; do_ioctl() switches on request over exactly {TCGETS, TCSETS, TIOCGPGRP, TIOCSPGRP} and returns -EINVAL for anything else. No TIOCGWINSZ. See docs/UFUZZ_ABI_AUDIT.md." },
 
     { "name": "readv", "sys": "SYS_READV", "nr": 19, "impl": "implemented", "handler": "do_readv", "src": "kernel/syscall/syscall.c",
       "args":[
@@ -243,7 +255,7 @@
     { "name": "nanosleep", "sys": "SYS_NANOSLEEP", "nr": 35, "impl": "implemented", "handler": "do_nanosleep", "src": "kernel/syscall/syscall.c",
       "args":[
         {"name":"req","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec"},
-        {"name":"rem","kind":"ptr","ctype":"struct timespec*","dir":"out","size":"struct:timespec"}
+        {"name":"rem","kind":"ptr","ctype":"struct timespec*","dir":"out","size":"struct:timespec","optional":true,"notes":"NULL is permitted; remaining time written only on -EINTR when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"0; -EINTR if a signal interrupts (remaining time written to rem)"},"errno":["EINTR","EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
@@ -466,7 +478,10 @@
     { "name": "arch_prctl", "sys": "SYS_ARCH_PRCTL", "nr": 158, "impl": "implemented", "handler": "do_arch_prctl", "src": "kernel/syscall/syscall.c",
       "args":[
         {"name":"code","kind":"scalar","ctype":"int"},
-        {"name":"addr","kind":"ptr","ctype":"unsigned long","dir":"inout","size":"fixed:8","notes":"ARCH_SET_FS: addr is the value; ARCH_GET_FS: addr is an out pointer"}
+        {"name":"addr","kind":"variant","ctype":"unsigned long","selector":"code","variants":{
+           "ARCH_SET_FS":{"kind":"scalar"},
+           "ARCH_GET_FS":{"kind":"ptr","dir":"out","size":"fixed:8"}},
+         "notes":"ARCH_SET_FS takes addr BY VALUE (the new FS base); ARCH_GET_FS takes an out pointer to 8 bytes"}
       ],
       "ret":{"ctype":"int","meaning":"0; -EINVAL"},"errno":["EINVAL","ENOSYS"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
@@ -482,7 +497,7 @@
         {"name":"uaddr","kind":"ptr","ctype":"int*","dir":"in","size":"fixed:4","notes":"FUTEX_WAIT reads the 4-byte word to compare against val; FUTEX_WAKE does not read it (audited: not written by either)"},
         {"name":"op","kind":"scalar","ctype":"int"},
         {"name":"val","kind":"scalar","ctype":"int"},
-        {"name":"timeout","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec","notes":"read only on FUTEX_WAIT when non-NULL"}
+        {"name":"timeout","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec","optional":true,"notes":"read only on FUTEX_WAIT when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"op-dependent; -EAGAIN mismatch; -ETIMEDOUT; -EINTR"},"errno":["EAGAIN","ETIMEDOUT","EINTR","EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
@@ -631,7 +646,7 @@
         {"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid","notes":"ignored (self only)"},
         {"name":"resource","kind":"scalar","ctype":"int"},
         {"name":"new_limit","kind":"scalar","ctype":"const struct rlimit64*","notes":"NOT accessed by the implementation (do_prlimit64 never copy_from_user's it), so modelled as an ignored operand rather than an in pointer"},
-        {"name":"old_limit","kind":"ptr","ctype":"struct rlimit64*","dir":"out","size":"struct:rlimit64","notes":"optional; the fixed limit is copy_to_user'd here when non-NULL"}
+        {"name":"old_limit","kind":"ptr","ctype":"struct rlimit64*","dir":"out","size":"struct:rlimit64","optional":true,"notes":"the fixed limit is copy_to_user'd here when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},

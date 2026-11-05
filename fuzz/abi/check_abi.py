@@ -40,8 +40,25 @@ DISPATCH_PATH = os.path.join(ROOT, "kernel", "syscall", "syscall.c")
 DOC_PATH = os.path.join(ROOT, "docs", "UFUZZ_ABI.md")
 
 VALID_IMPL = {"implemented", "partial", "stub", "unsupported"}
-VALID_KIND = {"scalar", "ptr"}
+VALID_KIND = {"scalar", "ptr", "variant"}
+VALID_SHAPE_KIND = {"scalar", "ptr"}   # what a variant case or struct field may be
 VALID_DIR = {"in", "out", "inout"}
+
+
+def _check_shape(errors, where, shape):
+    """Validate a concrete operand shape (a variant case or a struct field):
+    kind scalar|ptr, and a ptr needs a direction + size rule."""
+    if not isinstance(shape, dict):
+        errors.append("%s: shape must be an object" % where)
+        return
+    k = shape.get("kind")
+    if k not in VALID_SHAPE_KIND:
+        errors.append("%s: kind must be one of %s" % (where, sorted(VALID_SHAPE_KIND)))
+    if k == "ptr":
+        if shape.get("dir") not in VALID_DIR:
+            errors.append("%s: ptr shape needs dir in %s" % (where, sorted(VALID_DIR)))
+        if not shape.get("size"):
+            errors.append("%s: ptr shape needs a size/length rule" % where)
 
 
 def die(errors):
@@ -125,22 +142,48 @@ def check(emit_doc, do_doc_check):
         if sc.get("impl") == "unsupported" and sysname in dispatched:
             errors.append("%s: marked unsupported but %s IS dispatched" % (tag, sysname))
 
-        # (d) pointer-argument contract: direction + size are mandatory.
+        # (d) argument contract. A pointer needs a direction + size (and may be
+        # `optional`). A `variant` arg needs a selector naming a sibling arg and
+        # a non-empty map of concrete shapes (U3 conditional-pointer support).
+        argnames = {a.get("name") for a in sc.get("args", [])}
         for a in sc.get("args", []):
             an = a.get("name", "?")
-            if a.get("kind") not in VALID_KIND:
-                errors.append("%s.%s: kind '%s' invalid" % (tag, an, a.get("kind")))
-            if a.get("kind") == "ptr":
+            kind = a.get("kind")
+            if kind not in VALID_KIND:
+                errors.append("%s.%s: kind '%s' invalid" % (tag, an, kind))
+            if "optional" in a and not isinstance(a["optional"], bool):
+                errors.append("%s.%s: 'optional' must be a boolean" % (tag, an))
+            if kind == "ptr":
                 if a.get("dir") not in VALID_DIR:
                     errors.append("%s.%s: pointer arg needs dir in %s" % (tag, an, sorted(VALID_DIR)))
                 if not a.get("size"):
                     errors.append("%s.%s: pointer arg needs a size/length rule" % (tag, an))
+            elif kind == "variant":
+                sel = a.get("selector")
+                if sel not in argnames:
+                    errors.append("%s.%s: variant selector '%s' is not an argument of this call"
+                                  % (tag, an, sel))
+                vs = a.get("variants")
+                if not isinstance(vs, dict) or not vs:
+                    errors.append("%s.%s: variant needs a non-empty 'variants' map" % (tag, an))
+                else:
+                    for val, shape in vs.items():
+                        _check_shape(errors, "%s.%s[%s]" % (tag, an, val), shape)
 
         # (e) resource ownership must be explicit (arrays may be empty).
         res = sc.get("resources", {})
         for k in ("creates", "consumes", "releases"):
             if not isinstance(res.get(k), list):
                 errors.append("%s: resources.%s must be a list" % (tag, k))
+
+    # (f) struct layouts (for nested-pointer args like iovec) must be well-formed.
+    for sdn, sd in data.get("struct_defs", {}).items():
+        if not isinstance(sd.get("size"), int):
+            errors.append("struct_def %s: 'size' must be an integer" % sdn)
+        if not isinstance(sd.get("fields"), list) or not sd.get("fields"):
+            errors.append("struct_def %s: 'fields' must be a non-empty list" % sdn)
+        for f in sd.get("fields", []):
+            _check_shape(errors, "struct_def %s.%s" % (sdn, f.get("name", "?")), f)
 
     # (c) every dispatched syscall must be documented (no supported-but-undocumented).
     for sysname in sorted(dispatched):
@@ -177,8 +220,12 @@ def _args_str(sc):
         s = a["name"]
         if a.get("kind") == "ptr":
             s += " (%s %s)" % (a.get("dir", "?"), a.get("size", "?"))
+        elif a.get("kind") == "variant":
+            s += " (variant/%s)" % a.get("selector", "?")
         elif a.get("res"):
             s += " (%s)" % a["res"]
+        if a.get("optional"):
+            s += "?"
         parts.append(s)
     return ", ".join(parts) if parts else "—"
 
@@ -255,11 +302,22 @@ def render_doc(data, hdr, dispatched):
                 line = "  - `%s` : `%s`" % (a["name"], a.get("ctype", "?"))
                 if a.get("kind") == "ptr":
                     line += " — ptr %s, size `%s`" % (a.get("dir", "?"), a.get("size", "?"))
+                elif a.get("kind") == "variant":
+                    line += " — variant on `%s`" % a.get("selector", "?")
+                if a.get("optional"):
+                    line += " — optional (may be NULL)"
                 if a.get("res"):
                     line += " — resource `%s`" % a["res"]
                 if a.get("notes"):
                     line += " — %s" % a["notes"]
                 L.append(line)
+                if a.get("kind") == "variant":
+                    for val, shape in a.get("variants", {}).items():
+                        if shape.get("kind") == "ptr":
+                            L.append("    - `%s` → ptr %s, size `%s`"
+                                     % (val, shape.get("dir", "?"), shape.get("size", "?")))
+                        else:
+                            L.append("    - `%s` → %s" % (val, shape.get("kind", "?")))
         else:
             L.append("- **arguments:** none")
         ret = sc.get("ret", {})
@@ -275,6 +333,25 @@ def render_doc(data, hdr, dispatched):
         if sc.get("notes"):
             L.append("- **notes:** %s" % sc["notes"])
         L.append("")
+
+    # Struct layouts (for nested-pointer args such as iovec).
+    sdefs = data.get("struct_defs", {})
+    if sdefs:
+        L.append("## Struct layouts")
+        L.append("")
+        for name in sorted(sdefs):
+            sd = sdefs[name]
+            L.append("### `struct %s` (%d bytes)" % (name, sd.get("size", 0)))
+            for f in sd.get("fields", []):
+                if f.get("kind") == "ptr":
+                    L.append("- `%s` — ptr %s, size `%s`%s"
+                             % (f.get("name", "?"), f.get("dir", "?"), f.get("size", "?"),
+                                (" — " + f["notes"]) if f.get("notes") else ""))
+                else:
+                    L.append("- `%s` — `%s`%s"
+                             % (f.get("name", "?"), f.get("ctype", f.get("kind", "?")),
+                                (" — " + f["notes"]) if f.get("notes") else ""))
+            L.append("")
 
     return "\n".join(L) + "\n"
 
