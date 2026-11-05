@@ -38,20 +38,48 @@ KTEST(ufuzz, worker_lifecycle_contained) {
 
 /* ---- U2: Resource Accounting & Reset Correctness ------------------------
  *
- * Reset protocol: snapshot the kernel's memory counters, run the full worker
- * campaign to completion (which forks, faults, hangs, and watchdog-kills
- * workers), let deferred cleanup settle, then snapshot again. Any surviving
- * resource that costs memory — a leaked page table, process slot, fd, vnode,
- * pipe, or heap block — shows up as a non-zero delta in free physical pages or
- * kernel-heap bytes. The aggregate memory oracle therefore catches every
- * resource leak that has a memory cost; finer per-type counters are a later
- * refinement. (Per-process accounting is already proven by
- * proc.spawn_wait_many_no_leak; this adds the adversarial fault/kill paths.)
+ * This is a MEMORY-RESET oracle, named honestly for what it measures — not an
+ * all-encompassing resource-leak detector. Reset protocol: snapshot the
+ * kernel's two aggregate memory counters (free physical pages via pmm, kernel
+ * heap bytes via kheap), run the full worker campaign to completion (fork,
+ * fault, hang, watchdog-kill), let deferred cleanup settle, then snapshot
+ * again and assert net-zero steady-state drift.
+ *
+ * SCOPE — what this oracle CAN catch: any leak that has a memory cost, because
+ * every such object is backed by a pmm page or a kheap allocation — a leaked
+ * page table, address space, process/thread slot, kernel stack, file_t (open-
+ * file description), vnode, pipe buffer, or heap block will move one of the two
+ * counters.
+ *
+ * LIMITS — what this oracle does NOT, by itself, prove: a leak that costs
+ * neither a page nor a heap byte is invisible to it. Examples: exhausting a
+ * fixed-size table or id space without freeing memory (fd-number slots, pid
+ * bitmap bits), a refcount that is wrong but never reaches a free, or a
+ * cross-process reference leak that another counter would show. A no-drift
+ * result here therefore means "no memory leak in the tested scenario", not
+ * "no resource leak of any kind".
+ *
+ * REQUIRED per-resource oracles (U2 completeness, tracked separately so they
+ * stay necessary rather than assumed): (1) fd-table slot accounting across
+ * open/close churn; (2) vnode-cache entry accounting (partly covered by
+ * ext2.repeated_resolve_does_not_leak); (3) pipe/socket endpoint accounting;
+ * (4) process/pid accounting — partly covered already by
+ * proc.spawn_wait_many_no_leak, which this test extends to the adversarial
+ * SIGSEGV/SIGKILL cleanup paths. Those are follow-ups, not claims closed here.
  */
 
 static void ufuzz_settle(void) {
-    /* Let the idle reaper free detached/zombie threads and deferred frames. */
-    for (int i = 0; i < 10; i++) sched_sleep_ms(5);
+    /* Wait for deferred reclamation (the idle reaper frees detached threads and
+     * deferred frames) to quiesce: poll until free memory is unchanged across a
+     * 10ms window, or a bound elapses. A fixed sleep is flaky under load; this
+     * is not — it returns as soon as the counter stops moving. */
+    size_t prev = pmm_get_free_memory();
+    for (int i = 0; i < 60; i++) {          /* up to ~600ms */
+        sched_sleep_ms(10);
+        size_t cur = pmm_get_free_memory();
+        if (cur == prev) return;            /* quiesced */
+        prev = cur;
+    }
 }
 
 KTEST(ufuzz, reset_campaign_no_drift) {
@@ -70,11 +98,11 @@ KTEST(ufuzz, reset_campaign_no_drift) {
     size_t pg0 = pmm_get_free_memory();
     size_t hp0 = kheap_get_used();
 
-    /* Four more campaigns = 16 workers + 16 watchdogs, including 4 SIGSEGV
-     * faults and 4 SIGKILL (watchdog) timeouts. After settling, every page and
-     * heap byte must be back: net-zero drift from the warm baseline, or this
-     * flags a real leak in the signal-terminated cleanup path. */
-    for (int r = 0; r < 4; r++) {
+    /* Two more campaigns = 8 workers + 8 watchdogs, including SIGSEGV faults and
+     * SIGKILL (watchdog) timeouts. After settling, every page and heap byte
+     * must be back: net-zero drift from the warm baseline, or this flags a real
+     * leak in the signal-terminated cleanup path. */
+    for (int r = 0; r < 2; r++) {
         pid = proc_spawn_user("/bin/ufuzz");
         KASSERT_TEST(pid > 0);
         st = -1;

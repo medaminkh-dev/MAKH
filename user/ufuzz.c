@@ -99,9 +99,13 @@ enum { OUT_OK = 0, OUT_EXPECTED_ERR, OUT_FAULT, OUT_TIMEOUT, OUT_OTHER };
 
 struct result { int outcome; int status; unsigned long ms; };
 
-/* Budget per worker, in ms. Generous vs. the benign cases, short vs. a hang so
- * the campaign stays quick under slow TCG. */
-#define BUDGET_MS 300UL
+/* Budget per worker, in ms. A finite worker needs microseconds of CPU; this is
+ * wall-clock, so it must be generous enough that even a heavily time-sliced
+ * worker (e.g. 4 QEMUs sharing a slow CI runner) finishes well inside it —
+ * otherwise the watchdog would SIGKILL a correct worker and it would be
+ * misclassified as a hang. 2s gives large margin while still catching a true
+ * infinite loop. */
+#define BUDGET_MS 2000UL
 
 /* Fork a worker for testcase `tc`, run it under the watchdog budget, and
  * classify the outcome. The controller never blocks indefinitely: the watchdog
@@ -132,13 +136,17 @@ static struct result run_one(int tc) {
     if (wdpid > 0) { ukill((int)wdpid, SIGKILL); uwaitpid((int)wdpid, 0); }
 
     r.status = status;
+    /* Signal-based classification is unambiguous and load-independent: the
+     * watchdog is the ONLY source of SIGKILL (-> TIMEOUT), and a wild write is
+     * the ONLY source of SIGSEGV (-> USER_FAULT). We do not use elapsed time to
+     * classify (it drifts under load); ms is reported for information only. */
     int killed = status >= 128;
     int sig = killed ? status - 128 : 0;
-    if (killed && r.ms >= (BUDGET_MS * 9) / 10) r.outcome = OUT_TIMEOUT;   /* budget elapsed */
-    else if (killed && sig == SIGSEGV)          r.outcome = OUT_FAULT;
-    else if (killed)                            r.outcome = OUT_OTHER;
-    else if (status == 0)                       r.outcome = OUT_OK;
-    else                                        r.outcome = OUT_OTHER;     /* self-check fail */
+    if      (sig == SIGSEGV) r.outcome = OUT_FAULT;
+    else if (sig == SIGKILL) r.outcome = OUT_TIMEOUT;
+    else if (killed)         r.outcome = OUT_OTHER;
+    else if (status == 0)    r.outcome = OUT_OK;
+    else                     r.outcome = OUT_OTHER;     /* nonzero exit: self-check fail */
     return r;
 }
 
