@@ -489,6 +489,10 @@ $(EXT2IMG): tools/mkext2.sh
 # to the test ISO so *any* build of it also produces the disks — CI builds only
 # `makhos-test.iso`, so without this the disk-backed tests boot with no disk.
 $(TEST_ISO): $(TESTDISK) $(EXT2IMG)
+# Same for the stress ISO: the CI stress job builds only `makhos-stress.iso`, so
+# without this its disk-backed tests (virtio-blk / ext2 / g3) would boot with no
+# disk and fail deterministically.
+$(STRESS_ISO): $(TESTDISK) $(EXT2IMG)
 
 test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 	@python3 tools/run_tests.py $(TEST_ISO) --timeout 240
