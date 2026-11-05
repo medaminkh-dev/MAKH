@@ -172,6 +172,7 @@ C_SOURCES_TESTS = \
     kernel/tests/test_pipe.c \
     kernel/tests/test_thread.c \
     kernel/tests/test_rtc.c \
+    kernel/tests/test_keyboard.c \
     kernel/tests/test_iov.c \
     kernel/tests/test_musl.c \
     kernel/tests/test_busybox.c \

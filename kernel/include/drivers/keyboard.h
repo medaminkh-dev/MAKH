@@ -106,4 +106,19 @@ void keyboard_clear_buffer(void);
 void keyboard_set_leds(uint8_t leds);
 uint8_t keyboard_get_modifiers(void);
 
+/* Flush a deferred LED update from task (non-IRQ) context (T-L02). */
+void keyboard_service_leds(void);
+
+/* Bounded busy-wait on the PS/2 controller: poll busy() until it reads 0, or
+ * `limit` polls elapse. Returns 0 (ready) or -1 (timeout). (T-L03) */
+int ps2_spin_until(int (*busy)(void), uint32_t limit);
+
+/* Test seam: feed a scancode through the IRQ scancode path, and read the
+ * otherwise-static deferred-LED / caps state. */
+void    keyboard_inject_scancode(uint8_t sc);
+int     keyboard_test_led_pending(void);
+uint8_t keyboard_test_led_value(void);
+int     keyboard_test_caps(void);
+void    keyboard_test_push(char c);
+
 #endif
