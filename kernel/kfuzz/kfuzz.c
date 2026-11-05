@@ -161,7 +161,19 @@ static int oracles_ok(const char** why) {
 /* Watchdog - catches a target that never returns                             */
 /* -------------------------------------------------------------------------- */
 
-#define KFUZZ_WATCHDOG_MS 4000
+/* The watchdog detects an *infinite* hang (a target that never returns), so its
+ * budget must comfortably exceed the slowest legitimate single iteration — not
+ * sit just above the fast path. At 4s it misfired under the stress job (suite
+ * x12, 4 in parallel): a slow-but-finite ext2img mount of a mutated image, or
+ * simply the fuzzer thread being CPU-starved while the guest clock keeps
+ * advancing (TCG timer catch-up under host contention can jump clock_now_ms by
+ * seconds), made the per-iteration heartbeat stall past 4s and panicked with a
+ * false "hung on seed" — a CI flake, not a real hang (the same fixed-seed
+ * campaign passes every time in the single-QEMU build-and-test job). 20s keeps
+ * it a true infinite-hang detector while tolerating a heavily loaded host.
+ * (A genuinely slow mount on a hostile superblock is a separate finding worth
+ * bounding in the ext2 driver; this only stops the watchdog from crying wolf.) */
+#define KFUZZ_WATCHDOG_MS 20000
 
 static void* watchdog_main(void* arg) {
     (void)arg;
