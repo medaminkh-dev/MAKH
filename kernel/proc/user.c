@@ -20,6 +20,7 @@
 #include <elf.h>
 #include <fs/vfs.h>
 #include <arch/usermode.h>
+#include <arch/cpu.h>
 #include <mm/vmspace.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
@@ -332,6 +333,11 @@ long proc_clone(trapframe_t* tf) {
     uint64_t newtls      = tf->r8;
 
     if (!(flags & CLONE_VM) || child_stack == 0) return proc_fork(tf);  /* a process */
+
+    /* A CLONE_SETTLS tls becomes the child's fs_base, wrmsr'd in ring 0 at its
+     * first context switch — reject a non-canonical / kernel-half value here,
+     * exactly as do_arch_prctl does, so it can never fault the kernel. */
+    if ((flags & CLONE_SETTLS) && !user_fs_base_ok(newtls)) return -EINVAL;
 
     address_space_t* as = (address_space_t*)parent->aspace;
 

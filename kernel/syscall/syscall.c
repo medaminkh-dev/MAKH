@@ -707,6 +707,12 @@ static int64_t do_arch_prctl(uint64_t code, uint64_t addr) {
     if (!cur || !cur->is_user) return -ENOSYS;
     switch (code) {
         case ARCH_SET_FS:
+            /* Reject a non-canonical / kernel-half base BEFORE it touches the
+             * PCB or the MSR: wrmsr IA32_FS_BASE #GP(0)s on a non-canonical
+             * value, and this runs in ring 0, so an unchecked value here (and
+             * the one re-pinned at every context switch from cur->fs_base)
+             * would fault the kernel, not the process. See user_fs_base_ok. */
+            if (!user_fs_base_ok(addr)) return -EPERM;
             cur->fs_base = addr;
             wrmsr(IA32_FS_BASE, addr);          /* effective immediately */
             return 0;

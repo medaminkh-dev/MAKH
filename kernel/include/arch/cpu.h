@@ -45,6 +45,25 @@ static inline void wrmsr(uint32_t msr, uint64_t value) {
     __asm__ volatile("wrmsr" : : "c"(msr), "a"((uint32_t)value), "d"((uint32_t)(value >> 32)));
 }
 
+/* First kernel-half linear address (PML4 slot 256); mirrors USER_VA_END in
+ * mm/uvm.c (Audit F2). Any address < this is canonical and in the user half. */
+#define USER_FS_BASE_END 0x0000800000000000ULL
+
+/* True if `base` is a legal IA32_FS_BASE for a user thread: a canonical linear
+ * address in the user half. This matters because WRMSR to IA32_FS_BASE raises
+ * #GP(0) on a NON-CANONICAL value, and that WRMSR runs in RING 0 — in the
+ * arch_prctl syscall (do_arch_prctl) and on every context switch
+ * (arch_prepare_switch). So a ring-3 program that gets a non-canonical FS base
+ * into its PCB would fault the KERNEL, not itself (idt.c routes a ring-0 fault
+ * to the noreturn exception_report -> panic). Validate at the two write sites
+ * so the poison never reaches wrmsr. 0 is allowed (the default: no TLS). A
+ * kernel-half canonical base is also rejected here (policy, like Linux's
+ * TASK_SIZE_MAX check) — userspace has no business pointing FS into the kernel
+ * half, and rejecting it keeps the single test `base < END` sufficient. */
+static inline int user_fs_base_ok(uint64_t base) {
+    return base < USER_FS_BASE_END;
+}
+
 /* Read the time-stamp counter (cycles since reset): a cheap high-rate entropy
  * and timing source. Not a wall clock. */
 static inline uint64_t rdtsc(void) {
