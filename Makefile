@@ -353,7 +353,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -361,6 +361,13 @@ all: $(KERNEL) $(ISO)
 # verify docs/UFUZZ_ABI.md is up to date. Pure Python; no build needed.
 abi-check:
 	@python3 fuzz/abi/check_abi.py
+
+# UFUZZ U3 (host side): typed-IR / generator / validator selftest. Pure Python.
+u3-check:
+	@python3 fuzz/u3/selftest.py
+
+# Both host-side UFUZZ gates.
+fuzz-check: abi-check u3-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)

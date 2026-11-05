@@ -35,6 +35,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate UFUZZ ABI inventory against the kernel syscall table
         run: python3 fuzz/abi/check_abi.py
+      - name: UFUZZ U3 host selftest (typed IR / generator / validator)
+        run: python3 fuzz/u3/selftest.py
 
   build-and-test:
     runs-on: ubuntu-latest

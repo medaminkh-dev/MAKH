@@ -22,3 +22,7 @@ initrd.tar
 
 # Build artifacts
 build/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
