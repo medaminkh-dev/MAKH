@@ -565,7 +565,10 @@ int sys_waitpid(int pid, int* status) {
             return cpid;
         }
         if (!have_children) { local_irq_restore(f); return -ECHILD; }
-        /* Children still alive: block until one exits (or a signal arrives). */
-        sched_wait_event(&cur->child_wq, 0, f);
+        /* Children still alive: block until one exits (or a signal arrives).
+         * T-P01: a signal must interrupt the wait. sched_wait_event returns 2
+         * when a signal woke us; propagate -EINTR instead of silently
+         * re-blocking, so a handler (or a kill) can break a waitpid. */
+        if (sched_wait_event(&cur->child_wq, 0, f) == 2) return -EINTR;
     }
 }

@@ -97,3 +97,56 @@ KTEST(proc, spawn_wait_many_no_leak) {
 KTEST(proc, spawn_missing_path_is_enoent) {
     KEXPECT_EQ(proc_spawn_user("/bin/does-not-exist"), -ENOENT);
 }
+
+/* -------- T-P01: waitpid is interruptible by a signal (EINTR) -------- */
+
+static volatile int tp01_rc;
+static volatile int tp01_child_pid;
+static volatile int tp01_ready;
+
+/* Parent worker: spawn a never-exiting child, then block in waitpid(). A signal
+ * from the main thread must make that waitpid return -EINTR. We then reap our
+ * own child so nothing leaks into later tests. */
+static void tp01_parent(void* arg) {
+    (void)arg;
+    int cpid = proc_spawn_user("/bin/spinner");     /* loops forever until killed */
+    tp01_child_pid = cpid;
+    if (cpid <= 0) { tp01_rc = -1000; tp01_ready = 1; thread_exit(0); }
+    tp01_ready = 1;                                 /* main may now wait for us to block */
+
+    int st = 0;
+    tp01_rc = sys_waitpid(-1, &st);                 /* BLOCKS; signal -> want -EINTR */
+
+    /* Still the child's parent: kill it and reap it from our own context. The
+     * cleanup waitpid blocks until the child exits (sig_interrupt was already
+     * cleared, so it is not spuriously re-interrupted). */
+    process_t* c = proc_find(cpid);
+    if (c) {
+        signal_send(c, SIGKILL);
+        int s2 = 0;
+        while (sys_waitpid(cpid, &s2) == -EINTR) { thread_yield(); }
+    }
+    thread_exit(0);
+}
+
+KTEST(proc, waitpid_is_interrupted_by_signal) {
+    tp01_rc = -4242; tp01_child_pid = 0; tp01_ready = 0;
+
+    process_t* w = thread_create(tp01_parent, 0, "wpwait", PRIO_DEFAULT);
+    KASSERT_TEST(w != (void*)0);
+
+    /* Wait until the parent has spawned its child and is actually blocked in
+     * waitpid: signal_send only raises EINTR against a thread already BLOCKED. */
+    for (int i = 0; i < 600 && !(tp01_ready && w->state == PROC_BLOCKED); i++)
+        sched_sleep_ms(5);
+    KASSERT_TEST(tp01_child_pid > 0);               /* spinner spawned */
+    KASSERT_TEST(w->state == PROC_BLOCKED);         /* parked in waitpid */
+
+    signal_send(w, SIGINT);                         /* interrupt the blocking waitpid */
+    thread_join(w, 0);                              /* parent returns, cleans up, exits */
+
+    /* The headline: a signal made a blocked waitpid return -EINTR. Revert the
+     * fix (ignore sched_wait_event's return) and the parent re-blocks forever
+     * on its still-live child -> thread_join hangs -> suite TIMEOUT. */
+    KEXPECT_EQ(tp01_rc, -EINTR);
+}
