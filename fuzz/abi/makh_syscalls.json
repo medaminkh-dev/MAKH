@@ -111,7 +111,7 @@
 
     { "name": "mmap", "sys": "SYS_MMAP", "nr": 9, "impl": "partial", "handler": "do_mmap", "src": "kernel/syscall/syscall.c",
       "args":[
-        {"name":"addr","kind":"ptr","ctype":"void*","dir":"in","size":"fixed:0","notes":"hint only; ignored (bump allocator chooses the address)"},
+        {"name":"addr","kind":"scalar","ctype":"void*","res":"addr","notes":"hint only, ignored (bump allocator chooses the address). An address operand, not a data pointer: the kernel never copy_*_user's it"},
         {"name":"length","kind":"scalar","ctype":"size_t"},
         {"name":"prot","kind":"scalar","ctype":"int"},
         {"name":"flags","kind":"scalar","ctype":"int"}
@@ -124,7 +124,7 @@
 
     { "name": "mprotect", "sys": "SYS_MPROTECT", "nr": 10, "impl": "implemented", "handler": "do_mprotect", "src": "kernel/syscall/syscall.c",
       "args":[
-        {"name":"addr","kind":"ptr","ctype":"void*","dir":"inout","size":"len:len","res":"addr","notes":"must be a page-aligned base of an existing mapping"},
+        {"name":"addr","kind":"scalar","ctype":"void*","res":"addr","notes":"page-aligned base of an existing mapping; an address/region operand into uvm_mprotect, not a data pointer (no copy_*_user)"},
         {"name":"len","kind":"scalar","ctype":"size_t"},
         {"name":"prot","kind":"scalar","ctype":"int"}
       ],
@@ -135,7 +135,7 @@
 
     { "name": "munmap", "sys": "SYS_MUNMAP", "nr": 11, "impl": "implemented", "handler": "do_munmap", "src": "kernel/syscall/syscall.c",
       "args":[
-        {"name":"addr","kind":"ptr","ctype":"void*","dir":"in","size":"len:len","res":"addr"},
+        {"name":"addr","kind":"scalar","ctype":"void*","res":"addr","notes":"base of the mapping to release; an address/region operand into uvm_munmap, not a data pointer (no copy_*_user)"},
         {"name":"len","kind":"scalar","ctype":"size_t"}
       ],
       "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL"],
@@ -148,25 +148,27 @@
       "resources":{"creates":[],"consumes":[],"releases":[]},
       "side_effects":"grows/shrinks the process heap region" },
 
-    { "name": "rt_sigaction", "sys": "SYS_RT_SIGACTION", "nr": 13, "impl": "implemented", "handler": "do_sigaction", "src": "kernel/syscall/syscall.c",
+    { "name": "rt_sigaction", "sys": "SYS_RT_SIGACTION", "nr": 13, "impl": "partial", "handler": "do_sigaction", "src": "kernel/syscall/syscall.c",
       "args":[
         {"name":"signum","kind":"scalar","ctype":"int"},
-        {"name":"act","kind":"ptr","ctype":"const struct sigaction*","dir":"in","size":"struct:sigaction"},
-        {"name":"oldact","kind":"ptr","ctype":"struct sigaction*","dir":"out","size":"struct:sigaction"}
+        {"name":"handler","kind":"scalar","ctype":"void (*)(int)","res":"signal_context","notes":"a user CODE address stored verbatim as the disposition (SIG_DFL=0, SIG_IGN=1 special); not dereferenced as data"},
+        {"name":"restorer","kind":"scalar","ctype":"void (*)(void)","notes":"user trampoline address that invokes rt_sigreturn"}
       ],
-      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
+      "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
-      "side_effects":"installs a per-process signal disposition" },
+      "side_effects":"installs a per-process signal disposition",
+      "notes":"SEMANTIC ABI (audited): MAKH's rt_sigaction is (sig, handler, restorer), NOT Linux's (sig, const struct sigaction*, struct sigaction*). do_sigaction() forwards handler/restorer BY VALUE to signal_sigaction(); no sigaction struct is read and there is no oldact out-param. Matches user/usys.h usignal(). See docs/UFUZZ_ABI_AUDIT.md." },
 
     { "name": "rt_sigprocmask", "sys": "SYS_RT_SIGPROCMASK", "nr": 14, "impl": "implemented", "handler": "do_sigprocmask", "src": "kernel/syscall/syscall.c",
       "args":[
         {"name":"how","kind":"scalar","ctype":"int"},
-        {"name":"set","kind":"ptr","ctype":"const sigset_t*","dir":"in","size":"fixed:8"},
-        {"name":"oldset","kind":"ptr","ctype":"sigset_t*","dir":"out","size":"fixed:8"}
+        {"name":"set","kind":"scalar","ctype":"unsigned long","notes":"the new mask bits passed BY VALUE, not a sigset_t pointer; evidence: signal_procmask((int)how, set, &old)"},
+        {"name":"oldset","kind":"ptr","ctype":"sigset_t*","dir":"out","size":"fixed:8","notes":"optional; the previous mask is copy_to_user'd here when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
-      "flags":{"supported":["SIG_BLOCK","SIG_UNBLOCK","SIG_SETMASK"]} },
+      "flags":{"supported":["SIG_BLOCK","SIG_UNBLOCK","SIG_SETMASK"]},
+      "notes":"SEMANTIC ABI (audited): the mask argument is by-value, not a pointer (do_sigprocmask forwards `set` to signal_procmask by value). Only oldset is a real user pointer. See docs/UFUZZ_ABI_AUDIT.md." },
 
     { "name": "rt_sigreturn", "sys": "SYS_RT_SIGRETURN", "nr": 15, "impl": "implemented", "handler": "signal_sigreturn", "src": "kernel/syscall/syscall.c (syscall_dispatch)",
       "args":[],
@@ -420,7 +422,7 @@
     { "name": "gettimeofday", "sys": "SYS_GETTIMEOFDAY", "nr": 96, "impl": "implemented", "handler": "do_gettimeofday", "src": "kernel/syscall/syscall.c",
       "args":[
         {"name":"tv","kind":"ptr","ctype":"struct timeval*","dir":"out","size":"struct:timeval"},
-        {"name":"tz","kind":"ptr","ctype":"void*","dir":"out","size":"fixed:8","notes":"timezone ignored"}
+        {"name":"tz","kind":"scalar","ctype":"void*","notes":"timezone operand; NOT accessed by the implementation (never copy_*_user'd), so modelled as an ignored scalar rather than an out pointer"}
       ],
       "ret":{"ctype":"int","meaning":"0; -EFAULT"},"errno":["EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]} },
@@ -477,10 +479,10 @@
 
     { "name": "futex", "sys": "SYS_FUTEX", "nr": 202, "impl": "partial", "handler": "do_futex", "src": "kernel/syscall/syscall.c",
       "args":[
-        {"name":"uaddr","kind":"ptr","ctype":"int*","dir":"inout","size":"fixed:4"},
+        {"name":"uaddr","kind":"ptr","ctype":"int*","dir":"in","size":"fixed:4","notes":"FUTEX_WAIT reads the 4-byte word to compare against val; FUTEX_WAKE does not read it (audited: not written by either)"},
         {"name":"op","kind":"scalar","ctype":"int"},
         {"name":"val","kind":"scalar","ctype":"int"},
-        {"name":"timeout","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec"}
+        {"name":"timeout","kind":"ptr","ctype":"const struct timespec*","dir":"in","size":"struct:timespec","notes":"read only on FUTEX_WAIT when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"op-dependent; -EAGAIN mismatch; -ETIMEDOUT; -EINTR"},"errno":["EAGAIN","ETIMEDOUT","EINTR","EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
@@ -628,12 +630,12 @@
       "args":[
         {"name":"pid","kind":"scalar","ctype":"pid_t","res":"pid","notes":"ignored (self only)"},
         {"name":"resource","kind":"scalar","ctype":"int"},
-        {"name":"new_limit","kind":"ptr","ctype":"const struct rlimit64*","dir":"in","size":"struct:rlimit64"},
-        {"name":"old_limit","kind":"ptr","ctype":"struct rlimit64*","dir":"out","size":"struct:rlimit64"}
+        {"name":"new_limit","kind":"scalar","ctype":"const struct rlimit64*","notes":"NOT accessed by the implementation (do_prlimit64 never copy_from_user's it), so modelled as an ignored operand rather than an in pointer"},
+        {"name":"old_limit","kind":"ptr","ctype":"struct rlimit64*","dir":"out","size":"struct:rlimit64","notes":"optional; the fixed limit is copy_to_user'd here when non-NULL"}
       ],
       "ret":{"ctype":"int","meaning":"0; -errno"},"errno":["EINVAL","EFAULT"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
-      "notes":"reports fixed limits; new_limit is accepted but not enforced" },
+      "notes":"SEMANTIC ABI (audited): reports fixed limits; new_limit is accepted but never read or enforced. See docs/UFUZZ_ABI_AUDIT.md." },
 
     { "name": "renameat2", "sys": "SYS_RENAMEAT2", "nr": 316, "impl": "partial", "handler": "do_rename", "src": "kernel/syscall/syscall.c",
       "args":[
