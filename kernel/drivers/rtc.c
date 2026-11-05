@@ -20,6 +20,19 @@ static uint8_t cmos(uint8_t reg) {
 
 static int update_in_progress(void) { return cmos(0x0A) & 0x80; }
 
+/* Bounded wait (T-L01): poll busy() until it reads 0 (clear), or `limit` polls
+ * elapse. Returns 0 if it cleared, -1 on timeout — so a CMOS whose
+ * update-in-progress bit never clears can never hang the boot. Exposed
+ * (non-static) so a KTEST can drive it with a stub predicate. */
+int rtc_wait_clear(int (*busy)(void), uint32_t limit) {
+    for (uint32_t i = 0; i < limit; i++) {
+        if (!busy()) return 0;
+    }
+    return -1;
+}
+
+static int rtc_uip(void) { return update_in_progress(); }
+
 /* Days from 1970-01-01 to y-m-d (proleptic Gregorian). Adapted from the
  * well-known civil-to-days algorithm; m in [1,12], d in [1,31]. */
 static int64_t days_from_civil(int64_t y, unsigned m, unsigned d) {
@@ -37,7 +50,10 @@ uint64_t rtc_read_epoch(void) {
 
     /* Read until two consecutive, update-quiescent reads agree. */
     for (int tries = 0; tries < 1000000; tries++) {
-        while (update_in_progress()) { }
+        /* Bounded (T-L01): if the update-in-progress bit never clears we stop
+         * polling and read anyway — the two-reads-agree check below still
+         * guards against latching a half-ticked value, and boot never hangs. */
+        rtc_wait_clear(rtc_uip, 1000000u);
         sec  = cmos(0x00); min  = cmos(0x02); hour = cmos(0x04);
         day  = cmos(0x07); mon  = cmos(0x08); year = cmos(0x09);
         if (sec == lsec && min == lmin && hour == lhour &&
