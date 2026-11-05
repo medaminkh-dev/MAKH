@@ -127,3 +127,23 @@ KTEST(ufuzz, reset_oracle_is_sensitive) {
     kfree(p);
     KEXPECT_EQ(kheap_get_used(), base);         /* balanced -> no drift */
 }
+
+/* ---- U3: typed syscall programs execute in Ring 3 and replay ------------
+ * `/bin/ufuzz u3` runs the baked typed-program set (ufuzz_u3_programs.h) — each
+ * program in an isolated, watchdog-bounded worker — with runtime resource
+ * tracking + success-gating, and (for replay programs) re-runs and requires an
+ * identical per-call trace. The controller exits 0 iff every program's outcome
+ * matched its expectation. The set covers: generated balanced programs, a pipe
+ * round-trip (data read back == written), an mmap/mprotect/munmap success, and
+ * an mmap failure whose un-mapped handle is then munmap'd without crashing the
+ * controller (success-gating). This is the U3 §7 acceptance gate that needs the
+ * guest; the structure/generator/validator/serialize gates run host-side in
+ * fuzz/u3/selftest.py (CI abi-check job). */
+KTEST(ufuzz, u3_typed_programs_execute_and_replay) {
+    char* argv[] = { "/bin/ufuzz", "u3", 0 };
+    int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
+    KASSERT_TEST(pid > 0);
+    int status = -1;
+    sys_waitpid(pid, &status);
+    KEXPECT_EQ(status, 0);
+}

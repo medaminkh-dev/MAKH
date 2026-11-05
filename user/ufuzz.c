@@ -38,6 +38,7 @@
  * diagnostic nonzero exit. kernel/tests/test_ufuzz.c reads that exit code.
  */
 #include "usys.h"
+#include "ufuzz_u3_programs.h"   /* U3: baked typed-program set (generated) */
 
 /* usys.h exposes no direct exit wrapper (start.S exits with umain's return),
  * but a forked worker must exit without unwinding back into the controller. */
@@ -94,6 +95,95 @@ static void run_worker(int tc) {
     }
 }
 
+/* ---- U3: typed-program executor ----------------------------------------
+ * Runs a baked typed program (ufuzz_u3_programs.h) in Ring 3 with runtime
+ * resource tracking + success-gating, builds a per-call return trace, and (for
+ * replay programs) runs it twice and requires an identical trace. A syscall
+ * returning -errno is a recorded RESULT, not a worker failure; only a genuine
+ * fault takes the process down (SIGSEGV), classified by the controller. */
+#define U3_MAX_BUFS  8
+#define U3_MAX_BUFSZ 128
+#define U3_MAX_H     16
+#define U3_MAX_CALLS 32
+
+static unsigned char u3_arena[U3_MAX_BUFS][U3_MAX_BUFSZ];
+static long u3_hval[U3_MAX_H];
+static int  u3_hstate[U3_MAX_H];   /* 0 pending, 1 live, 2 failed */
+
+/* Returns 0 on success, else a nonzero diagnostic code (what diverged). */
+static int u3_run(const u3_program* pg, long* trace) {
+    for (int b = 0; b < pg->nbufs && b < U3_MAX_BUFS; b++) {
+        int n = pg->bufs[b].len; if (n > U3_MAX_BUFSZ) n = U3_MAX_BUFSZ;
+        for (int k = 0; k < n; k++) u3_arena[b][k] = pg->bufs[b].data[k];
+        for (int k = n; k < U3_MAX_BUFSZ; k++) u3_arena[b][k] = 0;
+    }
+    for (int h = 0; h < pg->nhandles && h < U3_MAX_H; h++) { u3_hval[h] = -1; u3_hstate[h] = 0; }
+
+    for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++) {
+        const u3_call* c = &pg->calls[i];
+        long a[4] = { 0, 0, 0, 0 };
+        for (int k = 0; k < c->nargs && k < 4; k++) {
+            const u3_arg* op = &c->args[k];
+            switch (op->kind) {
+            case U3_IMM:  a[k] = op->val; break;
+            case U3_RES:  a[k] = u3_hval[op->val]; break;
+            case U3_NIL:  a[k] = 0; break;
+            case U3_BUF:  a[k] = (long)(unsigned long)u3_arena[op->val]; break;
+            case U3_PATH: a[k] = (long)(unsigned long)pg->paths[op->val]; break;
+            }
+        }
+        long ret = usyscall4(c->sysno, a[0], a[1], a[2], a[3]);
+        /* Record a REPLAY-normalized result. MAKH's mmap is a bump allocator
+         * that never reuses addresses (uvm_mmap advances mmap_cur; munmap does
+         * not rewind it), so a successful mapping's address legitimately
+         * differs run-to-run. Replay reproduces the observable OUTCOME (success
+         * vs -errno), not the allocator-chosen address — the design's
+         * reproducible-vs-non-deterministic distinction, made concrete. */
+        trace[i] = (c->bind == U3_BIND_ADDR && ret > 0) ? 0 : ret;
+
+        switch (c->expect_mode) {
+        case U3_NONNEG: if (ret < 0)  return 0x100 | i; break;
+        case U3_NEG:    if (ret >= 0) return 0x100 | i; break;
+        case U3_EXACT:  if (ret != c->expect_val) return 0x100 | i; break;
+        default: break;   /* U3_ANY */
+        }
+
+        if (c->bind == U3_BIND_FD) {
+            if (ret >= 0) { u3_hval[c->bind_h0] = ret; u3_hstate[c->bind_h0] = 1; }
+            else            u3_hstate[c->bind_h0] = 2;
+        } else if (c->bind == U3_BIND_ADDR) {
+            if (ret > 0)  { u3_hval[c->bind_h0] = ret; u3_hstate[c->bind_h0] = 1; }
+            else            u3_hstate[c->bind_h0] = 2;
+        } else if (c->bind == U3_BIND_PIPE) {
+            if (ret == 0) {
+                int* fds = (int*)(void*)u3_arena[c->bind_buf];
+                u3_hval[c->bind_h0] = fds[0]; u3_hstate[c->bind_h0] = 1;
+                u3_hval[c->bind_h1] = fds[1]; u3_hstate[c->bind_h1] = 1;
+            } else { u3_hstate[c->bind_h0] = 2; u3_hstate[c->bind_h1] = 2; }
+        }
+    }
+
+    if (pg->dc_len > 0) {                 /* data-check: dst == src for dc_len bytes */
+        for (int k = 0; k < pg->dc_len; k++)
+            if (u3_arena[pg->dc_dst][k] != u3_arena[pg->dc_src][k]) return 0x200 | k;
+    }
+    return 0;
+}
+
+static void u3_worker(int index) {
+    const u3_program* pg = &U3_PROGRAMS[index];
+    long t1[U3_MAX_CALLS], t2[U3_MAX_CALLS];
+    int rc = u3_run(pg, t1);
+    if (rc) uexit(rc);
+    if (pg->replay) {
+        int rc2 = u3_run(pg, t2);
+        if (rc2) uexit(rc2);
+        for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++)
+            if (t1[i] != t2[i]) uexit(0x300 | i);   /* non-deterministic replay */
+    }
+    uexit(0);
+}
+
 /* ---- outcome classification --------------------------------------------- */
 enum { OUT_OK = 0, OUT_EXPECTED_ERR, OUT_FAULT, OUT_TIMEOUT, OUT_OTHER };
 
@@ -107,15 +197,29 @@ struct result { int outcome; int status; unsigned long ms; };
  * infinite loop. */
 #define BUDGET_MS 2000UL
 
-/* Fork a worker for testcase `tc`, run it under the watchdog budget, and
- * classify the outcome. The controller never blocks indefinitely: the watchdog
- * guarantees the worker is reaped within ~BUDGET_MS even if it wedges. */
-static struct result run_one(int tc) {
+/* The worker body is selected by kind so both campaigns share the same fork +
+ * watchdog isolation: kind 0 = U1 lifecycle testcase, kind 1 = U3 program. The
+ * selection is read from globals the child inherits across fork(). */
+enum { WK_LIFECYCLE = 0, WK_U3 = 1 };
+static int g_worker_kind, g_worker_arg;
+
+static void worker_entry(void) {
+    if (g_worker_kind == WK_U3) u3_worker(g_worker_arg);
+    else                        run_worker(g_worker_arg);
+    uexit(99);                                  /* unreachable: both uexit() */
+}
+
+/* Fork a worker (lifecycle testcase or U3 program), run it under the watchdog
+ * budget, and classify the outcome. The controller never blocks indefinitely:
+ * the watchdog guarantees the worker is reaped within ~BUDGET_MS even if it
+ * wedges. */
+static struct result run_one(int kind, int arg) {
     struct result r = { OUT_OTHER, -1, 0 };
     unsigned long t0 = now_ms();
 
+    g_worker_kind = kind; g_worker_arg = arg;
     long wpid = ufork();
-    if (wpid == 0) { run_worker(tc); uexit(99); }   /* child: never returns */
+    if (wpid == 0) { worker_entry(); uexit(99); }   /* child: never returns */
     if (wpid < 0)  { r.outcome = OUT_OTHER; return r; }
 
     /* Watchdog: a second child that sleeps the budget then SIGKILLs the worker.
@@ -160,30 +264,25 @@ static const char* outcome_name(int o) {
     }
 }
 
-int umain(void) {
-    /* Fixed campaign: one of each lifecycle class, in order. Deterministic. */
+/* U1 campaign: the fixed worker-lifecycle self-check (NORMAL/EXPECTED_ERR/
+ * FAULT/HANG). Returns 0 iff every outcome matched its expected class. */
+static int run_lifecycle_campaign(void) {
     static const struct { int tc; int expect; const char* name; } plan[] = {
         { TC_NORMAL,       OUT_OK,      "NORMAL"       },
-        { TC_EXPECTED_ERR, OUT_OK,      "EXPECTED_ERR" },  /* worker self-verifies the errno -> exit 0 */
+        { TC_EXPECTED_ERR, OUT_OK,      "EXPECTED_ERR" },
         { TC_FAULT,        OUT_FAULT,   "FAULT"        },
         { TC_HANG,         OUT_TIMEOUT, "HANG"         },
     };
     const int N = (int)(sizeof(plan) / sizeof(plan[0]));
+    puts_("ufuzz: lifecycle campaign ("); putu_((unsigned long)N);
+    puts_(" testcases, budget "); putu_(BUDGET_MS); puts_("ms)\n");
 
-    puts_("ufuzz: campaign start (");
-    putu_((unsigned long)N);
-    puts_(" testcases, budget ");
-    putu_(BUDGET_MS);
-    puts_("ms)\n");
-
-    int failures = 0, first_fail_tc = -1;
+    int failures = 0, first = -1;
     for (int i = 0; i < N; i++) {
-        struct result r = run_one(plan[i].tc);
+        struct result r = run_one(WK_LIFECYCLE, plan[i].tc);
         int ok = (r.outcome == plan[i].expect);
-        if (!ok && first_fail_tc < 0) first_fail_tc = i;
+        if (!ok && first < 0) first = i;
         if (!ok) failures++;
-
-        /* One structured line per testcase (the U1 forerunner of a U6 artifact). */
         puts_("  tc="); putu_((unsigned long)i);
         puts_(" kind="); puts_(plan[i].name);
         puts_(" outcome="); puts_(outcome_name(r.outcome));
@@ -191,16 +290,46 @@ int umain(void) {
         puts_(" ms="); putu_(r.ms);
         puts_(ok ? " [match]\n" : " [MISMATCH]\n");
     }
-
-    puts_("ufuzz: campaign done — ");
-    putu_((unsigned long)(N - failures));
+    puts_("ufuzz: lifecycle done — "); putu_((unsigned long)(N - failures));
     puts_("/"); putu_((unsigned long)N);
     puts_(failures ? " matched (FAIL)\n" : " matched (PASS)\n");
+    return failures ? (0x10 | (first & 0x0f)) : 0;
+}
 
-    /* 0 = every lifecycle outcome observed and handled as expected. Reaching
-     * this line at all means the controller survived the faulting and hanging
-     * workers (crash + hang containment). A nonzero code flags which testcase
-     * first diverged, for the KTEST and for triage. */
-    if (failures) return 0x10 | (first_fail_tc & 0x0f);
-    return 0;
+/* U3 campaign: run each baked typed program in an isolated, watchdog-bounded
+ * worker. A program's expected outcome is FAULT if it is an expect_fault
+ * program, else OK (ran to completion, every per-call expectation held, and —
+ * for replay programs — its trace reproduced). Returns 0 iff all matched. */
+static int run_u3_campaign(void) {
+    const int N = U3_NPROGRAMS;
+    puts_("ufuzz: U3 campaign ("); putu_((unsigned long)N);
+    puts_(" typed programs, budget "); putu_(BUDGET_MS); puts_("ms)\n");
+
+    int failures = 0, first = -1;
+    for (int i = 0; i < N; i++) {
+        int expect = U3_PROGRAMS[i].expect_fault ? OUT_FAULT : OUT_OK;
+        struct result r = run_one(WK_U3, i);
+        int ok = (r.outcome == expect);
+        if (!ok && first < 0) first = i;
+        if (!ok) failures++;
+        puts_("  prog="); putu_((unsigned long)i);
+        puts_(" name="); puts_(U3_PROGRAMS[i].name);
+        puts_(" outcome="); puts_(outcome_name(r.outcome));
+        puts_(" status="); putu_((unsigned long)(r.status < 0 ? 255 : r.status));
+        puts_(ok ? " [match]\n" : " [MISMATCH]\n");
+    }
+    puts_("ufuzz: U3 done — "); putu_((unsigned long)(N - failures));
+    puts_("/"); putu_((unsigned long)N);
+    puts_(failures ? " matched (FAIL)\n" : " matched (PASS)\n");
+    return failures ? (0x20 | (first & 0x0f)) : 0;
+}
+
+static int streq_u3(const char* s) {
+    return s && s[0] == 'u' && s[1] == '3' && s[2] == '\0';
+}
+
+int umain(int argc, char** argv) {
+    if (argc >= 2 && streq_u3(argv[1]))
+        return run_u3_campaign();        /* `/bin/ufuzz u3` */
+    return run_lifecycle_campaign();     /* default (U1) */
 }

@@ -51,11 +51,23 @@ class Gen:
 
     # -- call builders (operands follow each syscall's ABI arg order) --
     def c_open(self):
+        # Open an existing, readable file (present in every boot's initrd) so the
+        # emitted program gets a real fd and reads return data instead of
+        # blocking or erroring; O_RDONLY keeps it side-effect free.
         h = self.new_handle("fd")
         self.p.calls.append(Call("open",
-                                 [(PATH, self.new_path()), (IMM, O_RDWR | O_CREAT)],
+                                 [(PATH, self._fixed_path("/bin/hello")), (IMM, 0)],
                                  bind=("fd", [h])))
         self.live_fd.append(h)
+
+    def _fixed_path(self, s):
+        for pid, ps in self.p.paths:
+            if ps == s:
+                return pid
+        pid = self._next_path
+        self._next_path += 1
+        self.p.paths.append((pid, s))
+        return pid
 
     def c_pipe(self):
         h0, h1 = self.new_handle("fd"), self.new_handle("fd")
@@ -107,8 +119,11 @@ class Gen:
         return pool[self.r.below(len(pool))]
 
     def build(self, steps=8):
+        # NOTE: `pipe` is intentionally not in the random mix — a generated
+        # read on an empty pipe would block. pipe lives in the hand-crafted
+        # round-trip template (emit.py), where a write precedes the read.
         for _ in range(steps):
-            choices = ["open", "pipe", "mmap", "getpid"]
+            choices = ["open", "mmap", "getpid"]
             if self.live_fd:
                 choices += ["write", "read", "lseek", "close"]
             if self.live_addr:

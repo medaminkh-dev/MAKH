@@ -37,6 +37,8 @@ jobs:
         run: python3 fuzz/abi/check_abi.py
       - name: UFUZZ U3 host selftest (typed IR / generator / validator)
         run: python3 fuzz/u3/selftest.py
+      - name: UFUZZ U3 baked program header is in sync with the generator
+        run: python3 fuzz/u3/emit.py --check
 
   build-and-test:
     runs-on: ubuntu-latest
