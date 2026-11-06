@@ -112,6 +112,12 @@ static unsigned char u3_arena[U3_MAX_BUFS][U3_MAX_BUFSZ];
 static long u3_hval[U3_MAX_H];
 static int  u3_hstate[U3_MAX_H];   /* 0 pending, 1 live, 2 failed */
 
+/* Scratch for a U3_IOV operand: a struct iovec[] {void* base; size_t len} that
+ * the executor fills with the RUNTIME addresses of arena buffers right before
+ * the call. One is enough — readv/writev take a single iov arg. Layout matches
+ * the kernel's struct iovec (two 8-byte words). */
+static struct { unsigned long base, len; } u3_iov_scratch[U3_MAX_SEG];
+
 /* Returns 0 on success, else a nonzero diagnostic code (what diverged). */
 static int u3_run(const u3_program* pg, long* trace) {
     for (int b = 0; b < pg->nbufs && b < U3_MAX_BUFS; b++) {
@@ -132,6 +138,18 @@ static int u3_run(const u3_program* pg, long* trace) {
             case U3_NIL:  a[k] = 0; break;
             case U3_BUF:  a[k] = (long)(unsigned long)u3_arena[op->val]; break;
             case U3_PATH: a[k] = (long)(unsigned long)pg->paths[op->val]; break;
+            case U3_IOV: {
+                /* Build the iovec array now, pointing each segment at the
+                 * runtime address of its arena buffer (the host can't know it). */
+                const u3_iov* iv = &pg->iovs[op->val];
+                int ns = iv->nseg < U3_MAX_SEG ? iv->nseg : U3_MAX_SEG;
+                for (int s = 0; s < ns; s++) {
+                    u3_iov_scratch[s].base = (unsigned long)(void*)u3_arena[iv->seg_buf[s]];
+                    u3_iov_scratch[s].len  = (unsigned long)iv->seg_len[s];
+                }
+                a[k] = (long)(unsigned long)&u3_iov_scratch[0];
+                break;
+            }
             }
         }
         long ret = usyscall4(c->sysno, a[0], a[1], a[2], a[3]);
@@ -165,9 +183,12 @@ static int u3_run(const u3_program* pg, long* trace) {
         }
     }
 
-    if (pg->dc_len > 0) {                 /* data-check: dst == src for dc_len bytes */
-        for (int k = 0; k < pg->dc_len; k++)
-            if (u3_arena[pg->dc_dst][k] != u3_arena[pg->dc_src][k]) return 0x200 | k;
+    /* data-checks: each (dst, src, len) must match byte-for-byte. Multiple
+     * checks let a scatter/gather program assert every segment reassembled. */
+    for (int d = 0; d < pg->ndcs; d++) {
+        const u3_dc* dc = &pg->dcs[d];
+        for (int k = 0; k < dc->len; k++)
+            if (u3_arena[dc->dst][k] != u3_arena[dc->src][k]) return 0x200 | (d << 5) | (k & 0x1f);
     }
     return 0;
 }

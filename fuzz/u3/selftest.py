@@ -117,6 +117,26 @@ def main():
               "struct %s size: host table %r != ABI struct_def %r"
               % (name, hs, sd.get("size")))
 
+    # (7) U3.1b iovec operands: the writev/readv probe validates, round-trips,
+    # and two malformed iovs are rejected (segment larger than its buffer; and
+    # an iovcnt that disagrees with the segment count) — the validator inspects
+    # the iovec array, it does not wave any iov through.
+    ip = gen.iov_probe()
+    try:
+        u3.validate(ip, abi)
+    except u3.ValErr as e:
+        FAILS.append("iov probe failed validation: %s" % e)
+    check(u3.serialize(ip) == u3.serialize(u3.deserialize(u3.serialize(ip))),
+          "serialize round-trip differs for the iov probe")
+    for mk, nm in ((gen.mutate_iov_bad_len, "oversized-segment"),
+                   (gen.mutate_iov_bad_count, "iovcnt-mismatch")):
+        rejected = False
+        try:
+            u3.validate(mk(), abi)
+        except u3.ValErr:
+            rejected = True
+        check(rejected, "malformed iov (%s) was NOT rejected" % nm)
+
     if FAILS:
         print("U3 SELFTEST: FAIL (%d)" % len(FAILS))
         for f in FAILS:

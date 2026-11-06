@@ -10,6 +10,7 @@
 #define U3_NIL 2
 #define U3_BUF 3
 #define U3_PATH 4
+#define U3_IOV 5
 #define U3_BIND_NONE 0
 #define U3_BIND_FD 1
 #define U3_BIND_ADDR 2
@@ -18,17 +19,21 @@
 #define U3_NONNEG 1
 #define U3_NEG 2
 #define U3_EXACT 3
+#define U3_MAX_SEG 4
 
 typedef struct { int kind; long val; } u3_arg;
 typedef struct { long sysno; int nargs; u3_arg args[6];
                  int bind, bind_h0, bind_h1, bind_buf;
                  int expect_mode; long expect_val; } u3_call;
 typedef struct { const unsigned char* data; int len; } u3_buf;
+typedef struct { int nseg; int seg_buf[U3_MAX_SEG]; int seg_len[U3_MAX_SEG]; } u3_iov;
+typedef struct { int dst, src, len; } u3_dc;
 typedef struct { const char* name; int expect_fault; int replay; int nhandles;
                  const u3_buf* bufs; int nbufs;
                  const char* const* paths; int npaths;
+                 const u3_iov* iovs; int niovs;
                  const u3_call* calls; int ncalls;
-                 int dc_dst, dc_src, dc_len; } u3_program;
+                 const u3_dc* dcs; int ndcs; } u3_program;
 
 static const char* const u3_0_paths[] = {"/bin/hello"};
 static const u3_call u3_0_calls[] = {
@@ -67,6 +72,7 @@ static const unsigned char u3_3_buf0[] = {0, 0, 0, 0, 0, 0, 0, 0};
 static const unsigned char u3_3_buf1[] = {0, 1, 2, 3, 4, 5, 6, 7};
 static const unsigned char u3_3_buf2[] = {0, 0, 0, 0, 0, 0, 0, 0};
 static const u3_buf u3_3_bufs[] = {{u3_3_buf0, 8}, {u3_3_buf1, 8}, {u3_3_buf2, 8}};
+static const u3_dc u3_3_dcs[] = {{2, 1, 8}};
 static const u3_call u3_3_calls[] = {
   { 22, 1, {{U3_BUF, 0}}, U3_BIND_PIPE, 0, 1, 0, U3_NONNEG, 0 },
   { 1, 3, {{U3_RES, 1}, {U3_BUF, 1}, {U3_IMM, 8}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 8 },
@@ -86,6 +92,7 @@ static const u3_call u3_5_calls[] = {
 static const unsigned char u3_6_buf0[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static const unsigned char u3_6_buf1[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static const u3_buf u3_6_bufs[] = {{u3_6_buf0, 12}, {u3_6_buf1, 12}};
+static const u3_dc u3_6_dcs[] = {{1, 0, 12}};
 static const u3_call u3_6_calls[] = {
   { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21505}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
   { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21506}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
@@ -94,6 +101,7 @@ static const u3_call u3_6_calls[] = {
 static const unsigned char u3_7_buf0[] = {0, 0, 0, 0};
 static const unsigned char u3_7_buf1[] = {0, 0, 0, 0};
 static const u3_buf u3_7_bufs[] = {{u3_7_buf0, 4}, {u3_7_buf1, 4}};
+static const u3_dc u3_7_dcs[] = {{1, 0, 4}};
 static const u3_call u3_7_calls[] = {
   { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21519}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
   { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21520}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
@@ -102,22 +110,39 @@ static const u3_call u3_7_calls[] = {
 static const unsigned char u3_8_buf0[] = {0, 80, 52, 18, 0, 0, 0, 0};
 static const unsigned char u3_8_buf1[] = {0, 0, 0, 0, 0, 0, 0, 0};
 static const u3_buf u3_8_bufs[] = {{u3_8_buf0, 8}, {u3_8_buf1, 8}};
+static const u3_dc u3_8_dcs[] = {{1, 0, 8}};
 static const u3_call u3_8_calls[] = {
   { 158, 2, {{U3_IMM, 4098}, {U3_IMM, 305418240}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
   { 158, 2, {{U3_IMM, 4099}, {U3_BUF, 1}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
 };
+static const unsigned char u3_9_buf0[] = {0, 0, 0, 0, 0, 0, 0, 0};
+static const unsigned char u3_9_buf1[] = {97, 98};
+static const unsigned char u3_9_buf2[] = {99, 100, 101};
+static const unsigned char u3_9_buf3[] = {0, 0};
+static const unsigned char u3_9_buf4[] = {0, 0, 0};
+static const u3_buf u3_9_bufs[] = {{u3_9_buf0, 8}, {u3_9_buf1, 2}, {u3_9_buf2, 3}, {u3_9_buf3, 2}, {u3_9_buf4, 3}};
+static const u3_iov u3_9_iovs[] = {{2, {1, 2, 0, 0}, {2, 3, 0, 0}}, {2, {3, 4, 0, 0}, {2, 3, 0, 0}}};
+static const u3_dc u3_9_dcs[] = {{3, 1, 2}, {4, 2, 3}};
+static const u3_call u3_9_calls[] = {
+  { 22, 1, {{U3_BUF, 0}}, U3_BIND_PIPE, 0, 1, 0, U3_NONNEG, 0 },
+  { 20, 3, {{U3_RES, 1}, {U3_IOV, 0}, {U3_IMM, 2}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 5 },
+  { 19, 3, {{U3_RES, 0}, {U3_IOV, 1}, {U3_IMM, 2}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 5 },
+  { 3, 1, {{U3_RES, 0}}, U3_BIND_NONE, 0, 0, 0, U3_NONNEG, 0 },
+  { 3, 1, {{U3_RES, 1}}, U3_BIND_NONE, 0, 0, 0, U3_NONNEG, 0 },
+};
 
 static const u3_program U3_PROGRAMS[] = {
-  { "gen0", 0, 1, 1, 0, 0, u3_0_paths, 1, u3_0_calls, 6, -1, -1, 0 },
-  { "gen1", 0, 1, 2, u3_1_bufs, 2, u3_1_paths, 1, u3_1_calls, 8, -1, -1, 0 },
-  { "gen2", 0, 1, 3, 0, 0, u3_2_paths, 1, u3_2_calls, 7, -1, -1, 0 },
-  { "pipe_roundtrip", 0, 1, 2, u3_3_bufs, 3, 0, 0, u3_3_calls, 5, 2, 1, 8 },
-  { "mmap_success", 0, 1, 1, 0, 0, 0, 0, u3_4_calls, 3, -1, -1, 0 },
-  { "mmap_fail", 0, 1, 1, 0, 0, 0, 0, u3_5_calls, 2, -1, -1, 0 },
-  { "ioctl_termios_roundtrip", 0, 1, 0, u3_6_bufs, 2, 0, 0, u3_6_calls, 3, 1, 0, 12 },
-  { "ioctl_pgrp_roundtrip", 0, 1, 0, u3_7_bufs, 2, 0, 0, u3_7_calls, 3, 1, 0, 4 },
-  { "arch_prctl_fs_roundtrip", 0, 1, 0, u3_8_bufs, 2, 0, 0, u3_8_calls, 2, 1, 0, 8 },
+  { "gen0", 0, 1, 1, 0, 0, u3_0_paths, 1, 0, 0, u3_0_calls, 6, 0, 0 },
+  { "gen1", 0, 1, 2, u3_1_bufs, 2, u3_1_paths, 1, 0, 0, u3_1_calls, 8, 0, 0 },
+  { "gen2", 0, 1, 3, 0, 0, u3_2_paths, 1, 0, 0, u3_2_calls, 7, 0, 0 },
+  { "pipe_roundtrip", 0, 1, 2, u3_3_bufs, 3, 0, 0, 0, 0, u3_3_calls, 5, u3_3_dcs, 1 },
+  { "mmap_success", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_4_calls, 3, 0, 0 },
+  { "mmap_fail", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_5_calls, 2, 0, 0 },
+  { "ioctl_termios_roundtrip", 0, 1, 0, u3_6_bufs, 2, 0, 0, 0, 0, u3_6_calls, 3, u3_6_dcs, 1 },
+  { "ioctl_pgrp_roundtrip", 0, 1, 0, u3_7_bufs, 2, 0, 0, 0, 0, u3_7_calls, 3, u3_7_dcs, 1 },
+  { "arch_prctl_fs_roundtrip", 0, 1, 0, u3_8_bufs, 2, 0, 0, 0, 0, u3_8_calls, 2, u3_8_dcs, 1 },
+  { "iov_roundtrip", 0, 1, 2, u3_9_bufs, 5, 0, 0, u3_9_iovs, 2, u3_9_calls, 5, u3_9_dcs, 2 },
 };
-static const int U3_NPROGRAMS = 9;
+static const int U3_NPROGRAMS = 10;
 
 #endif /* MAKHOS_UFUZZ_U3_PROGRAMS_H */

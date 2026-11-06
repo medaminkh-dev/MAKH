@@ -24,8 +24,13 @@ ABI_VERSION = 1
 
 # ---- operands -------------------------------------------------------------
 # An operand is a small tuple tagged by kind:
-#   ("imm", int) | ("res", handle_id) | ("null",) | ("buf", buf_id) | ("path", path_id)
-IMM, RES, NIL, BUF, PATH = "imm", "res", "null", "buf", "path"
+#   ("imm", int) | ("res", handle_id) | ("null",) | ("buf", buf_id)
+#   | ("path", path_id) | ("iov", iov_id)
+# An `iov` operand (U3.1b) refers to a program-level iovec spec: an ordered list
+# of (buf_id, len) segments the guest materializes into a struct iovec[] at
+# runtime (each iov_base is the runtime address of that arena buffer — a thing
+# the host can't know, hence a dedicated operand rather than a flat buffer).
+IMM, RES, NIL, BUF, PATH, IOV = "imm", "res", "null", "buf", "path", "iov"
 
 
 class Call:
@@ -39,7 +44,7 @@ class Call:
 
 
 class Program:
-    __slots__ = ("abi", "prng", "buffers", "paths", "calls", "handles")
+    __slots__ = ("abi", "prng", "buffers", "paths", "calls", "handles", "iovs")
 
     def __init__(self, abi=ABI_VERSION, prng=("lcg", 0)):
         self.abi = abi
@@ -48,6 +53,7 @@ class Program:
         self.paths = []             # list of (id, str)
         self.calls = []             # list of Call
         self.handles = []           # list of rtype, index == handle id
+        self.iovs = []              # list of [ (buf_id, len), ... ]  (index == iov id)
 
 
 # ---- ABI access -----------------------------------------------------------
@@ -93,6 +99,8 @@ def _op_str(op):
         return "buf:%d" % op[1]
     if k == PATH:
         return "path:%d" % op[1]
+    if k == IOV:
+        return "iov:%d" % op[1]
     raise ValueError("bad operand %r" % (op,))
 
 
@@ -102,7 +110,7 @@ def _op_parse(tok):
     k, _, v = tok.partition(":")
     if k == IMM:
         return (IMM, int(v))
-    if k in (RES, BUF, PATH):
+    if k in (RES, BUF, PATH, IOV):
         return (k, int(v))
     raise ValueError("bad operand token %r" % tok)
 
@@ -117,6 +125,8 @@ def serialize(p):
         out.append("buf %d %d %s" % (bid, size, data.hex()))
     for pid, s in p.paths:
         out.append("path %d %s" % (pid, s))
+    for iid, segs in enumerate(p.iovs):
+        out.append("iov %d %s" % (iid, " ".join("%d:%d" % (b, l) for b, l in segs)))
     for c in p.calls:
         line = "call %s" % c.sys
         for op in c.args:
@@ -149,6 +159,10 @@ def deserialize(text):
                               bytes.fromhex(parts[3]) if len(parts) > 3 else b""))
         elif head == "path":
             p.paths.append((int(parts[1]), parts[2]))
+        elif head == "iov":
+            # "iov <id> b:l b:l ..." — id is positional (append in order)
+            segs = [tuple(int(x) for x in seg.split(":")) for seg in parts[2:]]
+            p.iovs.append(segs)
         elif head == "call":
             sys = parts[1]
             args, bind, tag = [], None, None
@@ -243,6 +257,40 @@ def validate(p, abi):
                 if op[1] not in pathids:
                     raise ValErr("call %d (%s) arg %d: path %d does not exist"
                                  % (idx, c.sys, ai, op[1]))
+            elif kind == IOV:
+                # An iovec array argument (readv/writev). The ABI arg must be a
+                # ptr whose size rule is `arr:<countarg>:<elem>`; the referenced
+                # iov spec's segment count must equal the sibling count operand
+                # (an IMM), stay within the kernel's cap, and every segment must
+                # name an existing buffer at least as large as its declared len.
+                size = spec.get("size", "")
+                if akind != "ptr" or not size.startswith("arr:"):
+                    raise ValErr("call %d (%s) arg %d: iov for a non-array ABI arg (%s %s)"
+                                 % (idx, c.sys, ai, akind, size))
+                if op[1] >= len(p.iovs):
+                    raise ValErr("call %d (%s) arg %d: iov %d does not exist"
+                                 % (idx, c.sys, ai, op[1]))
+                _, countarg, _ = (size.split(":") + ["", ""])[:3]
+                segs = p.iovs[op[1]]
+                if not (0 <= len(segs) <= 1024):
+                    raise ValErr("call %d (%s) arg %d: iov %d has %d segments (cap 1024)"
+                                 % (idx, c.sys, ai, op[1], len(segs)))
+                for (bid, blen) in segs:
+                    if bid not in bufids:
+                        raise ValErr("call %d (%s) arg %d: iov %d segment buf %d does not exist"
+                                     % (idx, c.sys, ai, op[1], bid))
+                    if bufsize[bid] < blen:
+                        raise ValErr("call %d (%s) arg %d: iov %d segment buf %d is %d bytes, need %d"
+                                     % (idx, c.sys, ai, op[1], bid, bufsize[bid], blen))
+                # the count operand must be an IMM equal to the segment count
+                cnt = None
+                for (o2, s2) in zip(c.args, specs):
+                    if s2.get("name") == countarg and o2[0] == IMM:
+                        cnt = o2[1]
+                        break
+                if cnt != len(segs):
+                    raise ValErr("call %d (%s) arg %d: iov %d has %d segments but %s=%r"
+                                 % (idx, c.sys, ai, op[1], len(segs), countarg, cnt))
             elif kind == NIL:
                 if akind == "ptr" and not spec.get("optional"):
                     raise ValErr("call %d (%s) arg %d: NULL for a non-optional pointer %s"

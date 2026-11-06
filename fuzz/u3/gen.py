@@ -9,7 +9,7 @@
 # mutation helpers (tagged), so the validator can tell intended violations from
 # bugs. Deterministic: the same seed yields the same program.
 
-from u3 import (Program, Call, Abi, Lcg, IMM, RES, NIL, BUF, PATH)
+from u3 import (Program, Call, Abi, Lcg, IMM, RES, NIL, BUF, PATH, IOV)
 
 # MVP syscall set: the resource-interesting calls plus a couple of leaves. All
 # have only MVP-representable args (checked against the ABI at import by the
@@ -214,5 +214,55 @@ def mutate_variant_bad_argp(abi):
     p.buffers = [(0, 4, bytes(4))]          # 4 < sizeof(termios)
     p.calls = [
         Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TCGETS")), (BUF, 0)]),
+    ]
+    return p
+
+
+# ---- U3.1b: iovec operands (readv / writev) ------------------------------
+# An `iov` operand references a program-level iovec spec; the guest builds the
+# struct iovec[] at runtime so each iov_base is a real buffer address.
+def iov_probe():
+    """A structurally-valid writev/readv-over-a-pipe program exercising the iov
+    operand and the validator's array handling (gather of 2, scatter of 2)."""
+    p = Program(prng=("lcg", 0))
+    # 0:pipefd[2]; 1,2:writev sources; 3,4:readv dests
+    p.buffers = [(0, 8, bytes(8)), (1, 2, b"ab"), (2, 3, b"cde"),
+                 (3, 2, bytes(2)), (4, 3, bytes(3))]
+    p.iovs = [[(1, 2), (2, 3)], [(3, 2), (4, 3)]]       # id 0 = write, id 1 = read
+    p.handles = ["fd", "fd"]
+    p.calls = [
+        Call("pipe",   [(BUF, 0)], bind=("fd", [0, 1])),
+        Call("writev", [(RES, 1), (IOV, 0), (IMM, 2)]),
+        Call("readv",  [(RES, 0), (IOV, 1), (IMM, 2)]),
+        Call("close",  [(RES, 0)]),
+        Call("close",  [(RES, 1)]),
+    ]
+    return p
+
+
+def mutate_iov_bad_len():
+    """Fail-first: an iov segment whose buffer is smaller than its declared len.
+    The validator must reject it (it checks each segment against its buffer),
+    proving it inspects the iovec array rather than passing any iov through."""
+    p = Program(prng=("lcg", 0))
+    p.buffers = [(0, 8, bytes(8)), (1, 2, b"ab")]
+    p.iovs = [[(1, 99)]]                                # 99 > buf 1's 2 bytes
+    p.handles = ["fd", "fd"]
+    p.calls = [
+        Call("pipe",   [(BUF, 0)], bind=("fd", [0, 1])),
+        Call("writev", [(RES, 1), (IOV, 0), (IMM, 1)]),
+    ]
+    return p
+
+
+def mutate_iov_bad_count():
+    """Fail-first: the iovcnt operand disagrees with the spec's segment count."""
+    p = Program(prng=("lcg", 0))
+    p.buffers = [(0, 8, bytes(8)), (1, 2, b"ab"), (2, 3, b"cde")]
+    p.iovs = [[(1, 2), (2, 3)]]                         # 2 segments ...
+    p.handles = ["fd", "fd"]
+    p.calls = [
+        Call("pipe",   [(BUF, 0)], bind=("fd", [0, 1])),
+        Call("writev", [(RES, 1), (IOV, 0), (IMM, 3)]),  # ... but iovcnt says 3
     ]
     return p

@@ -27,6 +27,8 @@ HDR = os.path.join(ROOT, "user", "ufuzz_u3_programs.h")
 ANY, NONNEG, NEG, EXACT = 0, 1, 2, 3
 # bind kinds (must match ufuzz.c)
 B_NONE, B_FD, B_ADDR, B_PIPE = 0, 1, 2, 3
+# max iovec segments per iov operand (must match ufuzz.c U3_MAX_SEG)
+MAX_SEG = 4
 
 
 def _bind_of(call):
@@ -151,12 +153,34 @@ def template_arch_prctl_fs_roundtrip(abi):
     }
 
 
+def template_iov_roundtrip():
+    # writev gathers two source segments into a pipe; readv scatters them back
+    # into two dest segments of the same shape. Both data-checks must hold, so
+    # the test proves gather ORDER and scatter placement, not just a byte count.
+    # (Modelled on /bin/iovtest.) Buffers: 0 pipefd[2]; 1,2 write srcs; 3,4 read
+    # dsts. iov 0 = [buf1(2), buf2(3)] (write), iov 1 = [buf3(2), buf4(3)] (read).
+    return {
+        "name": "iov_roundtrip", "expect_fault": False, "replay": True,
+        "handles": ["fd", "fd"],
+        "bufs": [bytes(8), b"ab", b"cde", bytes(2), bytes(3)], "paths": [],
+        "iovs": [[(1, 2), (2, 3)], [(3, 2), (4, 3)]],
+        "calls": [
+            {"sys": "pipe",   "args": [(u3.BUF, 0)],                      "bind": (B_PIPE, 0, 1, 0), "expect": (NONNEG, 0)},
+            {"sys": "writev", "args": [(u3.RES, 1), (u3.IOV, 0), (u3.IMM, 2)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 5)},
+            {"sys": "readv",  "args": [(u3.RES, 0), (u3.IOV, 1), (u3.IMM, 2)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 5)},
+            {"sys": "close",  "args": [(u3.RES, 0)],                      "bind": (B_NONE,0,0,0), "expect": (NONNEG, 0)},
+            {"sys": "close",  "args": [(u3.RES, 1)],                      "bind": (B_NONE,0,0,0), "expect": (NONNEG, 0)},
+        ],
+        "data_checks": [(3, 1, 2), (4, 2, 3)],   # readv dsts == writev srcs, per segment
+    }
+
+
 def program_set():
     abi = u3.Abi()
     return ([prog_from_gen("gen%d" % s, s) for s in range(3)] +
             [template_pipe_roundtrip(), template_mmap_success(), template_mmap_fail(),
              template_ioctl_termios_roundtrip(abi), template_ioctl_pgrp_roundtrip(abi),
-             template_arch_prctl_fs_roundtrip(abi)])
+             template_arch_prctl_fs_roundtrip(abi), template_iov_roundtrip()])
 
 
 def _op_c(op):
@@ -171,7 +195,18 @@ def _op_c(op):
         return "{U3_BUF, %d}" % op[1]
     if k == u3.PATH:
         return "{U3_PATH, %d}" % op[1]
+    if k == u3.IOV:
+        return "{U3_IOV, %d}" % op[1]
     raise ValueError(op)
+
+
+def _dc_list(pg):
+    """A program's data-checks as a list of (dst, src, len) triples. Accepts the
+    single-check `data_check` (tuple|None) or the multi-check `data_checks`."""
+    if pg.get("data_checks"):
+        return list(pg["data_checks"])
+    dc = pg.get("data_check")
+    return [dc] if dc else []
 
 
 def render(progs, abi):
@@ -184,20 +219,24 @@ def render(progs, abi):
     L.append("#ifndef MAKHOS_UFUZZ_U3_PROGRAMS_H")
     L.append("#define MAKHOS_UFUZZ_U3_PROGRAMS_H")
     L.append("")
-    L.append("#define U3_IMM 0\n#define U3_RES 1\n#define U3_NIL 2\n#define U3_BUF 3\n#define U3_PATH 4")
+    L.append("#define U3_IMM 0\n#define U3_RES 1\n#define U3_NIL 2\n#define U3_BUF 3\n#define U3_PATH 4\n#define U3_IOV 5")
     L.append("#define U3_BIND_NONE 0\n#define U3_BIND_FD 1\n#define U3_BIND_ADDR 2\n#define U3_BIND_PIPE 3")
     L.append("#define U3_ANY 0\n#define U3_NONNEG 1\n#define U3_NEG 2\n#define U3_EXACT 3")
+    L.append("#define U3_MAX_SEG %d" % MAX_SEG)
     L.append("")
     L.append("typedef struct { int kind; long val; } u3_arg;")
     L.append("typedef struct { long sysno; int nargs; u3_arg args[6];")
     L.append("                 int bind, bind_h0, bind_h1, bind_buf;")
     L.append("                 int expect_mode; long expect_val; } u3_call;")
     L.append("typedef struct { const unsigned char* data; int len; } u3_buf;")
+    L.append("typedef struct { int nseg; int seg_buf[U3_MAX_SEG]; int seg_len[U3_MAX_SEG]; } u3_iov;")
+    L.append("typedef struct { int dst, src, len; } u3_dc;")
     L.append("typedef struct { const char* name; int expect_fault; int replay; int nhandles;")
     L.append("                 const u3_buf* bufs; int nbufs;")
     L.append("                 const char* const* paths; int npaths;")
+    L.append("                 const u3_iov* iovs; int niovs;")
     L.append("                 const u3_call* calls; int ncalls;")
-    L.append("                 int dc_dst, dc_src, dc_len; } u3_program;")
+    L.append("                 const u3_dc* dcs; int ndcs; } u3_program;")
     L.append("")
     for i, pg in enumerate(progs):
         # buffers
@@ -211,6 +250,22 @@ def render(progs, abi):
         if pg["paths"]:
             L.append("static const char* const u3_%d_paths[] = {%s};"
                      % (i, ", ".join('"%s"' % p for p in pg["paths"])))
+        # iovecs: each spec is a list of (buf_id, len) segments
+        iovs = pg.get("iovs", [])
+        if iovs:
+            cells = []
+            for segs in iovs:
+                bufids = [b for b, _ in segs] + [0] * (MAX_SEG - len(segs))
+                lens = [l for _, l in segs] + [0] * (MAX_SEG - len(segs))
+                cells.append("{%d, {%s}, {%s}}" % (len(segs),
+                             ", ".join(str(x) for x in bufids[:MAX_SEG]),
+                             ", ".join(str(x) for x in lens[:MAX_SEG])))
+            L.append("static const u3_iov u3_%d_iovs[] = {%s};" % (i, ", ".join(cells)))
+        # data-checks: a list of (dst, src, len) triples (reassembly assertions)
+        dcl = _dc_list(pg)
+        if dcl:
+            L.append("static const u3_dc u3_%d_dcs[] = {%s};"
+                     % (i, ", ".join("{%d, %d, %d}" % d for d in dcl)))
         # calls
         L.append("static const u3_call u3_%d_calls[] = {" % i)
         for c in pg["calls"]:
@@ -224,13 +279,15 @@ def render(progs, abi):
     L.append("")
     L.append("static const u3_program U3_PROGRAMS[] = {")
     for i, pg in enumerate(progs):
-        dc = pg["data_check"]
-        dcs = ("%d, %d, %d" % dc) if dc else "-1, -1, 0"
         bufs = ("u3_%d_bufs, %d" % (i, len(pg["bufs"]))) if pg["bufs"] else "0, 0"
         paths = ("u3_%d_paths, %d" % (i, len(pg["paths"]))) if pg["paths"] else "0, 0"
-        L.append('  { "%s", %d, %d, %d, %s, %s, u3_%d_calls, %d, %s },'
+        iovl = pg.get("iovs", [])
+        iovs = ("u3_%d_iovs, %d" % (i, len(iovl))) if iovl else "0, 0"
+        dcl = _dc_list(pg)
+        dcs = ("u3_%d_dcs, %d" % (i, len(dcl))) if dcl else "0, 0"
+        L.append('  { "%s", %d, %d, %d, %s, %s, %s, u3_%d_calls, %d, %s },'
                  % (pg["name"], 1 if pg["expect_fault"] else 0, 1 if pg["replay"] else 0,
-                    len(pg["handles"]), bufs, paths, i, len(pg["calls"]), dcs))
+                    len(pg["handles"]), bufs, paths, iovs, i, len(pg["calls"]), dcs))
     L.append("};")
     L.append("static const int U3_NPROGRAMS = %d;" % len(progs))
     L.append("")
