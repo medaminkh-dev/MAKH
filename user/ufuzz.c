@@ -105,8 +105,8 @@ static void run_worker(int tc) {
  * fault takes the process down (SIGSEGV), classified by the controller. */
 #define U3_MAX_BUFS  8
 #define U3_MAX_BUFSZ 128
-#define U3_MAX_H     16
-#define U3_MAX_CALLS 32
+#define U3_MAX_H     34      /* was 16: headroom for a deep fd-exhaustion stack (U4.2 EMFILE) */
+#define U3_MAX_CALLS 72      /* was 32: headroom for ~30 open/close pairs (U4.2) */
 
 /* The shared runtime generator (U4). Included AFTER the caps above so its
  * #ifndef-guarded mirrors no-op here and it uses these exact values. It stores
@@ -130,6 +130,15 @@ static struct { unsigned long base, len; } u3_iov_scratch[U3_MAX_SEG];
 
 /* Returns 0 on success, else a nonzero diagnostic code (what diverged). */
 static int u3_run(const u3_program* pg, long* trace) {
+    /* Capacity guard (U4.2): a program larger than the executor's static arrays
+     * must fail LOUDLY, never be silently truncated — a silent drop would lose
+     * the tail balance closes, and the leaked fds would then be reaped at process
+     * exit, hiding the bug from the U2 net-zero oracle. The generator is bounded
+     * below these caps by construction (static_asserts in ufuzz_u3_gen.h); this
+     * catches any slip. */
+    if (pg->ncalls   > U3_MAX_CALLS) return 0x500;
+    if (pg->nhandles > U3_MAX_H)     return 0x501;
+    if (pg->nbufs    > U3_MAX_BUFS)  return 0x502;
     for (int b = 0; b < pg->nbufs && b < U3_MAX_BUFS; b++) {
         int n = pg->bufs[b].len; if (n > U3_MAX_BUFSZ) n = U3_MAX_BUFSZ;
         for (int k = 0; k < n; k++) u3_arena[b][k] = pg->bufs[b].data[k];

@@ -36,7 +36,10 @@
 #define U3_MAX_BUFSZ 128
 #endif
 #ifndef U3_MAX_H
-#define U3_MAX_H     16
+#define U3_MAX_H     34
+#endif
+#ifndef U3_MAX_CALLS
+#define U3_MAX_CALLS 72
 #endif
 
 /* Generator syscall table. The index is what a generated u3_call.sysno holds. */
@@ -48,7 +51,16 @@ static const char* const U3G_NAME[U3G_NSYS] = {
 };
 
 #define U3G_STEPS     8
-#define U3G_MAX_CALLS 24     /* steps + balance; < U3_MAX_CALLS (32) */
+#define U3G_MAX_CALLS 70     /* steps + balance + deep sequences (U4.2); kept <= U3_MAX_CALLS */
+
+/* Capacity invariants (U4.2): the generator must never emit a program the
+ * executor would have to truncate. Enforced at compile time here, and at run
+ * time by the u3g_begin capacity guard + the executor's 0x500 hard-fail. */
+_Static_assert(U3G_MAX_CALLS <= U3_MAX_CALLS,
+               "generator may emit more calls than the executor runs");
+_Static_assert(U3G_STEPS * 2 <= U3G_MAX_CALLS,
+               "skeleton worst case (each step plus its balance close) must fit");
+_Static_assert(U3_MAX_H >= 4, "need handle headroom for deep fd-exhaustion stacks");
 
 /* open() flags / mmap() args mirror fuzz/u3/gen.py (side-effect-free O_RDONLY
  * open of a file present in every boot's initrd; private anonymous mapping). */
@@ -104,8 +116,15 @@ static int u3g_new_buf(u3g_rng* r, int size, int fill) {
     u3g_bufs[b].len = size;
     return b;
 }
+static u3_call u3g_sink;    /* discard target if ever at capacity (guarded; see u3g_build) */
+static int     u3g_overflow;
 static u3_call* u3g_begin(int sysno, int nargs, int bind, int h0) {
-    u3_call* c = &u3g_calls[u3g_ncalls++];
+    /* Capacity guard: never write past u3g_calls. If a mode ever tried to exceed
+     * U3G_MAX_CALLS, flag it so u3g_build makes it a LOUD executor failure rather
+     * than silently dropping the overflow call. */
+    u3_call* c;
+    if (u3g_ncalls < U3G_MAX_CALLS) c = &u3g_calls[u3g_ncalls++];
+    else { u3g_overflow = 1; c = &u3g_sink; }
     c->sysno = sysno; c->nargs = nargs;
     for (int i = 0; i < 6; i++) { c->args[i].kind = U3_IMM; c->args[i].val = 0; }
     c->bind = bind; c->bind_h0 = h0; c->bind_h1 = 0; c->bind_buf = 0;
@@ -204,6 +223,7 @@ static const u3_program* u3g_build(unsigned long base_seed, unsigned long mut_se
     u3g_rng r = { base_seed };     /* structure */
     u3g_rng m = { mut_seed };      /* selectors / mutation */
     u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
+    u3g_overflow = 0;
 
     for (int step = 0; step < U3G_STEPS; step++) {
         int menu[9], mm = 0;
@@ -245,7 +265,12 @@ static const u3_program* u3g_build(unsigned long base_seed, unsigned long mut_se
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
     u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
-    u3g_prog.calls = u3g_calls; u3g_prog.ncalls = u3g_ncalls;
+    /* If any emission overflowed capacity, report an over-cap ncalls so the
+     * executor's 0x500 guard rejects the program loudly instead of running a
+     * silently-truncated one. By construction (static_asserts + per-mode depth
+     * caps) this never fires. */
+    u3g_prog.calls = u3g_calls;
+    u3g_prog.ncalls = u3g_overflow ? (U3_MAX_CALLS + 1) : u3g_ncalls;
     u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
     return &u3g_prog;
 }
