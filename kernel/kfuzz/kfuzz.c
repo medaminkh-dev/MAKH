@@ -108,6 +108,25 @@ uint64_t kfuzz_cov_count(void) {
     return n;
 }
 
+int kfuzz_cov_enable(int on) {
+    int prev = cov_enabled;
+    cov_enabled = on ? 1 : 0;
+    return prev;
+}
+
+uint32_t kfuzz_cov_words(void) { return COV_WORDS; }
+
+uint64_t kfuzz_cov_fold_new(uint64_t* virgin) {
+    uint64_t n = 0;
+    for (uint32_t i = 0; i < COV_WORDS; i++) {
+        uint64_t cur = cov_map[i];
+        uint64_t fresh = cur & ~virgin[i];   /* edges this run hit that are new */
+        if (fresh) n += popcount64(fresh);
+        virgin[i] |= cur;                     /* fold into the ever-seen set */
+    }
+    return n;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Sandbox state                                                              */
 /* -------------------------------------------------------------------------- */

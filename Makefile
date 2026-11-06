@@ -201,6 +201,8 @@ C_SOURCES = \
 # KFUZZ coverage: instrument only the subsystems the fuzzer attacks, so the
 # coverage map measures the code under test (not the harness, arch or sched).
 COV_SOURCES = \
+    kernel/syscall/syscall.c \
+    kernel/fs/ext2.c \
     kernel/mm/kheap.c \
     kernel/mm/pmm.c \
     kernel/mm/page.c \

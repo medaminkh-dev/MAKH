@@ -25,6 +25,7 @@
 #include <mm/pmm.h>
 #include <mm/kheap.h>
 #include <cmdline.h>
+#include <kfuzz.h>
 
 /* These are wall-clock-budget test harnesses (watchdog timeouts, deferred-
  * reclaim settling), not kernel-race probes. The stress job runs the suite
@@ -158,4 +159,57 @@ KTEST(ufuzz, u3_typed_programs_execute_and_replay) {
     int status = -1;
     sys_waitpid(pid, &status);
     KEXPECT_EQ(status, 0);
+}
+
+/* ---- U4 step 1: coverage-measurement plumbing (the part the design review
+ * flagged as the real risk) -------------------------------------------------
+ * Proves the ring-0 driver can observe EDGE-IDENTITY novelty from a ring-3
+ * worker and attribute it, using the two-map scheme from docs/UFUZZ_U4_DESIGN.md:
+ * a per-run map (cov_map) folded against a persistent `virgin` map.
+ *
+ * Protocol: enable coverage; a warmup run folds the boot/spawn/exec/wait edges
+ * into `virgin` and is discarded; then the SAME ring-3 program is run twice.
+ *   - the first run must reveal NEW edges (nov1 > 0) — ring-3-driven coverage
+ *     is observable at all;
+ *   - the second, identical run must reveal STRICTLY FEWER (nov2 < nov1) — the
+ *     virgin map deduplicates by edge identity, so a re-run is not credited
+ *     again. If fold_new ignored `virgin` (counted bits, not identity), nov2
+ *     would equal nov1 and this fails. That is the U4 feedback signal in
+ *     miniature; the full guided-vs-random campaign builds on it. */
+static uint64_t u4_virgin[1 << 10];   /* >= kfuzz_cov_words() (COV_BITS/64) */
+
+/* Reset the per-run map, run one worker to completion, then fold its edges into
+ * `virgin` — returning how many were NEW. Reset-before-run measures each run in
+ * isolation (its worker's syscalls plus the shared spawn/exec/wait path). */
+static uint64_t u4_run_and_fold(const char* arg) {
+    kfuzz_cov_reset();
+    char* argv[] = { "/bin/ufuzz", (char*)arg, 0 };
+    int pid = arg ? proc_spawn_user_argv("/bin/ufuzz", argv)
+                  : proc_spawn_user("/bin/ufuzz");
+    if (pid <= 0) return 0;
+    int st = -1;
+    sys_waitpid(pid, &st);
+    return kfuzz_cov_fold_new(u4_virgin);
+}
+
+KTEST(ufuzz, u4_coverage_plumbing_attributes_novelty) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    uint32_t words = kfuzz_cov_words();
+    KASSERT_TEST(words <= (sizeof(u4_virgin) / sizeof(u4_virgin[0])));
+    for (uint32_t i = 0; i < words; i++) u4_virgin[i] = 0;
+
+    int prev = kfuzz_cov_enable(1);
+
+    /* Warmup: absorb the spawn/exec/wait + lifecycle edges every run shares. */
+    (void)u4_run_and_fold(0);          /* /bin/ufuzz (U1 lifecycle) */
+
+    /* Two identical U3 campaigns. The first reveals new edges; the second must
+     * not be re-credited (virgin dedup by edge identity). */
+    uint64_t nov1 = u4_run_and_fold("u3");
+    uint64_t nov2 = u4_run_and_fold("u3");
+
+    kfuzz_cov_enable(prev);
+
+    KEXPECT(nov1 > 0);                 /* ring-3-driven coverage is observable */
+    KEXPECT(nov2 < nov1);              /* re-run adds strictly fewer new edges  */
 }
