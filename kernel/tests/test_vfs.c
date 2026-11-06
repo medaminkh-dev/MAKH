@@ -247,3 +247,55 @@ KTEST(vfs, accmode_enforced_on_rw) {
 
     vfs_unlink("/accmode_t");
 }
+
+/* T-V02: a failed open() must have NO side effect. When the fd table is full,
+ * vfs_open(path, O_CREAT|O_TRUNC) used to create and/or truncate the file at the
+ * top of the function and only THEN discover (via fd_alloc) that there is no free
+ * fd, returning -EMFILE. So a failed open had already destroyed the file's
+ * contents — a POSIX contract violation (a failed open must not create/truncate).
+ * The fix reserves an fd slot BEFORE applying the create/truncate side effects.
+ *
+ * Fail-first: before the fix the truncate at line 222 fires even though the open
+ * goes on to fail at fd_alloc, so the victim comes back empty and the content
+ * KEXPECTs below flip (read returns 0, not 4). */
+KTEST(vfs, failed_open_has_no_side_effect) {
+    vfs_unlink("/victim");                               /* best-effort clean */
+
+    /* A victim file with known content. */
+    int vfd = vfs_open("/victim", O_CREAT | O_RDWR);
+    KASSERT_TEST(vfd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(vfd, "DATA", 4), 4);
+    KEXPECT_EQ(vfs_close(vfd), 0);
+
+    /* Exhaust the fd table with side-effect-free opens (O_RDONLY of /dev/zero)
+     * until the next fd_alloc would fail — i.e. 0 free slots remain. */
+    int hoard[VFS_MAX_FDS];
+    int nh = 0;
+    for (;;) {
+        int fd = vfs_open("/dev/zero", O_RDONLY);
+        if (fd < 0) { KEXPECT_EQ(fd, -EMFILE); break; }
+        KASSERT_TEST(nh < VFS_MAX_FDS);
+        hoard[nh++] = fd;
+    }
+    KASSERT_TEST(nh > 0);
+
+    /* With the table full, a create+truncate open must fail WITHOUT touching the
+     * file on disk. */
+    int bad = vfs_open("/victim", O_CREAT | O_TRUNC | O_RDWR);
+    KEXPECT_EQ(bad, -EMFILE);
+    KEXPECT(bad < 0);
+
+    /* Free one slot and re-open the victim: its content must be intact ("DATA",
+     * 4 bytes), proving the failed open did NOT truncate it. */
+    KEXPECT_EQ(vfs_close(hoard[--nh]), 0);
+    int rfd = vfs_open("/victim", O_RDONLY);
+    KASSERT_TEST(rfd >= 0);
+    char rb[8]; memset(rb, 0, sizeof(rb));
+    KEXPECT_EQ((int)vfs_fd_read(rfd, rb, sizeof(rb)), 4);   /* NOT truncated to 0 */
+    KEXPECT_EQ(memcmp(rb, "DATA", 4), 0);
+    vfs_close(rfd);
+
+    /* Release every hoarded fd so later tests are not fd-starved. */
+    while (nh > 0) vfs_close(hoard[--nh]);
+    vfs_unlink("/victim");
+}

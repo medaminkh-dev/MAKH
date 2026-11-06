@@ -217,14 +217,23 @@ int vfs_open(const char* path, int flags) {
     if (!t) return -ENOMEM;
 
     vnode_t* vn = vfs_resolve(path);
-    if (!vn && (flags & O_CREAT)) vn = vfs_create(path, VNODE_REG);
-    if (!vn) return -ENOENT;
-    if ((flags & O_TRUNC) && vn->ops && vn->ops->truncate) vn->ops->truncate(vn, 0);
+    if (!vn && !(flags & O_CREAT)) return -ENOENT;   /* no such file, nothing to open */
 
+    /* Reserve the fd and the open-file description BEFORE any filesystem side
+     * effect (create/truncate). fd_alloc() only picks a free slot — the slot is
+     * not committed until t[fd] is set below — so a failure here (e.g. -EMFILE
+     * when the table is full, or -ENOMEM) returns with the filesystem UNTOUCHED,
+     * as POSIX requires of a failed open(). The create/truncate below run only
+     * once the open is guaranteed to succeed. */
     int fd = fd_alloc(t);
     if (fd < 0) return fd;
     file_t* f = kcalloc(1, sizeof(file_t));
     if (!f) return -ENOMEM;
+
+    if (!vn) vn = vfs_create(path, VNODE_REG);       /* O_CREAT: create + link */
+    if (!vn) { kfree(f); return -ENOENT; }
+    if ((flags & O_TRUNC) && vn->ops && vn->ops->truncate) vn->ops->truncate(vn, 0);
+
     f->vnode = vn;
     f->flags = flags;
     f->offset = (flags & O_APPEND) ? vn->size : 0;
