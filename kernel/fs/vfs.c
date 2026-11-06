@@ -212,6 +212,23 @@ static int fd_alloc(file_t** t) {
     return -EMFILE;
 }
 
+/* Pick a free slot AND publish `f` in it as ONE step, atomic w.r.t. preemption.
+ * fd_alloc() only finds a NULL slot; the kernel is preemptible (the IRQ tail
+ * reschedules even in ring 0), so if a timer tick landed between that scan and
+ * the store, a sibling thread sharing this table (CLONE_FILES) could pick the
+ * SAME slot and one open-file description would silently overwrite the other —
+ * e.g. a pipe end lost, so its reader never sees EOF. MAKH is single-CPU, so
+ * deferring preemption across the scan+store makes it atomic. Nothing in here
+ * sleeps. Every free-slot allocation site goes through this (open, pipe, socket
+ * install; F_DUPFD scans from its own floor under the same guard). */
+static int fd_install(file_t** t, file_t* f) {
+    preempt_disable();
+    int fd = fd_alloc(t);
+    if (fd >= 0) t[fd] = f;
+    preempt_enable();
+    return fd;
+}
+
 int vfs_open(const char* path, int flags) {
     file_t** t = fd_table();
     if (!t) return -ENOMEM;
@@ -219,16 +236,16 @@ int vfs_open(const char* path, int flags) {
     vnode_t* vn = vfs_resolve(path);
     if (!vn && !(flags & O_CREAT)) return -ENOENT;   /* no such file, nothing to open */
 
-    /* Reserve the fd and the open-file description BEFORE any filesystem side
-     * effect (create/truncate). fd_alloc() only picks a free slot — the slot is
-     * not committed until t[fd] is set below — so a failure here (e.g. -EMFILE
-     * when the table is full, or -ENOMEM) returns with the filesystem UNTOUCHED,
-     * as POSIX requires of a failed open(). The create/truncate below run only
-     * once the open is guaranteed to succeed. */
-    int fd = fd_alloc(t);
-    if (fd < 0) return fd;
     file_t* f = kcalloc(1, sizeof(file_t));
     if (!f) return -ENOMEM;
+
+    /* POSIX: a failed open() must neither create nor truncate. Refuse a full
+     * table up front, BEFORE any filesystem side effect. This is only a PROBE —
+     * the slot is claimed by fd_install() below, atomically, AFTER the work. An
+     * unpublished slot must never be held across create/truncate (ext2 block
+     * I/O, preemptible): a sibling thread sharing this table could pick the same
+     * slot in that window and the two descriptions would collide. */
+    if (fd_alloc(t) < 0) { kfree(f); return -EMFILE; }
 
     if (!vn) vn = vfs_create(path, VNODE_REG);       /* O_CREAT: create + link */
     if (!vn) { kfree(f); return -ENOENT; }
@@ -240,7 +257,13 @@ int vfs_open(const char* path, int flags) {
     f->used = 1;
     f->refcount = 1;              /* one fd owns this description */
     vn->refcount++;
-    t[fd] = f;
+    int fd = fd_install(t, f);    /* claim + publish the slot atomically */
+    if (fd < 0) {
+        /* Only reachable if a sibling thread sharing this table took the last
+         * free slot while we created/truncated. Undo what this call owns. */
+        if (vn->refcount) vn->refcount--;
+        kfree(f);
+    }
     return fd;
 }
 
@@ -443,10 +466,13 @@ long vfs_fcntl(int fd, int cmd, long arg) {
             file_t** t = fd_table();
             if (!t || !f) return -EBADF;
             int lo = (int)arg; if (lo < 0) lo = 0;
+            int got = -EMFILE;
+            preempt_disable();                     /* scan+publish atomically (fd_install) */
             for (int i = lo; i < VFS_MAX_FDS; i++) {
-                if (!t[i]) { t[i] = f; f->refcount++; return i; }
+                if (!t[i]) { t[i] = f; f->refcount++; got = i; break; }
             }
-            return -EMFILE;
+            preempt_enable();
+            return got;
         }
         default:      return -EINVAL;
     }
@@ -562,12 +588,10 @@ int vfs_pipe(int fds[2]) {
     rf->vnode = vn; rf->flags = O_RDONLY; rf->used = 1; rf->refcount = 1;
     wf->vnode = vn; wf->flags = O_WRONLY; wf->used = 1; wf->refcount = 1;
 
-    int rfd = fd_alloc(t);
+    int rfd = fd_install(t, rf);
     if (rfd < 0) { kfree(vn); kfree(p); kfree(rf); kfree(wf); return rfd; }
-    t[rfd] = rf;
-    int wfd = fd_alloc(t);
+    int wfd = fd_install(t, wf);
     if (wfd < 0) { t[rfd] = NULL; kfree(vn); kfree(p); kfree(rf); kfree(wf); return wfd; }
-    t[wfd] = wf;
 
     fds[0] = rfd;
     fds[1] = wfd;
@@ -581,9 +605,8 @@ int vfs_install_vnode(vnode_t* vn, int flags) {
     file_t* f = kcalloc(1, sizeof(file_t));
     if (!f) return -ENOMEM;
     f->vnode = vn; f->flags = flags; f->used = 1; f->refcount = 1;
-    int fd = fd_alloc(t);
-    if (fd < 0) { kfree(f); return fd; }
-    t[fd] = f;
+    int fd = fd_install(t, f);
+    if (fd < 0) kfree(f);
     return fd;
 }
 
