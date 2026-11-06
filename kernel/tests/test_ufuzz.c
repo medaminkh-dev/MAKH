@@ -231,9 +231,9 @@ static void u4_utoa(unsigned v, char* out) {
     out[n] = 0;
 }
 
-static int u4_run_cov(unsigned seed) {
-    char sb[16]; u4_utoa(seed, sb);
-    char* argv[] = { "/bin/ufuzz", "cov", sb, 0 };
+static int u4_run_cov(unsigned base, unsigned mut) {
+    char bs[16], ms[16]; u4_utoa(base, bs); u4_utoa(mut, ms);
+    char* argv[] = { "/bin/ufuzz", "cov", bs, ms, 0 };
     int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
     if (pid <= 0) return -1;
     int st = -1; sys_waitpid(pid, &st);
@@ -244,14 +244,14 @@ KTEST(ufuzz, u4_generated_programs_run_clean) {
     UFUZZ_SKIP_IF_NOTIMING();
     const unsigned K = 24;
 
-    (void)u4_run_cov(0);                       /* warmup: absorb first-touch cost */
+    (void)u4_run_cov(0, 0);                     /* warmup: absorb first-touch cost */
     ufuzz_settle();
     size_t pg0 = pmm_get_free_memory();
     size_t hp0 = kheap_get_used();
 
     int bad = 0;
     for (unsigned s = 0; s < K; s++)
-        if (u4_run_cov(s) != 0) bad++;
+        if (u4_run_cov(s, s) != 0) bad++;       /* base==mut sweeps skeleton+selectors */
     KEXPECT_EQ(bad, 0);                         /* every generated program OUT_OK */
 
     ufuzz_settle();
@@ -286,29 +286,33 @@ static void u4_campaign(int guided, unsigned meta_seed, int K,
                         struct u4_campaign_result* out) {
     uint32_t words = kfuzz_cov_words();
     for (uint32_t i = 0; i < words; i++) u4_virgin[i] = 0;
-    unsigned corpus[U4_CORPUS_MAX]; int corpus_n = 0;
+    unsigned corpus_base[U4_CORPUS_MAX]; int corpus_n = 0;   /* fruitful SKELETONS */
     u4_mrng = meta_seed | 1UL;
 
     kfuzz_cov_reset();                           /* warmup: fold shared edges */
-    (void)u4_run_cov(0xABCD);
+    (void)u4_run_cov(0xABCD, 0);
     (void)kfuzz_cov_fold_new(u4_virgin);
 
     uint64_t bits = 0; int ok = 0, crashes = 0, timeouts = 0;
     for (int i = 0; i < K; i++) {
-        unsigned seed;
-        if (guided && corpus_n > 0 && (u4_mnext() & 1))
-            seed = corpus[u4_mnext() % (unsigned)corpus_n] ^ (u4_mnext() & 0xFFFF);
-        else
-            seed = u4_mnext();
+        unsigned base, mut;
+        if (guided && corpus_n > 0 && (u4_mnext() & 1)) {
+            base = corpus_base[u4_mnext() % (unsigned)corpus_n];  /* KEEP skeleton */
+            mut  = u4_mnext();                                    /* VARY selectors */
+        } else {
+            base = u4_mnext(); mut = u4_mnext();                  /* fresh */
+        }
 
         kfuzz_cov_reset();
-        int st = u4_run_cov(seed);
+        int st = u4_run_cov(base, mut);
         uint64_t nov = kfuzz_cov_fold_new(u4_virgin);
         bits += nov;
         if (st == 0) ok++;                       /* ran, replayed, digest-matched */
         else if (st == U4_OUT_FAULT) crashes++;
         else if (st == U4_OUT_TIMEOUT) timeouts++;
-        if (guided && nov > 0 && corpus_n < U4_CORPUS_MAX) corpus[corpus_n++] = seed;
+        /* Keep the SKELETON that found new coverage, so guided can walk its
+         * selector neighbourhood (do_arch_prctl switch arms) on later draws. */
+        if (guided && nov > 0 && corpus_n < U4_CORPUS_MAX) corpus_base[corpus_n++] = base;
     }
     out->bits = bits; out->executed = K; out->corpus_n = corpus_n;
     out->ok = ok; out->crashes = crashes; out->timeouts = timeouts;

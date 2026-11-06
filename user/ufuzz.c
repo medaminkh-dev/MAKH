@@ -115,7 +115,7 @@ static void run_worker(int tc) {
 #include "ufuzz_u3_gen.h"
 static const long U3G_NR[U3G_NSYS] = {
     SYS_OPEN, SYS_READ, SYS_WRITE, SYS_CLOSE,
-    SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_GETPID
+    SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_GETPID, SYS_ARCH_PRCTL
 };
 
 static unsigned char u3_arena[U3_MAX_BUFS][U3_MAX_BUFSZ];
@@ -396,8 +396,8 @@ static unsigned long parse_ul(const char* s) {
  * watchdog, and exit with the outcome class (OUT_OK=0, OUT_FAULT=2,
  * OUT_TIMEOUT=3, else OTHER). A ring-0 driver spawns this per seed, reading
  * crashes/timeouts from the exit status and NEW coverage from the kernel map. */
-static int run_cov_one(unsigned long seed) {
-    const u3_program* pg = u3g_build(seed);
+static int run_cov_one(unsigned long base_seed, unsigned long mut_seed) {
+    const u3_program* pg = u3g_build(base_seed, mut_seed);
     for (int i = 0; i < pg->ncalls; i++)                 /* index -> real SYS_ */
         ((u3_call*)pg->calls)[i].sysno = U3G_NR[pg->calls[i].sysno];
     g_gen_prog = pg;
@@ -407,7 +407,8 @@ static int run_cov_one(unsigned long seed) {
 int umain(int argc, char** argv) {
     if (argc >= 2 && streq_u3(argv[1]))
         return run_u3_campaign();                        /* `/bin/ufuzz u3` */
-    if (argc >= 2 && streq_cov(argv[1]))
-        return run_cov_one(argc >= 3 ? parse_ul(argv[2]) : 0);  /* `/bin/ufuzz cov <seed>` */
+    if (argc >= 2 && streq_cov(argv[1]))                 /* `cov <base_seed> [mut_seed]` */
+        return run_cov_one(argc >= 3 ? parse_ul(argv[2]) : 0,
+                           argc >= 4 ? parse_ul(argv[3]) : 0);
     return run_lifecycle_campaign();                     /* default (U1) */
 }

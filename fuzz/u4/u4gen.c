@@ -31,7 +31,9 @@ static void op_str(const u3_arg* a, char* buf, size_t n) {
 }
 
 static void emit_ir(unsigned long seed) {
-    const u3_program* p = u3g_build(seed);
+    /* base==mut here so one seed sweeps both the skeleton and the selector space;
+     * the Python validator must accept every resulting program. */
+    const u3_program* p = u3g_build(seed, seed);
     printf("abi 1\n");
     printf("prng lcg %lu\n", seed);
     printf("handles");

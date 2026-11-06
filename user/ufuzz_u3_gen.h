@@ -41,9 +41,10 @@
 
 /* Generator syscall table. The index is what a generated u3_call.sysno holds. */
 enum { U3G_OPEN, U3G_READ, U3G_WRITE, U3G_CLOSE,
-       U3G_MMAP, U3G_MPROTECT, U3G_MUNMAP, U3G_GETPID, U3G_NSYS };
+       U3G_MMAP, U3G_MPROTECT, U3G_MUNMAP, U3G_GETPID, U3G_ARCH_PRCTL, U3G_NSYS };
 static const char* const U3G_NAME[U3G_NSYS] = {
-    "open", "read", "write", "close", "mmap", "mprotect", "munmap", "getpid"
+    "open", "read", "write", "close", "mmap", "mprotect", "munmap", "getpid",
+    "arch_prctl"
 };
 
 #define U3G_STEPS     8
@@ -54,6 +55,16 @@ static const char* const U3G_NAME[U3G_NSYS] = {
 #define U3G_O_RDONLY  0
 #define U3G_PROT_RW   0x3
 #define U3G_MAP_PA    0x22
+
+/* arch_prctl selector-switched call (U4.1). These are the real `code` values the
+ * host validator resolves by sel_value; a generated program emits them as the
+ * `code` IMM, and the matching argp shape (SET_FS takes the base by value, so an
+ * IMM; GET_FS writes to an 8-byte out buffer, so a BUF). ARCH_SET_FS is safe to
+ * fuzz now that T-S01 rejects a non-canonical base with -EPERM; we also use a
+ * canonical user-half value the worker never dereferences through %fs. */
+#define U3G_ARCH_SET_FS  0x1002
+#define U3G_ARCH_GET_FS  0x1003
+#define U3G_FS_SAFE      0x1000          /* canonical, < USER_FS_BASE_END, never deref'd */
 
 /* ---- scratch for ONE generated program (single-threaded use per TU) ------- */
 static u3_call       u3g_calls[U3G_MAX_CALLS];
@@ -161,24 +172,53 @@ static void u3g_emit_munmap(int a) {
     u3g_set(c, 0, U3_RES, a); u3g_set(c, 1, U3_IMM, 4096);
 }
 
-/* Build a structurally-valid, dependency-aware, balanced program from `seed`.
+/* arch_prctl with a mut-chosen selector (U4.1): SET_FS (code 0x1002, base by
+ * value), GET_FS (0x1003, 8-byte out buffer), or an invalid code (the switch
+ * default arm, -EINVAL). `buf` is a pre-reserved 8-byte buffer used by GET_FS.
+ * All three selector choices are validity-preserving (the host validator
+ * resolves the code and accepts the matching argp) and safe to run (SET_FS's
+ * base is canonical user-half, T-S01-guarded, and the worker never derefs %fs).
+ * Varying the selector walks do_arch_prctl's switch arms — that is the point. */
+static void u3g_emit_arch_prctl(int selchoice, int buf) {
+    u3_call* c = u3g_begin(U3G_ARCH_PRCTL, 2, U3_BIND_NONE, 0);
+    if (selchoice == 0) {                       /* SET_FS: canonical base by value */
+        u3g_set(c, 0, U3_IMM, U3G_ARCH_SET_FS);
+        u3g_set(c, 1, U3_IMM, U3G_FS_SAFE);
+    } else if (selchoice == 1) {                /* GET_FS: write base to out buffer */
+        u3g_set(c, 0, U3_IMM, U3G_ARCH_GET_FS);
+        u3g_set(c, 1, U3_BUF, buf);
+    } else {                                    /* invalid code -> default arm      */
+        u3g_set(c, 0, U3_IMM, 0x6666);
+        u3g_set(c, 1, U3_BUF, buf);             /* argp unused by the default arm   */
+    }
+}
+
+/* Build a structurally-valid, dependency-aware, balanced program. `base_seed`
+ * fixes the SKELETON (which calls, their operands); a SEPARATE `mut_seed`-driven
+ * PRNG picks only the SELECTORS of selector-switched calls (arch_prctl). So for
+ * a fixed base_seed, varying mut_seed explores the same skeleton's selector
+ * neighbourhood (the handler switch arms) rather than an unrelated program —
+ * the structural locality seed-level mutation lacked (U4.1 / design §5).
  * Returns a pointer into static scratch (overwritten by the next call). */
-static const u3_program* u3g_build(unsigned long seed) {
-    u3g_rng r = { seed };
+static const u3_program* u3g_build(unsigned long base_seed, unsigned long mut_seed) {
+    u3g_rng r = { base_seed };     /* structure */
+    u3g_rng m = { mut_seed };      /* selectors / mutation */
     u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
 
     for (int step = 0; step < U3G_STEPS; step++) {
-        int menu[8], m = 0;
-        menu[m++] = U3G_OPEN; menu[m++] = U3G_MMAP; menu[m++] = U3G_GETPID;
-        if (u3g_nfd > 0)   { menu[m++] = U3G_WRITE; menu[m++] = U3G_READ; menu[m++] = U3G_CLOSE; }
-        if (u3g_naddr > 0) { menu[m++] = U3G_MPROTECT; menu[m++] = U3G_MUNMAP; }
-        int pick = menu[u3g_below(&r, m)];
+        int menu[9], mm = 0;
+        menu[mm++] = U3G_OPEN; menu[mm++] = U3G_MMAP; menu[mm++] = U3G_GETPID;
+        menu[mm++] = U3G_ARCH_PRCTL;
+        if (u3g_nfd > 0)   { menu[mm++] = U3G_WRITE; menu[mm++] = U3G_READ; menu[mm++] = U3G_CLOSE; }
+        if (u3g_naddr > 0) { menu[mm++] = U3G_MPROTECT; menu[mm++] = U3G_MUNMAP; }
+        int pick = menu[u3g_below(&r, mm)];
 
         /* Stay within executor/validator caps; otherwise fall back to getpid so
          * the choice is still consumed from the PRNG but adds no resource. */
         if (u3g_ncalls >= U3G_MAX_CALLS - 2) break;
         if ((pick == U3G_OPEN || pick == U3G_MMAP) && u3g_nhandles >= U3_MAX_H - 2) pick = U3G_GETPID;
         if ((pick == U3G_WRITE || pick == U3G_READ) && u3g_nbufs >= U3_MAX_BUFS)    pick = U3G_GETPID;
+        if (pick == U3G_ARCH_PRCTL && u3g_nbufs >= U3_MAX_BUFS)                     pick = U3G_GETPID;
 
         switch (pick) {
         case U3G_OPEN:     u3g_emit_open();      break;
@@ -188,6 +228,11 @@ static const u3_program* u3g_build(unsigned long seed) {
         case U3G_CLOSE:    u3g_emit_close(u3g_live_fd[u3g_below(&r, u3g_nfd)]);   break;
         case U3G_MPROTECT: u3g_emit_mprotect(&r); break;
         case U3G_MUNMAP:   u3g_emit_munmap(u3g_live_addr[u3g_below(&r, u3g_naddr)]); break;
+        case U3G_ARCH_PRCTL: {
+            int b = u3g_new_buf(&r, 8, 0);             /* out buffer for GET_FS */
+            u3g_emit_arch_prctl((int)u3g_below(&m, 3), b);   /* selector from mut */
+            break;
+        }
         default:           u3g_emit_getpid();    break;
         }
     }
