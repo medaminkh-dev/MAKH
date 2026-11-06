@@ -108,6 +108,16 @@ static void run_worker(int tc) {
 #define U3_MAX_H     16
 #define U3_MAX_CALLS 32
 
+/* The shared runtime generator (U4). Included AFTER the caps above so its
+ * #ifndef-guarded mirrors no-op here and it uses these exact values. It stores
+ * each call's syscall as an index (U3G_*); U3G_NR maps that to the real SYS_
+ * number before u3_run executes the program. */
+#include "ufuzz_u3_gen.h"
+static const long U3G_NR[U3G_NSYS] = {
+    SYS_OPEN, SYS_READ, SYS_WRITE, SYS_CLOSE,
+    SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_GETPID
+};
+
 static unsigned char u3_arena[U3_MAX_BUFS][U3_MAX_BUFSZ];
 static long u3_hval[U3_MAX_H];
 static int  u3_hstate[U3_MAX_H];   /* 0 pending, 1 live, 2 failed */
@@ -207,8 +217,7 @@ static unsigned long u3_digest(const u3_program* pg) {
     return h;
 }
 
-static void u3_worker(int index) {
-    const u3_program* pg = &U3_PROGRAMS[index];
+static void u3_worker_pg(const u3_program* pg) {
     long t1[U3_MAX_CALLS], t2[U3_MAX_CALLS];
     int rc = u3_run(pg, t1);
     if (rc) uexit(rc);
@@ -222,6 +231,13 @@ static void u3_worker(int index) {
     }
     uexit(0);
 }
+
+static void u3_worker(int index) { u3_worker_pg(&U3_PROGRAMS[index]); }
+
+/* U4: a worker that runs a freshly GENERATED program (built pre-fork and
+ * inherited across the fork in g_gen_prog). */
+static const u3_program* g_gen_prog;
+static void u3gen_worker(void) { u3_worker_pg(g_gen_prog); }
 
 /* ---- outcome classification --------------------------------------------- */
 enum { OUT_OK = 0, OUT_EXPECTED_ERR, OUT_FAULT, OUT_TIMEOUT, OUT_OTHER };
@@ -239,13 +255,14 @@ struct result { int outcome; int status; unsigned long ms; };
 /* The worker body is selected by kind so both campaigns share the same fork +
  * watchdog isolation: kind 0 = U1 lifecycle testcase, kind 1 = U3 program. The
  * selection is read from globals the child inherits across fork(). */
-enum { WK_LIFECYCLE = 0, WK_U3 = 1 };
+enum { WK_LIFECYCLE = 0, WK_U3 = 1, WK_U3GEN = 2 };
 static int g_worker_kind, g_worker_arg;
 
 static void worker_entry(void) {
-    if (g_worker_kind == WK_U3) u3_worker(g_worker_arg);
-    else                        run_worker(g_worker_arg);
-    uexit(99);                                  /* unreachable: both uexit() */
+    if      (g_worker_kind == WK_U3)    u3_worker(g_worker_arg);
+    else if (g_worker_kind == WK_U3GEN) u3gen_worker();
+    else                                run_worker(g_worker_arg);
+    uexit(99);                                  /* unreachable: all uexit() */
 }
 
 /* Fork a worker (lifecycle testcase or U3 program), run it under the watchdog
@@ -366,9 +383,31 @@ static int run_u3_campaign(void) {
 static int streq_u3(const char* s) {
     return s && s[0] == 'u' && s[1] == '3' && s[2] == '\0';
 }
+static int streq_cov(const char* s) {
+    return s && s[0] == 'c' && s[1] == 'o' && s[2] == 'v' && s[3] == '\0';
+}
+static unsigned long parse_ul(const char* s) {
+    unsigned long v = 0;
+    if (s) for (; *s >= '0' && *s <= '9'; s++) v = v * 10 + (unsigned long)(*s - '0');
+    return v;
+}
+
+/* U4: build ONE typed program from <seed> (shared generator), run it under the
+ * watchdog, and exit with the outcome class (OUT_OK=0, OUT_FAULT=2,
+ * OUT_TIMEOUT=3, else OTHER). A ring-0 driver spawns this per seed, reading
+ * crashes/timeouts from the exit status and NEW coverage from the kernel map. */
+static int run_cov_one(unsigned long seed) {
+    const u3_program* pg = u3g_build(seed);
+    for (int i = 0; i < pg->ncalls; i++)                 /* index -> real SYS_ */
+        ((u3_call*)pg->calls)[i].sysno = U3G_NR[pg->calls[i].sysno];
+    g_gen_prog = pg;
+    return run_one(WK_U3GEN, 0).outcome;
+}
 
 int umain(int argc, char** argv) {
     if (argc >= 2 && streq_u3(argv[1]))
-        return run_u3_campaign();        /* `/bin/ufuzz u3` */
-    return run_lifecycle_campaign();     /* default (U1) */
+        return run_u3_campaign();                        /* `/bin/ufuzz u3` */
+    if (argc >= 2 && streq_cov(argv[1]))
+        return run_cov_one(argc >= 3 ? parse_ul(argv[2]) : 0);  /* `/bin/ufuzz cov <seed>` */
+    return run_lifecycle_campaign();                     /* default (U1) */
 }

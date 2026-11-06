@@ -213,3 +213,47 @@ KTEST(ufuzz, u4_coverage_plumbing_attributes_novelty) {
     KEXPECT(nov1 > 0);                 /* ring-3-driven coverage is observable */
     KEXPECT(nov2 < nov1);              /* re-run adds strictly fewer new edges  */
 }
+
+/* ---- U4 step 2b: C-generated programs run clean under the runtime authorities
+ * The host validator (fuzz/u4/validate.py) is the STRUCTURAL authority; this is
+ * the RUNTIME authority. Each /bin/ufuzz cov <seed> builds one program with the
+ * shared generator and runs it with replay + out-buffer digest under the U1
+ * watchdog; it exits 0 iff the program ran, replayed and digest-matched (no
+ * fault, no hang, no non-determinism). The whole batch must also leave memory
+ * net-zero (U2). A malformed generated program would fault or mismatch here —
+ * so a C-generator bug cannot pass silently through BOTH authorities. */
+static void u4_utoa(unsigned v, char* out) {
+    char tmp[16]; int n = 0;
+    if (v == 0) { out[0] = '0'; out[1] = 0; return; }
+    while (v) { tmp[n++] = (char)('0' + v % 10); v /= 10; }
+    for (int i = 0; i < n; i++) out[i] = tmp[n - 1 - i];
+    out[n] = 0;
+}
+
+static int u4_run_cov(unsigned seed) {
+    char sb[16]; u4_utoa(seed, sb);
+    char* argv[] = { "/bin/ufuzz", "cov", sb, 0 };
+    int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
+    if (pid <= 0) return -1;
+    int st = -1; sys_waitpid(pid, &st);
+    return st;
+}
+
+KTEST(ufuzz, u4_generated_programs_run_clean) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    const unsigned K = 24;
+
+    (void)u4_run_cov(0);                       /* warmup: absorb first-touch cost */
+    ufuzz_settle();
+    size_t pg0 = pmm_get_free_memory();
+    size_t hp0 = kheap_get_used();
+
+    int bad = 0;
+    for (unsigned s = 0; s < K; s++)
+        if (u4_run_cov(s) != 0) bad++;
+    KEXPECT_EQ(bad, 0);                         /* every generated program OUT_OK */
+
+    ufuzz_settle();
+    KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* no page leak over the batch */
+    KEXPECT_EQ(kheap_get_used(), hp0);          /* no heap leak over the batch */
+}
