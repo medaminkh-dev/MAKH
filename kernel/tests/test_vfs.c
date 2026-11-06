@@ -210,3 +210,40 @@ KTEST(vfs, symlink_follow_readlink_and_loop) {
     KEXPECT_EQ(vfs_symlink("/loopa", "/loopb"), 0);
     KEXPECT_EQ(vfs_resolve("/loopa") == NULL, 1);
 }
+
+/* T-V01: the VFS must enforce the open access mode (O_ACCMODE) on fd read/write.
+ * Before the fix, vfs_fd_read/vfs_fd_write ignored it, so a file opened O_RDONLY
+ * could be WRITTEN (a ring-3 program could overwrite a file it only opened for
+ * reading) and an O_WRONLY file could be READ.
+ *
+ * Fail-first: remove the O_ACCMODE guard in vfs_fd_write and the write below
+ * returns 4 instead of -EBADF, flipping the KEXPECT. */
+KTEST(vfs, accmode_enforced_on_rw) {
+    char rb[4];
+    vfs_unlink("/accmode_t");                            /* best-effort clean */
+
+    int fd = vfs_open("/accmode_t", O_CREAT | O_WRONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_WRONLY write works  */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_RDONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_read(fd, rb, 4), 4);          /* O_RDONLY read works   */
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), -EBADF);/* O_RDONLY write BLOCKED */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_WRONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_WRONLY write works   */
+    KEXPECT_EQ((int)vfs_fd_read(fd, rb, 4), -EBADF);     /* O_WRONLY read BLOCKED  */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_RDWR);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_RDWR: both allowed   */
+    KEXPECT((int)vfs_fd_read(fd, rb, 4) >= 0);
+    vfs_close(fd);
+
+    vfs_unlink("/accmode_t");
+}

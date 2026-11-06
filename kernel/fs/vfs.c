@@ -238,6 +238,10 @@ int vfs_open(const char* path, int flags) {
 long vfs_fd_read(int fd, void* buf, size_t n) {
     file_t* f = vfs_file(fd);
     if (!f) return -EBADF;
+    /* Enforce the access mode (T-V01): a description opened O_WRONLY must not be
+     * readable. Without this, O_ACCMODE was ignored and a write-only fd could be
+     * read. */
+    if ((f->flags & O_ACCMODE) == O_WRONLY) return -EBADF;
     long r = vfs_read(f->vnode, buf, n, f->offset);
     if (r > 0) f->offset += (uint64_t)r;
     return r;
@@ -246,6 +250,11 @@ long vfs_fd_read(int fd, void* buf, size_t n) {
 long vfs_fd_write(int fd, const void* buf, size_t n) {
     file_t* f = vfs_file(fd);
     if (!f) return -EBADF;
+    /* Enforce the access mode (T-V01): a description opened O_RDONLY must not be
+     * writable. Without this, O_ACCMODE was ignored and a read-only fd could be
+     * written — e.g. a ring-3 program could overwrite a file it only opened for
+     * reading. */
+    if ((f->flags & O_ACCMODE) == O_RDONLY) return -EBADF;
     if (f->flags & O_APPEND) f->offset = f->vnode->size;
     long r = vfs_write(f->vnode, buf, n, f->offset);
     if (r > 0) f->offset += (uint64_t)r;
