@@ -266,3 +266,53 @@ def mutate_iov_bad_count():
         Call("writev", [(RES, 1), (IOV, 0), (IMM, 3)]),  # ... but iovcnt says 3
     ]
     return p
+
+
+# ---- U3.1c: hardening fail-firsts (negative ids/lens, kind & res-type) ----
+def mutate_iov_negative_id():
+    """Fail-first: a negative iov id (would index the iov list from the end)."""
+    p = Program(prng=("lcg", 0))
+    p.buffers = [(0, 8, bytes(8)), (1, 2, b"ab")]
+    p.iovs = [[(1, 2)]]
+    p.handles = ["fd", "fd"]
+    p.calls = [
+        Call("pipe",   [(BUF, 0)], bind=("fd", [0, 1])),
+        Call("writev", [(RES, 1), (IOV, -1), (IMM, 1)]),   # negative iov id
+    ]
+    return p
+
+
+def mutate_iov_negative_len():
+    """Fail-first: an iov segment with a negative length (huge as a size_t)."""
+    p = Program(prng=("lcg", 0))
+    p.buffers = [(0, 8, bytes(8)), (1, 2, b"ab")]
+    p.iovs = [[(1, -4)]]
+    p.handles = ["fd", "fd"]
+    p.calls = [
+        Call("pipe",   [(BUF, 0)], bind=("fd", [0, 1])),
+        Call("writev", [(RES, 1), (IOV, 0), (IMM, 1)]),
+    ]
+    return p
+
+
+def mutate_res_type_mismatch():
+    """Fail-first: an addr handle passed where an fd is wanted (close)."""
+    p = Program(prng=("lcg", 0))
+    p.handles = ["addr"]
+    p.calls = [
+        Call("mmap",  [(IMM, 0), (IMM, 4096), (IMM, PROT_RW), (IMM, MAP_PRIV_ANON)], bind=("addr", [0])),
+        Call("close", [(RES, 0)]),          # close wants res:fd, handle 0 is an addr
+    ]
+    return p
+
+
+def mutate_imm_for_ptr():
+    """Fail-first: a raw immediate where the ABI wants a pointer (read's buf)."""
+    p = Program(prng=("lcg", 0))
+    p.handles = ["fd"]
+    p.paths = [(0, "/bin/hello")]
+    p.calls = [
+        Call("open", [(PATH, 0), (IMM, 0)], bind=("fd", [0])),
+        Call("read", [(RES, 0), (IMM, 1234), (IMM, 8)]),   # IMM where buf (ptr) expected
+    ]
+    return p

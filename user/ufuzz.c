@@ -193,16 +193,32 @@ static int u3_run(const u3_program* pg, long* trace) {
     return 0;
 }
 
+/* FNV-1a over every program buffer (its declared length) — a fingerprint of
+ * all OUT-buffer contents a run produced. Replay requires it to be identical
+ * across the two runs: a syscall that returns the SAME value but writes
+ * DIFFERENT bytes into an out buffer (non-deterministic output) is caught here,
+ * which the per-call return trace alone would miss. */
+static unsigned long u3_digest(const u3_program* pg) {
+    unsigned long h = 1469598103934665603UL;        /* FNV offset basis */
+    for (int b = 0; b < pg->nbufs && b < U3_MAX_BUFS; b++) {
+        int n = pg->bufs[b].len; if (n > U3_MAX_BUFSZ) n = U3_MAX_BUFSZ;
+        for (int k = 0; k < n; k++) { h ^= u3_arena[b][k]; h *= 1099511628211UL; }
+    }
+    return h;
+}
+
 static void u3_worker(int index) {
     const u3_program* pg = &U3_PROGRAMS[index];
     long t1[U3_MAX_CALLS], t2[U3_MAX_CALLS];
     int rc = u3_run(pg, t1);
     if (rc) uexit(rc);
+    unsigned long d1 = u3_digest(pg);               /* out-buffers after run 1 */
     if (pg->replay) {
         int rc2 = u3_run(pg, t2);
         if (rc2) uexit(rc2);
         for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++)
-            if (t1[i] != t2[i]) uexit(0x300 | i);   /* non-deterministic replay */
+            if (t1[i] != t2[i]) uexit(0x300 | i);   /* non-deterministic return */
+        if (u3_digest(pg) != d1) uexit(0x400);      /* non-deterministic out-buffers */
     }
     uexit(0);
 }

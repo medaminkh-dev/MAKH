@@ -22,6 +22,13 @@ ABI_PATH = os.path.join(ROOT, "fuzz", "abi", "makh_syscalls.json")
 
 ABI_VERSION = 1
 
+# The guest executor (user/ufuzz.c) holds at most this many segments per iovec
+# operand. It is the SINGLE source of truth for that limit: emit.py imports it
+# (and bakes `#define U3_MAX_SEG` from it) and the validator rejects any iov
+# with more, so validator, emitter and guest cannot disagree. It is well under
+# the kernel's own iovcnt cap (1024), which the validator also enforces.
+MAX_SEG = 4
+
 # ---- operands -------------------------------------------------------------
 # An operand is a small tuple tagged by kind:
 #   ("imm", int) | ("res", handle_id) | ("null",) | ("buf", buf_id)
@@ -231,8 +238,28 @@ def validate(p, abi):
                     continue            # unconstrained: accept any operand here
                 akind = vshape.get("kind")
                 msize_spec = vshape
+
+            # Every table-index operand must carry a real, non-negative id: a
+            # negative one would index a Python list from the end here (a silent
+            # wrong-reference) and read out of bounds in the guest.
+            if kind in (RES, BUF, PATH, IOV) and op[1] < 0:
+                raise ValErr("call %d (%s) arg %d: negative %s id %d"
+                             % (idx, c.sys, ai, kind, op[1]))
+
             if kind == RES:
+                # A resource handle may only stand in for a scalar arg that NAMES
+                # a resource, and its declared type must match — no fd where the
+                # ABI wants an addr, etc. (operand-kind + resource-type check).
+                if akind != "scalar" or not spec.get("res"):
+                    raise ValErr("call %d (%s) arg %d: res for an arg that is not a scalar "
+                                 "resource (kind=%s res=%r)" % (idx, c.sys, ai, akind, spec.get("res")))
                 h = op[1]
+                if h >= len(p.handles):
+                    raise ValErr("call %d (%s) arg %d: res %d is not a declared handle"
+                                 % (idx, c.sys, ai, h))
+                if p.handles[h] != spec.get("res"):
+                    raise ValErr("call %d (%s) arg %d: res %d is a %r handle but %s wants %r"
+                                 % (idx, c.sys, ai, h, p.handles[h], spec.get("name"), spec.get("res")))
                 if h not in created_by or created_by[h] >= idx:
                     if c.tag != "before_create":
                         raise ValErr("call %d (%s) arg %d: res %d used before creation"
@@ -243,6 +270,11 @@ def validate(p, abi):
                 else:
                     dep_edges += 1
             elif kind == BUF:
+                # A flat buffer fills a non-array pointer (an array arg takes an
+                # iov; a scalar takes an imm/res).
+                if akind != "ptr" or msize_spec.get("size", "").startswith("arr:"):
+                    raise ValErr("call %d (%s) arg %d: buf for a non-(flat-ptr) ABI arg "
+                                 "(kind=%s size=%s)" % (idx, c.sys, ai, akind, msize_spec.get("size", "")))
                 if op[1] not in bufids:
                     raise ValErr("call %d (%s) arg %d: buf %d does not exist"
                                  % (idx, c.sys, ai, op[1]))
@@ -250,19 +282,20 @@ def validate(p, abi):
                 if need is not None and bufsize[op[1]] < need:
                     raise ValErr("call %d (%s) arg %d: buf %d is %d bytes, need %d"
                                  % (idx, c.sys, ai, op[1], bufsize[op[1]], need))
-                if akind != "ptr":
-                    raise ValErr("call %d (%s) arg %d: buf for a non-ptr ABI arg (%s)"
-                                 % (idx, c.sys, ai, akind))
             elif kind == PATH:
+                if akind != "ptr":
+                    raise ValErr("call %d (%s) arg %d: path for a non-ptr ABI arg (%s)"
+                                 % (idx, c.sys, ai, akind))
                 if op[1] not in pathids:
                     raise ValErr("call %d (%s) arg %d: path %d does not exist"
                                  % (idx, c.sys, ai, op[1]))
             elif kind == IOV:
                 # An iovec array argument (readv/writev). The ABI arg must be a
                 # ptr whose size rule is `arr:<countarg>:<elem>`; the referenced
-                # iov spec's segment count must equal the sibling count operand
-                # (an IMM), stay within the kernel's cap, and every segment must
-                # name an existing buffer at least as large as its declared len.
+                # iov spec must fit the guest executor (MAX_SEG) and the kernel
+                # cap, its count must equal the sibling count operand (an IMM),
+                # and every segment must name an existing buffer at least as
+                # large as its (non-negative) declared len.
                 size = spec.get("size", "")
                 if akind != "ptr" or not size.startswith("arr:"):
                     raise ValErr("call %d (%s) arg %d: iov for a non-array ABI arg (%s %s)"
@@ -272,11 +305,17 @@ def validate(p, abi):
                                  % (idx, c.sys, ai, op[1]))
                 _, countarg, _ = (size.split(":") + ["", ""])[:3]
                 segs = p.iovs[op[1]]
-                if not (0 <= len(segs) <= 1024):
-                    raise ValErr("call %d (%s) arg %d: iov %d has %d segments (cap 1024)"
+                if len(segs) > MAX_SEG:
+                    raise ValErr("call %d (%s) arg %d: iov %d has %d segments (executor cap %d)"
+                                 % (idx, c.sys, ai, op[1], len(segs), MAX_SEG))
+                if len(segs) > 1024:
+                    raise ValErr("call %d (%s) arg %d: iov %d has %d segments (kernel cap 1024)"
                                  % (idx, c.sys, ai, op[1], len(segs)))
                 for (bid, blen) in segs:
-                    if bid not in bufids:
+                    if blen < 0:
+                        raise ValErr("call %d (%s) arg %d: iov %d segment has negative len %d"
+                                     % (idx, c.sys, ai, op[1], blen))
+                    if bid < 0 or bid not in bufids:
                         raise ValErr("call %d (%s) arg %d: iov %d segment buf %d does not exist"
                                      % (idx, c.sys, ai, op[1], bid))
                     if bufsize[bid] < blen:
@@ -296,7 +335,12 @@ def validate(p, abi):
                     raise ValErr("call %d (%s) arg %d: NULL for a non-optional pointer %s"
                                  % (idx, c.sys, ai, spec.get("name")))
             elif kind == IMM:
-                pass
+                # An immediate stands in only for a scalar (by-value) argument; a
+                # raw integer where the ABI wants a pointer is a kind error
+                # (pointers are buf/path/null/iov in this IR).
+                if akind == "ptr":
+                    raise ValErr("call %d (%s) arg %d: imm for a pointer arg %s (use buf/path/null/iov)"
+                                 % (idx, c.sys, ai, spec.get("name")))
             else:
                 raise ValErr("call %d (%s) arg %d: bad operand kind %r" % (idx, c.sys, ai, kind))
 

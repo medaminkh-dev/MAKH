@@ -137,6 +137,20 @@ def main():
             rejected = True
         check(rejected, "malformed iov (%s) was NOT rejected" % nm)
 
+    # (8) U3.1c hardening: negative ids/lengths, operand-kind and resource-type
+    # violations must all be rejected (each is a distinct silent-bug class the
+    # earlier validator let through).
+    for mk, nm in ((gen.mutate_iov_negative_id, "negative-iov-id"),
+                   (gen.mutate_iov_negative_len, "negative-segment-len"),
+                   (gen.mutate_res_type_mismatch, "resource-type-mismatch"),
+                   (gen.mutate_imm_for_ptr, "imm-for-pointer")):
+        rejected = False
+        try:
+            u3.validate(mk(), abi)
+        except u3.ValErr:
+            rejected = True
+        check(rejected, "hardening case (%s) was NOT rejected" % nm)
+
     if FAILS:
         print("U3 SELFTEST: FAIL (%d)" % len(FAILS))
         for f in FAILS:

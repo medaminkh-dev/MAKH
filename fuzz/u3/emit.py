@@ -27,8 +27,9 @@ HDR = os.path.join(ROOT, "user", "ufuzz_u3_programs.h")
 ANY, NONNEG, NEG, EXACT = 0, 1, 2, 3
 # bind kinds (must match ufuzz.c)
 B_NONE, B_FD, B_ADDR, B_PIPE = 0, 1, 2, 3
-# max iovec segments per iov operand (must match ufuzz.c U3_MAX_SEG)
-MAX_SEG = 4
+# max iovec segments per iov operand — the single source of truth lives in u3;
+# the guest's `#define U3_MAX_SEG` is baked from this same value.
+MAX_SEG = u3.MAX_SEG
 
 
 def _bind_of(call):
@@ -255,6 +256,9 @@ def render(progs, abi):
         if iovs:
             cells = []
             for segs in iovs:
+                if len(segs) > MAX_SEG:
+                    raise ValueError("program %r iov has %d segments > U3_MAX_SEG %d"
+                                     % (pg["name"], len(segs), MAX_SEG))
                 bufids = [b for b, _ in segs] + [0] * (MAX_SEG - len(segs))
                 lens = [l for _, l in segs] + [0] * (MAX_SEG - len(segs))
                 cells.append("{%d, {%s}, {%s}}" % (len(segs),
