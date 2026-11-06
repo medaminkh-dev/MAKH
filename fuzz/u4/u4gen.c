@@ -30,10 +30,14 @@ static void op_str(const u3_arg* a, char* buf, size_t n) {
     }
 }
 
-static void emit_ir(unsigned long seed) {
-    /* base==mut here so one seed sweeps both the skeleton and the selector space;
-     * the Python validator must accept every resulting program. */
-    const u3_program* p = u3g_build(seed, seed);
+static void emit_ir(unsigned long seed, int mode) {
+    /* base==mut here so one seed sweeps both the skeleton and the selector/offset
+     * space; the Python validator must accept every resulting program. mode 0 =
+     * skeleton menu generator, mode 1 = ext2 block-map growth (direct/single/
+     * double-indirect tiers), mode 2 = ext2 direct-tier control (U4.2 P1). */
+    const u3_program* p = (mode == 1) ? u3g_build_ext2(seed, seed, 3) :
+                          (mode == 2) ? u3g_build_ext2(seed, seed, 1) :
+                                        u3g_build(seed, seed);
     printf("abi 1\n");
     printf("prng lcg %lu\n", seed);
     printf("handles");
@@ -61,9 +65,10 @@ static void emit_ir(unsigned long seed) {
 int main(int argc, char** argv) {
     unsigned long start = argc > 1 ? strtoul(argv[1], 0, 10) : 0;
     unsigned long count = argc > 2 ? strtoul(argv[2], 0, 10) : 1;
+    int mode = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 0;   /* 0 skeleton, 1 ext2 */
     for (unsigned long i = 0; i < count; i++) {
         printf("### seed %lu\n", start + i);
-        emit_ir(start + i);
+        emit_ir(start + i, mode);
     }
     return 0;
 }

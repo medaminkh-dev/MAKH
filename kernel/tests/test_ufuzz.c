@@ -231,9 +231,10 @@ static void u4_utoa(unsigned v, char* out) {
     out[n] = 0;
 }
 
-static int u4_run_cov(unsigned base, unsigned mut) {
-    char bs[16], ms[16]; u4_utoa(base, bs); u4_utoa(mut, ms);
-    char* argv[] = { "/bin/ufuzz", "cov", bs, ms, 0 };
+static int u4_run_cov(int mode, unsigned base, unsigned mut) {
+    char ds[16], bs[16], ms[16];
+    u4_utoa((unsigned)mode, ds); u4_utoa(base, bs); u4_utoa(mut, ms);
+    char* argv[] = { "/bin/ufuzz", "cov", ds, bs, ms, 0 };   /* cov <mode> <base> <mut> */
     int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
     if (pid <= 0) return -1;
     int st = -1; sys_waitpid(pid, &st);
@@ -244,19 +245,21 @@ KTEST(ufuzz, u4_generated_programs_run_clean) {
     UFUZZ_SKIP_IF_NOTIMING();
     const unsigned K = 24;
 
-    (void)u4_run_cov(0, 0);                     /* warmup: absorb first-touch cost */
-    ufuzz_settle();
-    size_t pg0 = pmm_get_free_memory();
-    size_t hp0 = kheap_get_used();
+    for (int mode = 0; mode <= 1; mode++) {     /* 0 skeleton, 1 ext2 block-map growth */
+        (void)u4_run_cov(mode, 0, 0);           /* warmup: absorb first-touch cost */
+        ufuzz_settle();
+        size_t pg0 = pmm_get_free_memory();
+        size_t hp0 = kheap_get_used();
 
-    int bad = 0;
-    for (unsigned s = 0; s < K; s++)
-        if (u4_run_cov(s, s) != 0) bad++;       /* base==mut sweeps skeleton+selectors */
-    KEXPECT_EQ(bad, 0);                         /* every generated program OUT_OK */
+        int bad = 0;
+        for (unsigned s = 0; s < K; s++)
+            if (u4_run_cov(mode, s, s) != 0) bad++;  /* base==mut sweeps the space */
+        KEXPECT_EQ(bad, 0);                     /* every generated program OUT_OK */
 
-    ufuzz_settle();
-    KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* no page leak over the batch */
-    KEXPECT_EQ(kheap_get_used(), hp0);          /* no heap leak over the batch */
+        ufuzz_settle();
+        KEXPECT_EQ(pmm_get_free_memory(), pg0); /* no page leak over the batch */
+        KEXPECT_EQ(kheap_get_used(), hp0);      /* no heap leak (vnode/inode) over batch */
+    }
 }
 
 /* ---- U4 step 3: coverage-guided campaign (measurement + guided-vs-random) --
@@ -282,7 +285,7 @@ struct u4_campaign_result { uint64_t bits; int executed, corpus_n, ok, crashes, 
 /* Run K iterations in guided or random mode from a fixed meta-seed; return the
  * number of NEW coverage edges discovered over the K iterations (warmup folded
  * and discarded first, so shared spawn/exec edges don't count). */
-static void u4_campaign(int guided, unsigned meta_seed, int K,
+static void u4_campaign(int mode, int guided, unsigned meta_seed, int K,
                         struct u4_campaign_result* out) {
     uint32_t words = kfuzz_cov_words();
     for (uint32_t i = 0; i < words; i++) u4_virgin[i] = 0;
@@ -290,7 +293,7 @@ static void u4_campaign(int guided, unsigned meta_seed, int K,
     u4_mrng = meta_seed | 1UL;
 
     kfuzz_cov_reset();                           /* warmup: fold shared edges */
-    (void)u4_run_cov(0xABCD, 0);
+    (void)u4_run_cov(mode, 0xABCD, 0);
     (void)kfuzz_cov_fold_new(u4_virgin);
 
     uint64_t bits = 0; int ok = 0, crashes = 0, timeouts = 0;
@@ -304,7 +307,7 @@ static void u4_campaign(int guided, unsigned meta_seed, int K,
         }
 
         kfuzz_cov_reset();
-        int st = u4_run_cov(base, mut);
+        int st = u4_run_cov(mode, base, mut);
         uint64_t nov = kfuzz_cov_fold_new(u4_virgin);
         bits += nov;
         if (st == 0) ok++;                       /* ran, replayed, digest-matched */
@@ -325,9 +328,9 @@ KTEST(ufuzz, u4_coverage_guided_campaign) {
 
     int prev = kfuzz_cov_enable(1);
     struct u4_campaign_result g = {0}, g2 = {0}, r = {0};
-    u4_campaign(1, META, K, &g);                 /* guided            */
-    u4_campaign(1, META, K, &g2);                /* guided, repeated  */
-    u4_campaign(0, META, K, &r);                 /* random            */
+    u4_campaign(0, 1, META, K, &g);              /* skeleton: guided            */
+    u4_campaign(0, 1, META, K, &g2);             /* skeleton: guided, repeated  */
+    u4_campaign(0, 0, META, K, &r);              /* skeleton: random            */
     kfuzz_cov_enable(prev);
 
     kprintf("u4: guided bits=%llu (repeat %llu) corpus=%d crashes=%d timeouts=%d"
@@ -360,4 +363,81 @@ KTEST(ufuzz, u4_coverage_guided_campaign) {
     KEXPECT(g.corpus_n > 0);                      /* a corpus actually forms       */
     KEXPECT_EQ(g.ok, K);                          /* EVERY program clean (OK): no  */
     KEXPECT_EQ(r.ok, K);                          /* fault/hang/replay/digest fail */
+}
+
+/* ---- U4.2 P1: ext2 block-map growth ---------------------------------------
+ * The generator's ext2 mode grows a /mnt file by positioned writes whose
+ * offsets span the ext2 block-map tiers (mode 1: direct / single-indirect /
+ * double-indirect; mode 2: direct tier only — the control). Each program is
+ * open(O_CREAT|O_TRUNC) ... close + unlink, so every run starts from an empty
+ * file and the snapshot=on disk never accumulates state. */
+
+/* Run `n` programs of `mode` from seeds (base0+i, mut0+i), folding each run's
+ * coverage into u4_virgin; return the NEW edges over the batch and count the
+ * clean (OUT_OK: ran, replayed, digest-matched) runs into *ok. */
+static uint64_t u4_fold_batch(int mode, unsigned base0, unsigned mut0, int n, int* ok) {
+    uint64_t nov = 0;
+    for (int i = 0; i < n; i++) {
+        kfuzz_cov_reset();
+        if (u4_run_cov(mode, base0 + (unsigned)i, mut0 + (unsigned)i) == 0) (*ok)++;
+        nov += kfuzz_cov_fold_new(u4_virgin);
+    }
+    return nov;
+}
+
+/* Milestone, as a CONTROLLED comparison (coverage counts carry allocator/IRQ
+ * noise — see the campaign test above — so "new edges > 0" alone would prove
+ * nothing): saturate the direct tier, measure a direct-only NOISE FLOOR with
+ * fresh seeds, then run deep-tier programs. If the single/double-indirect paths
+ * (alloc_indirect levels 1-2, the indirect read walk, free_indirect_from on
+ * unlink) were not genuinely reached, `deep` would sit at the noise floor. */
+KTEST(ufuzz, u4_ext2_tiers_reach_new_coverage) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    const int N = 12;
+    int prev = kfuzz_cov_enable(1);
+    uint32_t words = kfuzz_cov_words();
+    for (uint32_t i = 0; i < words; i++) u4_virgin[i] = 0;
+
+    int ok = 0;
+    (void)u4_fold_batch(2, 0xD100, 0xD100, 1, &ok);            /* warmup: shared paths  */
+    uint64_t sat  = u4_fold_batch(2, 0xA000, 0xB000, N, &ok);  /* A: saturate direct    */
+    uint64_t flr  = u4_fold_batch(2, 0xC000, 0xD000, N, &ok);  /* B: direct noise floor */
+    uint64_t deep = u4_fold_batch(1, 0xE000, 0xF000, N, &ok);  /* C: + indirect tiers   */
+    kfuzz_cov_enable(prev);
+
+    kprintf("u4-ext2 tiers: direct-saturate=%llu direct-floor=%llu deep-tiers=%llu "
+            "clean=%d/%d\n", sat, flr, deep, ok, 3 * N + 1);
+    KEXPECT_EQ(ok, 3 * N + 1);      /* every ext2 program clean on real ext2 I/O     */
+    KEXPECT(deep > flr);            /* deeper tiers reach edges direct writes never do */
+}
+
+/* Fair, paired guided-vs-random on the ext2 mode: for each meta-seed, a guided
+ * and a random campaign with the same generator, budget K and starting
+ * meta-seed. Asserted: only what holds robustly (all programs clean, real
+ * coverage explored, a corpus forms). The guided-vs-random comparison is
+ * MEASURED and printed, never asserted — it is reported as measured. */
+KTEST(ufuzz, u4_ext2_guided_vs_random_paired) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    const int K = 24;
+    const unsigned META[3] = { 0xE2A1u, 0xE2B2u, 0xE2C3u };
+    int prev = kfuzz_cov_enable(1);
+    uint64_t gsum = 0, rsum = 0;
+    int gwins = 0, gcorp = 0, clean = 1;
+    for (int p = 0; p < 3; p++) {
+        struct u4_campaign_result g = {0}, r = {0};
+        u4_campaign(1, 1, META[p], K, &g);        /* ext2: guided */
+        u4_campaign(1, 0, META[p], K, &r);        /* ext2: random (same meta-seed) */
+        kprintf("u4-ext2 pair %d: guided bits=%llu corpus=%d | random bits=%llu\n",
+                p, g.bits, g.corpus_n, r.bits);
+        gsum += g.bits; rsum += r.bits; gcorp += g.corpus_n;
+        if (g.bits > r.bits) gwins++;
+        if (g.ok != K || r.ok != K) clean = 0;
+    }
+    kfuzz_cov_enable(prev);
+    kprintf("u4-ext2 paired: guided total=%llu random total=%llu guided-wins=%d/3\n",
+            gsum, rsum, gwins);
+    KEXPECT(clean);                 /* every ext2 program clean in every campaign */
+    KEXPECT(gsum > 0);              /* both explore real coverage                 */
+    KEXPECT(rsum > 0);
+    KEXPECT(gcorp > 0);             /* guided forms a corpus                      */
 }

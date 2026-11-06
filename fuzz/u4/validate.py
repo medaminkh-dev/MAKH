@@ -52,33 +52,44 @@ def split_programs(text):
     return progs
 
 
+def validate_mode(mode, label, n, abi):
+    """Sweep seeds 0..n-1 of one generator mode; fail closed on any bad program."""
+    try:
+        out = subprocess.run([U4GEN, "0", str(n), str(mode)], capture_output=True,
+                             text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as e:
+        fail("u4gen (%s) did not run cleanly: %s" % (label, e))
+
+    progs = split_programs(out.stdout)
+    if len(progs) != n:
+        fail("%s: expected %d programs, parsed %d (truncated output?)"
+             % (label, n, len(progs)))
+
+    for seed, ir in progs:
+        try:
+            p = u3.deserialize(ir)
+        except Exception as e:                       # noqa: BLE001 — fail closed
+            fail("%s seed %d produced un-parseable IR: %s" % (label, seed, e))
+        try:
+            u3.validate(p, abi)
+        except u3.ValErr as e:
+            fail("%s seed %d produced an INVALID program: %s" % (label, seed, e))
+        except Exception as e:                       # noqa: BLE001 — fail closed
+            fail("%s seed %d: validator raised unexpectedly: %s" % (label, seed, e))
+    return n
+
+
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 1024
     abi = u3.Abi()
 
     if not os.path.exists(U4GEN):
         fail("%s is not built (run `make u4-gen-check`)" % os.path.relpath(U4GEN, ROOT))
-    try:
-        out = subprocess.run([U4GEN, "0", str(n)], capture_output=True,
-                             text=True, check=True)
-    except (OSError, subprocess.CalledProcessError) as e:
-        fail("u4gen did not run cleanly: %s" % e)
 
-    progs = split_programs(out.stdout)
-    if len(progs) != n:
-        fail("expected %d programs, parsed %d (truncated output?)" % (n, len(progs)))
-
-    for seed, ir in progs:
-        try:
-            p = u3.deserialize(ir)
-        except Exception as e:                       # noqa: BLE001 — fail closed
-            fail("seed %d produced un-parseable IR: %s" % (seed, e))
-        try:
-            u3.validate(p, abi)
-        except u3.ValErr as e:
-            fail("seed %d produced an INVALID program: %s" % (seed, e))
-        except Exception as e:                       # noqa: BLE001 — fail closed
-            fail("seed %d: validator raised unexpectedly: %s" % (seed, e))
+    # Validate EVERY mode the guest can run (so a C-port bug in any of them is
+    # caught by the structural authority, not left as silent fuzzing noise).
+    modes = [(0, "skeleton"), (1, "ext2"), (2, "ext2-direct")]
+    total = sum(validate_mode(mode, label, n, abi) for mode, label in modes)
 
     # (4) Negative controls: the validator MUST reject these, or the whole check
     # above proves nothing. Each is syntactically parseable but breaks a rule.
@@ -105,8 +116,8 @@ def main():
             fail("negative case %r raised a non-ValErr: %s" % (name, e))
         fail("negative case %r was NOT rejected (validation path is broken)" % name)
 
-    print("U4 GEN-CHECK: PASS — %d generated programs all structurally valid; "
-          "%d negative cases all rejected." % (n, len(negatives)))
+    print("U4 GEN-CHECK: PASS — %d generated programs (%d modes) all structurally "
+          "valid; %d negative cases all rejected." % (total, len(modes), len(negatives)))
 
 
 if __name__ == "__main__":
