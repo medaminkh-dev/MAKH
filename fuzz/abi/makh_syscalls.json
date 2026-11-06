@@ -36,7 +36,11 @@
     "iovec": { "size": 16, "fields": [
       {"name":"iov_base","kind":"ptr","dir":"inout","size":"len:iov_len","notes":"direction follows the call: readv writes it (out), writev reads it (in)"},
       {"name":"iov_len","kind":"scalar","ctype":"size_t"}
-    ]}
+    ]},
+    "termios": { "size": 12, "fields": [
+      {"name":"c_lflag","kind":"scalar","ctype":"uint32_t"},
+      {"name":"c_cc","kind":"scalar","ctype":"uint8_t[8]","notes":"inline array, NCCS=8"}
+    ], "notes":"MAKH's termios is {uint32_t c_lflag; uint8_t c_cc[8]} = 12 bytes (kernel/include/tty.h) — NOT Linux's 60-byte struct" }
   },
 
   "syscalls": [
@@ -190,10 +194,10 @@
         {"name":"fd","kind":"scalar","ctype":"int","res":"fd"},
         {"name":"request","kind":"scalar","ctype":"unsigned long"},
         {"name":"argp","kind":"variant","ctype":"void*","selector":"request","variants":{
-           "TCGETS":   {"kind":"ptr","dir":"out","size":"struct:termios"},
-           "TCSETS":   {"kind":"ptr","dir":"in","size":"struct:termios"},
-           "TIOCGPGRP":{"kind":"ptr","dir":"out","size":"fixed:4"},
-           "TIOCSPGRP":{"kind":"ptr","dir":"in","size":"fixed:4"}},
+           "TCGETS":   {"sel_value":21505,"kind":"ptr","dir":"out","size":"struct:termios"},
+           "TCSETS":   {"sel_value":21506,"kind":"ptr","dir":"in","size":"struct:termios"},
+           "TIOCGPGRP":{"sel_value":21519,"kind":"ptr","dir":"out","size":"fixed:4"},
+           "TIOCSPGRP":{"sel_value":21520,"kind":"ptr","dir":"in","size":"fixed:4"}},
          "notes":"the argp shape is selected by request; these are exactly the requests do_ioctl() handles"}
       ],
       "ret":{"ctype":"int","meaning":"0; -ENOTTY for non-std fds; -EINVAL for an unhandled request"},
@@ -479,11 +483,11 @@
       "args":[
         {"name":"code","kind":"scalar","ctype":"int"},
         {"name":"addr","kind":"variant","ctype":"unsigned long","selector":"code","variants":{
-           "ARCH_SET_FS":{"kind":"scalar"},
-           "ARCH_GET_FS":{"kind":"ptr","dir":"out","size":"fixed:8"}},
-         "notes":"ARCH_SET_FS takes addr BY VALUE (the new FS base); ARCH_GET_FS takes an out pointer to 8 bytes"}
+           "ARCH_SET_FS":{"sel_value":4098,"kind":"scalar"},
+           "ARCH_GET_FS":{"sel_value":4099,"kind":"ptr","dir":"out","size":"fixed:8"}},
+         "notes":"ARCH_SET_FS takes addr BY VALUE (the new FS base), which must be a canonical user-half address (< 0x0000800000000000) or it is rejected with -EPERM (T-S01): an unchecked value would #GP in ring 0 on wrmsr. ARCH_GET_FS takes an out pointer to 8 bytes"}
       ],
-      "ret":{"ctype":"int","meaning":"0; -EINVAL"},"errno":["EINVAL","ENOSYS"],
+      "ret":{"ctype":"int","meaning":"0; -EINVAL for an unknown code; -EPERM for a non-canonical/kernel-half ARCH_SET_FS base"},"errno":["EINVAL","EPERM","ENOSYS"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
       "flags":{"supported":["ARCH_SET_FS","ARCH_GET_FS"]} },
 

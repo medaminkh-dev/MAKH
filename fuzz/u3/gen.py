@@ -168,3 +168,51 @@ def mutate_use_before_create(seed=0):
         Call("write", [(RES, 0), (BUF, 0), (IMM, 8)], tag="before_create"),
     ]
     return p
+
+
+# ---- U3.1: variant operands (ioctl / arch_prctl) -------------------------
+# The variant argp is still built from the five MVP operand kinds (an IMM
+# selector + a BUF/IMM argp) — what U3.1 adds is making the generator choose a
+# selector and a MATCHING argp shape, and the validator resolve them. No new
+# guest operand is needed; the guest already passes a BUF as its address.
+def _sel(abi, sysname, argname, casekey):
+    """The numeric selector value for one variant case, from the ABI."""
+    for a in abi.sc(sysname)["args"]:
+        if a.get("name") == argname and a.get("kind") == "variant":
+            return a["variants"][casekey]["sel_value"]
+    raise KeyError("%s.%s[%s]" % (sysname, argname, casekey))
+
+
+def variant_probe(abi):
+    """A structurally-valid program that exercises every variant case the ABI
+    models, so the validator's variant resolution is covered end to end.
+    Side-effect-neutral: each mutating ioctl (TCSETS/TIOCSPGRP) and the FS base
+    are set from values the program itself read or to a benign canonical one."""
+    p = Program(prng=("lcg", 0))
+    tsz = abi.struct_defs["termios"]["size"]
+    # buffers: 0=termios, 1=pgid(4), 2=fsbase(8)
+    p.buffers = [(0, tsz, bytes(tsz)), (1, 4, bytes(4)), (2, 8, bytes(8))]
+    p.calls = [
+        Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TCGETS")), (BUF, 0)]),
+        Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TCSETS")), (BUF, 0)]),
+        Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TIOCGPGRP")), (BUF, 1)]),
+        Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TIOCSPGRP")), (BUF, 1)]),
+        # ARCH_SET_FS takes the base BY VALUE (scalar) — a canonical user-half
+        # address; ARCH_GET_FS writes the current base to an 8-byte out buffer.
+        Call("arch_prctl", [(IMM, _sel(abi, "arch_prctl", "addr", "ARCH_SET_FS")), (IMM, 0x12345000)]),
+        Call("arch_prctl", [(IMM, _sel(abi, "arch_prctl", "addr", "ARCH_GET_FS")), (BUF, 2)]),
+    ]
+    return p
+
+
+def mutate_variant_bad_argp(abi):
+    """Fail-first for variant resolution: ioctl(request=TCGETS) whose argp buffer
+    is smaller than struct termios. The validator must reject it (the selected
+    variant is an out ptr to `tsz` bytes), proving it resolves the selector
+    rather than waving any buffer through for a `variant` arg."""
+    p = Program(prng=("lcg", 0))
+    p.buffers = [(0, 4, bytes(4))]          # 4 < sizeof(termios)
+    p.calls = [
+        Call("ioctl", [(IMM, 1), (IMM, _sel(abi, "ioctl", "argp", "TCGETS")), (BUF, 0)]),
+    ]
+    return p

@@ -83,6 +83,29 @@ static const u3_call u3_5_calls[] = {
   { 9, 4, {{U3_IMM, 0}, {U3_IMM, 70368744177664}, {U3_IMM, 3}, {U3_IMM, 34}}, U3_BIND_ADDR, 0, 0, 0, U3_NEG, 0 },
   { 11, 2, {{U3_RES, 0}, {U3_IMM, 4096}}, U3_BIND_NONE, 0, 0, 0, U3_ANY, 0 },
 };
+static const unsigned char u3_6_buf0[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const unsigned char u3_6_buf1[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const u3_buf u3_6_bufs[] = {{u3_6_buf0, 12}, {u3_6_buf1, 12}};
+static const u3_call u3_6_calls[] = {
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21505}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21506}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21505}, {U3_BUF, 1}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+};
+static const unsigned char u3_7_buf0[] = {0, 0, 0, 0};
+static const unsigned char u3_7_buf1[] = {0, 0, 0, 0};
+static const u3_buf u3_7_bufs[] = {{u3_7_buf0, 4}, {u3_7_buf1, 4}};
+static const u3_call u3_7_calls[] = {
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21519}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21520}, {U3_BUF, 0}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+  { 16, 3, {{U3_IMM, 1}, {U3_IMM, 21519}, {U3_BUF, 1}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+};
+static const unsigned char u3_8_buf0[] = {0, 80, 52, 18, 0, 0, 0, 0};
+static const unsigned char u3_8_buf1[] = {0, 0, 0, 0, 0, 0, 0, 0};
+static const u3_buf u3_8_bufs[] = {{u3_8_buf0, 8}, {u3_8_buf1, 8}};
+static const u3_call u3_8_calls[] = {
+  { 158, 2, {{U3_IMM, 4098}, {U3_IMM, 305418240}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+  { 158, 2, {{U3_IMM, 4099}, {U3_BUF, 1}}, U3_BIND_NONE, 0, 0, 0, U3_EXACT, 0 },
+};
 
 static const u3_program U3_PROGRAMS[] = {
   { "gen0", 0, 1, 1, 0, 0, u3_0_paths, 1, u3_0_calls, 6, -1, -1, 0 },
@@ -91,7 +114,10 @@ static const u3_program U3_PROGRAMS[] = {
   { "pipe_roundtrip", 0, 1, 2, u3_3_bufs, 3, 0, 0, u3_3_calls, 5, 2, 1, 8 },
   { "mmap_success", 0, 1, 1, 0, 0, 0, 0, u3_4_calls, 3, -1, -1, 0 },
   { "mmap_fail", 0, 1, 1, 0, 0, 0, 0, u3_5_calls, 2, -1, -1, 0 },
+  { "ioctl_termios_roundtrip", 0, 1, 0, u3_6_bufs, 2, 0, 0, u3_6_calls, 3, 1, 0, 12 },
+  { "ioctl_pgrp_roundtrip", 0, 1, 0, u3_7_bufs, 2, 0, 0, u3_7_calls, 3, 1, 0, 4 },
+  { "arch_prctl_fs_roundtrip", 0, 1, 0, u3_8_bufs, 2, 0, 0, u3_8_calls, 2, 1, 0, 8 },
 };
-static const int U3_NPROGRAMS = 6;
+static const int U3_NPROGRAMS = 9;
 
 #endif /* MAKHOS_UFUZZ_U3_PROGRAMS_H */

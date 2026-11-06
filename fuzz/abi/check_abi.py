@@ -38,6 +38,11 @@ JSON_PATH = os.path.join(HERE, "makh_syscalls.json")
 HDR_PATH = os.path.join(ROOT, "kernel", "include", "syscall.h")
 DISPATCH_PATH = os.path.join(ROOT, "kernel", "syscall", "syscall.c")
 DOC_PATH = os.path.join(ROOT, "docs", "UFUZZ_ABI.md")
+# Headers that define the symbolic selector constants used by `variant` args
+# (ioctl request numbers, arch_prctl codes). A variant case's `sel_value` is
+# checked against the live #define here, so a selector can't silently drift —
+# the same guarantee the syscall numbers get from syscall.h.
+SEL_HDR_PATHS = [os.path.join(ROOT, "kernel", "include", "tty.h"), HDR_PATH]
 
 VALID_IMPL = {"implemented", "partial", "stub", "unsupported"}
 VALID_KIND = {"scalar", "ptr", "variant"}
@@ -81,6 +86,25 @@ def parse_header_numbers(path):
     return nums
 
 
+def parse_int_defines(paths):
+    """{NAME: int} for every `#define NAME <int literal>` across `paths`.
+    Used to resolve the symbolic selector constants (TCGETS, ARCH_SET_FS, ...)
+    that `variant` cases name, so their sel_value can be checked against the
+    kernel. Later definitions win (none collide today)."""
+    nums = {}
+    pat = re.compile(r"^\s*#define\s+([A-Z][A-Z0-9_]*)\s+(0[xX][0-9A-Fa-f]+|-?\d+)\b")
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            for line in f:
+                m = pat.match(line)
+                if m:
+                    v = m.group(2)
+                    nums[m.group(1)] = int(v, 16) if v.lower().startswith("0x") else int(v)
+    return nums
+
+
 def parse_dispatched_cases(path):
     """Set of SYS_* that appear as `case SYS_*:` in the dispatcher source.
 
@@ -104,6 +128,7 @@ def check(emit_doc, do_doc_check):
     syscalls = data.get("syscalls", [])
     hdr = parse_header_numbers(HDR_PATH)
     dispatched = parse_dispatched_cases(DISPATCH_PATH)
+    sel_syms = parse_int_defines(SEL_HDR_PATHS)
 
     seen_names, seen_nums, json_sys = set(), {}, set()
 
@@ -168,7 +193,17 @@ def check(emit_doc, do_doc_check):
                     errors.append("%s.%s: variant needs a non-empty 'variants' map" % (tag, an))
                 else:
                     for val, shape in vs.items():
-                        _check_shape(errors, "%s.%s[%s]" % (tag, an, val), shape)
+                        where = "%s.%s[%s]" % (tag, an, val)
+                        _check_shape(errors, where, shape)
+                        # Every variant case must carry the selector's numeric
+                        # value, and it must match the kernel's #define for that
+                        # symbol (no silent drift of a request/code constant).
+                        sv = shape.get("sel_value") if isinstance(shape, dict) else None
+                        if not isinstance(sv, int):
+                            errors.append("%s: variant case needs an integer 'sel_value'" % where)
+                        elif val in sel_syms and sel_syms[val] != sv:
+                            errors.append("%s: sel_value %d disagrees with kernel %s=%d"
+                                          % (where, sv, val, sel_syms[val]))
 
         # (e) resource ownership must be explicit (arrays may be empty).
         res = sc.get("resources", {})

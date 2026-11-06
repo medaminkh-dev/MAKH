@@ -102,9 +102,61 @@ def template_mmap_fail():
     }
 
 
+# ---- U3.1 variant-operand templates (ioctl / arch_prctl) -----------------
+# These run a variant syscall in the guest with the selector + a matching argp
+# built from existing operand kinds, and (being `replay`) require an identical
+# trace on a second run. Each mutating case is made side-effect-neutral by
+# writing back exactly what was just read, so the campaign leaves the TTY and
+# the FS base as it found them.
+def template_ioctl_termios_roundtrip(abi):
+    tsz = abi.struct_defs["termios"]["size"]
+    get, set_ = gen._sel(abi, "ioctl", "argp", "TCGETS"), gen._sel(abi, "ioctl", "argp", "TCSETS")
+    return {
+        "name": "ioctl_termios_roundtrip", "expect_fault": False, "replay": True,
+        "handles": [], "bufs": [bytes(tsz), bytes(tsz)], "paths": [],
+        "calls": [
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, get),  (u3.BUF, 0)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, set_), (u3.BUF, 0)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, get),  (u3.BUF, 1)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+        ],
+        "data_check": (1, 0, tsz),   # termios read back after a no-op set is identical
+    }
+
+
+def template_ioctl_pgrp_roundtrip(abi):
+    get, set_ = gen._sel(abi, "ioctl", "argp", "TIOCGPGRP"), gen._sel(abi, "ioctl", "argp", "TIOCSPGRP")
+    return {
+        "name": "ioctl_pgrp_roundtrip", "expect_fault": False, "replay": True,
+        "handles": [], "bufs": [bytes(4), bytes(4)], "paths": [],
+        "calls": [
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, get),  (u3.BUF, 0)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, set_), (u3.BUF, 0)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+            {"sys": "ioctl", "args": [(u3.IMM, 1), (u3.IMM, get),  (u3.BUF, 1)], "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+        ],
+        "data_check": (1, 0, 4),     # foreground pgid read back after a no-op set is identical
+    }
+
+
+def template_arch_prctl_fs_roundtrip(abi):
+    setc, getc = gen._sel(abi, "arch_prctl", "addr", "ARCH_SET_FS"), gen._sel(abi, "arch_prctl", "addr", "ARCH_GET_FS")
+    V = 0x12345000               # canonical user-half base; the worker never derefs %fs
+    return {
+        "name": "arch_prctl_fs_roundtrip", "expect_fault": False, "replay": True,
+        "handles": [], "bufs": [V.to_bytes(8, "little"), bytes(8)], "paths": [],
+        "calls": [
+            {"sys": "arch_prctl", "args": [(u3.IMM, setc), (u3.IMM, V)],     "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+            {"sys": "arch_prctl", "args": [(u3.IMM, getc), (u3.BUF, 1)],     "bind": (B_NONE,0,0,0), "expect": (EXACT, 0)},
+        ],
+        "data_check": (1, 0, 8),     # GET_FS reads back exactly the base SET_FS installed
+    }
+
+
 def program_set():
+    abi = u3.Abi()
     return ([prog_from_gen("gen%d" % s, s) for s in range(3)] +
-            [template_pipe_roundtrip(), template_mmap_success(), template_mmap_fail()])
+            [template_pipe_roundtrip(), template_mmap_success(), template_mmap_fail(),
+             template_ioctl_termios_roundtrip(abi), template_ioctl_pgrp_roundtrip(abi),
+             template_arch_prctl_fs_roundtrip(abi)])
 
 
 def _op_c(op):

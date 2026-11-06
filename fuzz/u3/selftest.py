@@ -79,12 +79,43 @@ def main():
             rejected = True
         check(rejected, "untagged %s program was NOT rejected" % nm)
 
-    # (3) serialize round-trip is identical.
+    # (3) serialize round-trip is identical (generated + the variant probe).
     for seed in range(50):
         p = gen.generate(abi, seed, steps=8)
         s1 = u3.serialize(p)
         s2 = u3.serialize(u3.deserialize(s1))
         check(s1 == s2, "serialize round-trip differs for seed %d" % seed)
+    vp = gen.variant_probe(abi)
+    check(u3.serialize(vp) == u3.serialize(u3.deserialize(u3.serialize(vp))),
+          "serialize round-trip differs for the variant probe")
+
+    # (4) U3.1 variant operands: the variant probe (ioctl TCGETS/TCSETS/
+    # TIOCGPGRP/TIOCSPGRP + arch_prctl SET_FS/GET_FS) must validate — the
+    # validator resolves each selector to its concrete shape.
+    try:
+        st = u3.validate(vp, abi)
+        check(st["calls"] == 6, "variant probe validated but has %d calls" % st["calls"])
+    except u3.ValErr as e:
+        FAILS.append("variant probe failed validation: %s" % e)
+
+    # (5) fail-first for variant resolution: a TCGETS whose argp buffer is
+    # smaller than struct termios MUST be rejected (the validator resolved the
+    # selector to an out ptr of tsz bytes, not a blanket 'variant' pass).
+    bad = gen.mutate_variant_bad_argp(abi)
+    rejected = False
+    try:
+        u3.validate(bad, abi)
+    except u3.ValErr:
+        rejected = True
+    check(rejected, "undersized ioctl(TCGETS) argp was NOT rejected")
+
+    # (6) the host struct-size table must agree with the ABI struct_defs, so the
+    # validator's min-size can't drift from the inventory's declared layouts.
+    for name, sd in abi.struct_defs.items():
+        hs = u3.prog_abi_struct_size(name)
+        check(hs == sd.get("size"),
+              "struct %s size: host table %r != ABI struct_def %r"
+              % (name, hs, sd.get("size")))
 
     if FAILS:
         print("U3 SELFTEST: FAIL (%d)" % len(FAILS))

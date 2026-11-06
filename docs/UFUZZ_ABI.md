@@ -695,11 +695,11 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **handler:** `do_arch_prctl` (`kernel/syscall/syscall.c`)
 - **arguments:**
   - `code` : `int`
-  - `addr` : `unsigned long` — variant on `code` — ARCH_SET_FS takes addr BY VALUE (the new FS base); ARCH_GET_FS takes an out pointer to 8 bytes
+  - `addr` : `unsigned long` — variant on `code` — ARCH_SET_FS takes addr BY VALUE (the new FS base), which must be a canonical user-half address (< 0x0000800000000000) or it is rejected with -EPERM (T-S01): an unchecked value would #GP in ring 0 on wrmsr. ARCH_GET_FS takes an out pointer to 8 bytes
     - `ARCH_SET_FS` → scalar
     - `ARCH_GET_FS` → ptr out, size `fixed:8`
-- **returns:** `int` — 0; -EINVAL
-- **errno:** `EINVAL`, `ENOSYS`
+- **returns:** `int` — 0; -EINVAL for an unknown code; -EPERM for a non-canonical/kernel-half ARCH_SET_FS base
+- **errno:** `EINVAL`, `EPERM`, `ENOSYS`
 - **resources:** —
 - **flags:** `{"supported": ["ARCH_SET_FS", "ARCH_GET_FS"]}`
 
@@ -985,4 +985,8 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 ### `struct iovec` (16 bytes)
 - `iov_base` — ptr inout, size `len:iov_len` — direction follows the call: readv writes it (out), writev reads it (in)
 - `iov_len` — `size_t`
+
+### `struct termios` (12 bytes)
+- `c_lflag` — `uint32_t`
+- `c_cc` — `uint8_t[8]` — inline array, NCCS=8
 

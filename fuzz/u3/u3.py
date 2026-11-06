@@ -204,6 +204,19 @@ def validate(p, abi):
         for ai, (op, spec) in enumerate(zip(c.args, specs)):
             kind = op[0]
             akind = spec.get("kind")
+            # A `variant` arg is validated against the CONCRETE shape its
+            # selector selects (e.g. ioctl argp given request==TCGETS is an out
+            # ptr to struct termios). Resolve it so `akind`/`msize_spec` reflect
+            # that shape. An unknown/undecidable selector leaves the operand
+            # unconstrained — such a call just returns -errno at runtime, which
+            # is a legitimate RESULT, not a structural violation.
+            msize_spec = spec
+            if akind == "variant":
+                vshape = _resolve_variant(spec, c, specs)
+                if vshape is None:
+                    continue            # unconstrained: accept any operand here
+                akind = vshape.get("kind")
+                msize_spec = vshape
             if kind == RES:
                 h = op[1]
                 if h not in created_by or created_by[h] >= idx:
@@ -219,7 +232,7 @@ def validate(p, abi):
                 if op[1] not in bufids:
                     raise ValErr("call %d (%s) arg %d: buf %d does not exist"
                                  % (idx, c.sys, ai, op[1]))
-                need = _min_size(spec, c, p, specs)
+                need = _min_size(msize_spec, c, p, specs)
                 if need is not None and bufsize[op[1]] < need:
                     raise ValErr("call %d (%s) arg %d: buf %d is %d bytes, need %d"
                                  % (idx, c.sys, ai, op[1], bufsize[op[1]], need))
@@ -254,6 +267,25 @@ def validate(p, abi):
     return {"calls": len(p.calls), "dep_edges": dep_edges}
 
 
+def _resolve_variant(spec, call, specs):
+    """For a `variant` arg, return the concrete shape dict its selector selects,
+    or None when the selector operand is not a decidable immediate or its value
+    matches no known case. Matching is by the case's `sel_value` (the numeric
+    constant, validated against the kernel by check_abi)."""
+    sel_name = spec.get("selector")
+    sel_val = None
+    for (op, s) in zip(call.args, specs):
+        if s.get("name") == sel_name and op[0] == IMM:
+            sel_val = op[1]
+            break
+    if sel_val is None:
+        return None
+    for shape in spec.get("variants", {}).values():
+        if shape.get("sel_value") == sel_val:
+            return shape
+    return None
+
+
 def _min_size(spec, call, prog, specs):
     """Minimum buffer size required by a pointer arg's size rule, when it is
     knowable statically (len:ARG, struct:NAME, fixed:N). None = unconstrained."""
@@ -273,9 +305,12 @@ def _min_size(spec, call, prog, specs):
 
 
 # struct sizes used by _min_size; small, kept here to avoid importing Abi state.
+# termios is MAKH's 12-byte {uint32_t c_lflag; uint8_t c_cc[8]} (tty.h), NOT
+# Linux's 60-byte struct. selftest.py cross-checks every size that also appears
+# in the ABI struct_defs, so this table cannot drift from the inventory.
 _STRUCT_SIZES = {"stat": 144, "timespec": 16, "timeval": 16, "rlimit": 16,
                  "rlimit64": 16, "sigaction": 32, "utsname": 390, "iovec": 16,
-                 "termios": 60, "makh_ifinfo": 64}
+                 "termios": 12, "makh_ifinfo": 64}
 
 
 def prog_abi_struct_size(name):
