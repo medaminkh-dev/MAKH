@@ -267,3 +267,79 @@ reset + warmup so lifecycle edges don't masquerade as discoveries, and the
 the keep-seed rule is removed. The target outcome: when UFUZZ reaches a new
 syscall path, we know exactly which seed/program got it there — a corpus that
 learns from execution, not a random syscall generator wearing a corpus.
+
+## 11. Status at close — 2026-11-06 (resume point)
+
+Branch `claude/inspiring-hawking-pgrf59`; everything below is pushed. CI verdicts
+are GitHub's final conclusions, not local runs.
+
+### Landed
+
+| commit | what | CI |
+|---|---|---|
+| `bca97ec` | T-V01: read/write enforce `O_ACCMODE` (an `O_RDONLY` fd was writable) | #144 green |
+| `7d338d4` | U4.1: `arch_prctl` in the generator; `base_seed`/`mut_seed` split | #145 green |
+| `0a062a5` | P0: caps `U3_MAX_H=34`, `U3_MAX_CALLS=72`; over-cap programs fail loudly (0x500/0x501/0x502) instead of being silently truncated; `u3g_begin` bounds guard; `_Static_assert` invariants | #146 green |
+| `ba97499` | a failed `open()` (`-EMFILE`) no longer truncates/creates — fail-first `vfs.failed_open_has_no_side_effect` | #147 **red** (stress: 1/12 timeout) |
+| `74494c4` | `fd_install()`: atomic pick+publish at every free-slot site. `ba97499` had held an unpublished fd slot across ext2 create/truncate I/O while ring 0 is preemptible (`idt.c` IRQ tail) | — |
+| `7ba2cdf` | stress prints each failed run's last `[ RUN ]` line | #148 green (stress 12/12) |
+| `64b1040` | P1: ext2 block-map generator mode (direct/single/double-indirect tiers + a direct-only control), tier milestone, paired guided-vs-random | #149: abi-check + build-and-test green; stress still running when this was written — final verdict on GitHub |
+
+### Measured — and what is NOT proven
+
+- **ext2 tier milestone** (controlled): direct-tier saturation 0 new edges,
+  direct-only noise floor 0, deep-tier programs 8, all 37 programs clean. The
+  indirect tiers reach edges direct writes never do. *Not measured:* how those 8
+  split between single- and double-indirect.
+- **Guided vs random never produced a meaningful win:** arch_prctl selector
+  mutation 13–19 vs 19–29; ext2 paired 16 vs 14 (guided ahead 2 of 3, one tie);
+  the skeleton campaign swings from 13-vs-29 to 30-vs-20 between runs. Cause: the
+  generator's surface (11 syscalls, 8-step valid-by-construction programs, one
+  thread) saturates within a few runs, leaving nothing for feedback to find.
+- **The #147 stress timeout was not reproduced:** the unfixed `ba97499` passed
+  12/12 locally. The race `74494c4` closes is real by code reading, but that it
+  caused that one CI timeout is unproven. If a stress timeout recurs, the
+  `7ba2cdf` diagnostic names the test it hung in.
+- **UFUZZ has not yet found a kernel bug on its own.** T-V01 was being exercised
+  by generated programs (their writes to `O_RDONLY` fds succeeded) but no oracle
+  flagged it — review did. The O_TRUNC defect and the fd race came from code
+  reading. UFUZZ today is a validated generator with sound oracles, not a hunter.
+  Lesson for the hunter: oracles must also catch *semantic* violations (a call
+  that should fail but succeeds), not only crashes, hangs and leaks.
+
+### Open items
+
+1. **P2 EMFILE capacity** (not started; capacity already sized by P0): an
+   `emfile` generator mode stacking 30 opens on a throwaway path then closing
+   them; a KTEST asserting 29 distinct fds, the 30th `-EMFILE`, `OUT_OK`, and
+   pmm/kheap net-zero; `validate.py` sweeps the new mode. A boundary test, never
+   a guided-vs-random claim.
+2. **Unverified side-finding:** `ext2_create` (`kernel/fs/ext2.c` ~766-767)
+   returns NULL after a `write_inode`/`dir_add_entry` failure without freeing the
+   inode allocated at ~733. Verify, then fail-first + fix.
+3. **Known residuals:** an `open()` can still create/truncate if a sibling thread
+   takes the *last* free slot during its create/truncate; `vfs_dup2` replaces an
+   explicit slot non-atomically (pre-existing).
+
+### Next, in order — turning UFUZZ into a hunter
+
+- **P2** (small; infrastructure ready).
+- **H1 hostile arguments:** keep the IR structurally valid but make values
+  hostile — 0/-1/INT_MAX/huge or negative lengths; NULL, kernel-half, unmapped
+  and read-only pointers; closed or out-of-range fds. Add semantic oracles
+  (expected-error calls that succeed).
+- **H2 `hunt` mode outside CI:** hours-long runs that save every crash/hang as
+  seed + IR, dedupe by fault RIP/address, and auto-minimize the reproducer.
+- **H3 concurrency:** `CLONE_FILES`/`CLONE_VM` threads in one program — the race
+  class above.
+- **H4** wider surface (pipe, dup2, fcntl, socket, fork, futex, rename,
+  getdents); **H5** real program mutation (insert/delete/splice/operand tweak) —
+  where guided feedback can finally have locality.
+
+### Resume
+
+- host authority (seconds): `make u4-gen-check`
+- UFUZZ suite (~3 min): `make test-suite SUITE=ufuzz`
+- full suite: `make all makhos-test.iso && python3 tools/run_tests.py makhos-test.iso --timeout 900`
+  (`make test`'s 240 s cap is now too short for the full suite; use 900 s)
+- stress: `make makhos-stress.iso && bash tools/stress_tests.sh 12 4 makhos-stress.iso`
