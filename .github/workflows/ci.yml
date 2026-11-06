@@ -39,6 +39,8 @@ jobs:
         run: python3 fuzz/u3/selftest.py
       - name: UFUZZ U3 baked program header is in sync with the generator
         run: python3 fuzz/u3/emit.py --check
+      - name: UFUZZ U4 generator — every program structurally valid (Python authority)
+        run: make u4-gen-check
 
   build-and-test:
     runs-on: ubuntu-latest

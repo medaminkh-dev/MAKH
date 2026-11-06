@@ -360,7 +360,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -375,8 +375,19 @@ u3-check:
 	@python3 fuzz/u3/selftest.py
 	@python3 fuzz/u3/emit.py --check
 
-# Both host-side UFUZZ gates.
-fuzz-check: abi-check u3-check
+# UFUZZ U4 (host side): the C runtime generator (user/ufuzz_u3_gen.h) is the
+# SAME source the guest `cov` mode runs. Compile it on the host and validate
+# EVERY program it generates over a seed range through the U3 Python validator
+# (structural authority), fail-closed, with negative controls. No QEMU.
+build/u4gen: fuzz/u4/u4gen.c user/ufuzz_u3_gen.h user/ufuzz_u3_programs.h
+	@mkdir -p build
+	@cc -I user -w -O2 -o $@ fuzz/u4/u4gen.c
+
+u4-gen-check: build/u4gen
+	@python3 fuzz/u4/validate.py
+
+# All host-side UFUZZ gates.
+fuzz-check: abi-check u3-check u4-gen-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)
