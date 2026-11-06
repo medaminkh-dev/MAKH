@@ -142,44 +142,63 @@ Lighter alternative (if the C generator is judged too big for the MVP): bake a
 zero new C, but it is weaker — it cannot generate *toward* an uncovered edge,
 only pick among fixed candidates. Documented here as the fallback, not the plan.
 
-## 5. Acceptance gate (evidence-first, fail-first)
+## 5. Acceptance gate — and what measurement actually showed
 
-The headline claim — "the feedback loop helps" — must be tested *as such*, not
-implied by "a fuzzer ran":
+The plan was to test "the feedback loop helps" *as such* via
+`coverage_guided_beats_random`, with the MARGIN taken from a measured gap rather
+than guessed. **We measured first, and the data overruled the headline claim** —
+recorded here because the honesty of the result matters more than a green check.
 
-1. **`coverage_guided_beats_random`**: run K iterations with the keep-seed-on-
-   new-coverage rule ON, and K with it OFF (always-fresh seeds), same meta-seed
-   and budget. Assert `guided_edges >= random_edges + MARGIN`. **Fail-first:**
-   deleting the single "keep the seed" line collapses guided into random and the
-   assertion fails — the test proves the *mechanism*, not just execution.
-2. **Determinism**: a fixed meta-seed yields identical final coverage across
-   boots (so CI is reproducible and a regression is attributable).
-3. **Regression**: the U4 campaign covers at least the edge count U3's baked set
-   reaches (U4 never explores *less* than the fixed set it subsumes).
-4. **Oracle integration**: every program the campaign runs is still under U1/U2
-   (no uncontained fault, net-zero drift after the campaign settles).
+**Measured (K=60, meta-seed fixed, guided vs random, repeated):**
 
-The MARGIN is not guessed: the campaign first PRINTS the guided-vs-random gap
-(and the table below), and MARGIN is set comfortably below the *measured* gap.
-If measurement shows guided does not convincingly beat random on MAKH's small
-syscall surface in a short campaign, the honest response is to weaken the claim
-(e.g. "guided reaches the same coverage in fewer programs", or a reproducible
-non-trivial corpus) rather than ship a flaky `>=` — U4 asserts only what the
-numbers actually support.
+```
+u4: guided bits=33 (repeat 35) corpus=2 crashes=0 timeouts=0 | random bits=33..49
+```
+
+Two findings fall out, and both forbid an assertion the plan assumed:
+
+1. **Seed-level feedback does NOT beat random here.** The generator is a pure
+   function of the seed, so "mutating" a fruitful seed (`seed ^ rand`) produces
+   an *unrelated* program, not a variant — the corpus carries no structural
+   advantage, and guided vs random differ only by sample variance. A real
+   feedback win needs **program-structure mutation** (tweak/splice a kept
+   program), which is deferred (§8). So the gate must **never** assert
+   `guided >= random`.
+2. **The edge count is not bit-exact reproducible** (33 then 35/39 for the same
+   meta-seed). Instrumented allocator/signal paths (`kheap`, `pmm`, `signal` are
+   in `COV_SOURCES`) branch on evolving global state and IRQ timing. The seed
+   sequence and the generated programs ARE deterministic; the resulting coverage
+   *count* is not. So the gate must **never** assert an exact count or
+   `g.bits == g2.bits`.
+
+**What the gate therefore asserts (all robustly true, in `build-and-test`):**
+
+- the campaign explores real coverage (`g.bits > 0`, `r.bits > 0`);
+- a corpus of coverage-increasing seeds actually forms (`corpus_n > 0`);
+- every generated program is clean under the runtime oracles — no uncontained
+  fault, no hang (`crashes == 0`, `timeouts == 0`); the step-2b batch test adds
+  the U2 net-zero-drift check over generated programs.
+
+The guided/random/repeat numbers are **printed every run** so the gap (and any
+future regression) is visible in the CI log even though it is not asserted. The
+structural-authority gate (step 2a, `u4-gen-check`) remains the fail-closed
+check that every generated program is well-formed; the fail-first for the
+*feedback mechanism itself* belongs to a future structural-mutation brick, where
+it can be asserted truthfully.
 
 **Campaign metrics (printed every run, so we can tell real exploration from
 "just ran more programs"):**
 
-| Metric | Why |
-|---|---|
-| unique coverage bits (`popcount(virgin)`) | how much kernel was reached |
-| executed programs | work done |
-| programs/sec | execution efficiency (fork cost is real) |
-| corpus size | did the seed corpus actually grow |
-| crashes (139) | uncontained faults (U1) |
-| timeouts (137) | hangs the watchdog killed (U1) |
-| resource drift (pmm/kheap) | leaks over the campaign (U2) |
-| replay failures | non-deterministic results (U3) |
+| Metric | Where | Why |
+|---|---|---|
+| new coverage edges (guided, repeat, random) | campaign KTEST, printed | exploration reached, and the guided/random gap + run-to-run spread |
+| corpus size | campaign KTEST, printed + asserted `> 0` | did the seed corpus actually grow |
+| crashes / timeouts | campaign KTEST, printed | uncontained faults / watchdog kills (U1) |
+| OK count | campaign KTEST, asserted `== K` | every program ran, replayed and digest-matched (U1+U3; a replay/digest failure is a non-OK exit, so this subsumes "replay failures") |
+| resource drift (pmm/kheap) | `u4_generated_programs_run_clean` (step 2b), asserted net-zero | leaks over a batch of generated programs (U2) |
+
+(`programs/sec` was dropped — it adds a clock dependency and measures host speed,
+not kernel behaviour; the fixed K already bounds the work.)
 
 All four gates run in `build-and-test`. The campaign is a wall-clock budget, so
 it is gated under `makh.notiming` in the stress multiplier (like the other

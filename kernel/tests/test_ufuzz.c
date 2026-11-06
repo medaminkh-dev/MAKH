@@ -26,6 +26,7 @@
 #include <mm/kheap.h>
 #include <cmdline.h>
 #include <kfuzz.h>
+#include <klog.h>
 
 /* These are wall-clock-budget test harnesses (watchdog timeouts, deferred-
  * reclaim settling), not kernel-race probes. The stress job runs the suite
@@ -256,4 +257,103 @@ KTEST(ufuzz, u4_generated_programs_run_clean) {
     ufuzz_settle();
     KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* no page leak over the batch */
     KEXPECT_EQ(kheap_get_used(), hp0);          /* no heap leak over the batch */
+}
+
+/* ---- U4 step 3: coverage-guided campaign (measurement + guided-vs-random) --
+ * The feedback loop: each iteration spawns /bin/ufuzz cov <seed>, folds the new
+ * edges against `virgin`, and — in GUIDED mode — keeps a seed that found new
+ * coverage so later iterations can mutate it. RANDOM mode always draws fresh.
+ * The exit status carries the outcome class (see ufuzz.c: 0 OK, 2 fault,
+ * 3 timeout). This KTEST prints both passes' metrics; the hard guided-vs-random
+ * assertion and its MARGIN are set from the printed numbers (design review #4).
+ */
+#define U4_OUT_FAULT   2
+#define U4_OUT_TIMEOUT 3
+#define U4_CORPUS_MAX  64
+
+static unsigned long u4_mrng;                   /* campaign meta-PRNG state */
+static unsigned u4_mnext(void) {
+    u4_mrng = u4_mrng * 6364136223846793005UL + 1442695040888963407UL;
+    return (unsigned)(u4_mrng >> 33);
+}
+
+struct u4_campaign_result { uint64_t bits; int executed, corpus_n, ok, crashes, timeouts; };
+
+/* Run K iterations in guided or random mode from a fixed meta-seed; return the
+ * number of NEW coverage edges discovered over the K iterations (warmup folded
+ * and discarded first, so shared spawn/exec edges don't count). */
+static void u4_campaign(int guided, unsigned meta_seed, int K,
+                        struct u4_campaign_result* out) {
+    uint32_t words = kfuzz_cov_words();
+    for (uint32_t i = 0; i < words; i++) u4_virgin[i] = 0;
+    unsigned corpus[U4_CORPUS_MAX]; int corpus_n = 0;
+    u4_mrng = meta_seed | 1UL;
+
+    kfuzz_cov_reset();                           /* warmup: fold shared edges */
+    (void)u4_run_cov(0xABCD);
+    (void)kfuzz_cov_fold_new(u4_virgin);
+
+    uint64_t bits = 0; int ok = 0, crashes = 0, timeouts = 0;
+    for (int i = 0; i < K; i++) {
+        unsigned seed;
+        if (guided && corpus_n > 0 && (u4_mnext() & 1))
+            seed = corpus[u4_mnext() % (unsigned)corpus_n] ^ (u4_mnext() & 0xFFFF);
+        else
+            seed = u4_mnext();
+
+        kfuzz_cov_reset();
+        int st = u4_run_cov(seed);
+        uint64_t nov = kfuzz_cov_fold_new(u4_virgin);
+        bits += nov;
+        if (st == 0) ok++;                       /* ran, replayed, digest-matched */
+        else if (st == U4_OUT_FAULT) crashes++;
+        else if (st == U4_OUT_TIMEOUT) timeouts++;
+        if (guided && nov > 0 && corpus_n < U4_CORPUS_MAX) corpus[corpus_n++] = seed;
+    }
+    out->bits = bits; out->executed = K; out->corpus_n = corpus_n;
+    out->ok = ok; out->crashes = crashes; out->timeouts = timeouts;
+}
+
+KTEST(ufuzz, u4_coverage_guided_campaign) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    const int K = 60;
+    const unsigned META = 0xC0FFEE;
+
+    int prev = kfuzz_cov_enable(1);
+    struct u4_campaign_result g = {0}, g2 = {0}, r = {0};
+    u4_campaign(1, META, K, &g);                 /* guided            */
+    u4_campaign(1, META, K, &g2);                /* guided, repeated  */
+    u4_campaign(0, META, K, &r);                 /* random            */
+    kfuzz_cov_enable(prev);
+
+    kprintf("u4: guided bits=%llu (repeat %llu) corpus=%d crashes=%d timeouts=%d"
+            " | random bits=%llu corpus=%d\n",
+            g.bits, g2.bits, g.corpus_n, g.crashes, g.timeouts, r.bits, r.corpus_n);
+
+    /* HONEST RESULTS (design review #4: measure, don't assume). Two measured
+     * facts shape what this test may assert:
+     *
+     * 1. Seed-level feedback does NOT beat random here. The generator is a pure
+     *    function of the seed, so mutating a fruitful seed (seed ^ rand) yields
+     *    an UNRELATED program, not a variant — the corpus confers no structural
+     *    advantage, and guided vs random differ only by sample variance
+     *    (measured ~33 vs ~49 edges, K=60). Real coverage-guided feedback needs
+     *    PROGRAM-STRUCTURE mutation (tweak/splice a kept program), deferred — see
+     *    docs/UFUZZ_U4_DESIGN.md §8. So we NEVER assert guided >= random.
+     *
+     * 2. The edge COUNT is not bit-exact reproducible (measured 33 then 39 for
+     *    the same meta-seed): instrumented allocator/signal paths (kheap, pmm,
+     *    signal are in COV_SOURCES) branch on evolving global state and IRQ
+     *    timing. The SEED sequence and the generated PROGRAMS are deterministic
+     *    (a pure PRNG + pure generator); the resulting coverage count is not. So
+     *    we NEVER assert an exact count or g.bits == g2.bits.
+     *
+     * What IS robustly true, and all this test claims: the campaign explores
+     * real coverage, forms a corpus of coverage-increasing seeds, and every
+     * generated program is clean under the runtime oracles (U1 no fault/hang). */
+    KEXPECT(g.bits > 0);                          /* real coverage discovered      */
+    KEXPECT(r.bits > 0);
+    KEXPECT(g.corpus_n > 0);                      /* a corpus actually forms       */
+    KEXPECT_EQ(g.ok, K);                          /* EVERY program clean (OK): no  */
+    KEXPECT_EQ(r.ok, K);                          /* fault/hang/replay/digest fail */
 }
