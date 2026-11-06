@@ -3,7 +3,10 @@
 
 # MAKH UFUZZ — U4 Design Proposal: coverage-guided generation
 
-**Status:** proposal for review (no code yet). Mirrors the U3 design-review flow.
+**Status:** v2 — architecture approved in review (Model A + C runtime generator);
+this revision locks in the two points the review required *before* code:
+edge-IDENTITY novelty (not a bit count) and per-seed attribution. Mirrors the
+U3 design-review flow.
 **Depends on:** U0 (ABI), U1 (ring-3 executor + watchdog), U2 (reset oracle),
 U3 + U3.1 (typed programs: imm/res/null/buf/path, variant, iovec).
 
@@ -70,9 +73,38 @@ whole AFL loop in ring-3: in-guest corpus, read coverage between worker runs.
 
 **Cross-process coverage note (both models):** `cov_map` is global kernel state,
 so a forked worker's syscalls bump the same map the driver reads after `wait4`.
-The fork/exec/wait machinery itself adds a roughly-constant per-batch coverage
-contribution; the *novelty delta* still isolates what the programs newly reach.
-A single warmup batch before measurement absorbs the one-time spawn-path edges.
+The fork/exec/wait machinery itself adds a roughly-constant per-run coverage
+contribution, which the warmup + virgin-map below absorb (see §3.5).
+
+## 3.5 Coverage measurement & per-seed attribution (the part the review flagged)
+
+A bit COUNT is not enough: `cov_count()` tells us *how many* edges are set, not
+*which* ones, and not *which seed* set a new one. If a batch runs many programs
+and the count rises, we cannot say which program earned it. Getting this wrong
+is the real failure mode (see the pre-mortem, §10): we would ship something that
+calls itself coverage-guided while its feedback attribution is noise. So:
+
+- **Two maps.** `cov_map` is the per-run (current) map; the driver keeps a
+  second **`virgin`** map (ring-0, `COV_WORDS` words) of every edge seen so far
+  in the campaign. Novelty of a run is `current & ~virgin` — the edges it hit
+  that nothing had hit before — folded in with `virgin |= current`. A new kernel
+  helper does the fold+count in one locked pass, e.g.
+  `uint64_t kfuzz_cov_fold_new(uint64_t* virgin)` (reuses `cov_map`; no raw map
+  leaves the kernel).
+- **One program per worker (attribution over fork-thrift).** The driver resets
+  `cov_map`, spawns `/bin/ufuzz cov <seed>` for exactly ONE program, waits, then
+  computes that program's novelty. This binds novelty to a single seed — exact
+  attribution. The batch-amortisation from v1 is DROPPED: it is precisely what
+  destroys attribution. The fork+exec+wait cost is bounded by K (§7); if it ever
+  dominates CI time, the escape hatch is U4.1/Model B, where the worker reads
+  coverage in-process between programs and batching regains attribution — i.e.
+  attribution precision is itself the argument for Model B later, not for
+  batching now.
+- **Explicit reset + warmup.** The campaign starts with `cov_reset()` and a
+  zeroed `virgin`, runs ONE warmup worker whose map is folded into `virgin` and
+  discarded — this absorbs the boot/spawn/exec/wait edges that every run shares,
+  so from the first measured program, `current & ~virgin` reflects the PROGRAM,
+  not the lifecycle around it.
 
 ## 4. Generation strategy
 
@@ -83,15 +115,26 @@ use-before-create / wrong-type / oversized operand), feeding the existing
 `u3_run`. Seed-mutation (keep a seed, perturb its low bits) gives the feedback,
 exactly as KFUZZ mutates its seeds.
 
-Honesty tie-back (so the C generator can't silently drift from the model we
-validated in Python):
+The C generator must preserve every invariant U3's validator already enforces —
+a bug here would turn into fuzzing NOISE, not a caught defect:
 
-- every runtime-generated program is still subject to the U1/U2/U3 oracles — a
-  generator bug that emits a malformed program shows up as a worker fault, a
-  leak, or a replay mismatch, not as a silent pass;
-- a host selftest serializes a sample of C-generated programs (the worker can
-  print the IR under a debug flag) and runs them through the **existing Python
-  validator**, so the C generator is checked against the same contract U3 uses.
+- resource-type compatibility (an `fd` handle only where an `fd` is wanted);
+- create-before-use and the release lifecycle (no use-after-close unless
+  deliberately tagged);
+- operand bounds and non-negative ids/lengths;
+- variant selector ↔ argp-shape compatibility (ioctl/arch_prctl);
+- iovec segment limits (≤ `MAX_SEG`, each segment within its buffer).
+
+Honesty tie-back (so the C generator can't silently drift from the Python model
+we validated):
+
+- every runtime-generated program is still under the U1/U2/U3 oracles — a
+  generator bug that emits a malformed program surfaces as a worker fault, a
+  leak, or a replay mismatch, never a silent pass;
+- the worker, under a debug flag, prints the serialized IR of the programs it
+  generates for a fixed seed set; a host selftest feeds those through the
+  **existing Python validator**, so the C generator is checked against the exact
+  same contract (incl. the invariants above) rather than trusted by assertion.
 
 Lighter alternative (if the C generator is judged too big for the MVP): bake a
 *bank* of N Python-generated programs and have the driver do coverage-guided
@@ -116,9 +159,31 @@ implied by "a fuzzer ran":
 4. **Oracle integration**: every program the campaign runs is still under U1/U2
    (no uncontained fault, net-zero drift after the campaign settles).
 
-All four run in `build-and-test`. The campaign is a wall-clock budget, so it is
-gated under `makh.notiming` in the stress multiplier (like the other UFUZZ
-timing harnesses), and bounded to a fixed K (≈200 iters, KFUZZ-sized).
+The MARGIN is not guessed: the campaign first PRINTS the guided-vs-random gap
+(and the table below), and MARGIN is set comfortably below the *measured* gap.
+If measurement shows guided does not convincingly beat random on MAKH's small
+syscall surface in a short campaign, the honest response is to weaken the claim
+(e.g. "guided reaches the same coverage in fewer programs", or a reproducible
+non-trivial corpus) rather than ship a flaky `>=` — U4 asserts only what the
+numbers actually support.
+
+**Campaign metrics (printed every run, so we can tell real exploration from
+"just ran more programs"):**
+
+| Metric | Why |
+|---|---|
+| unique coverage bits (`popcount(virgin)`) | how much kernel was reached |
+| executed programs | work done |
+| programs/sec | execution efficiency (fork cost is real) |
+| corpus size | did the seed corpus actually grow |
+| crashes (139) | uncontained faults (U1) |
+| timeouts (137) | hangs the watchdog killed (U1) |
+| resource drift (pmm/kheap) | leaks over the campaign (U2) |
+| replay failures | non-deterministic results (U3) |
+
+All four gates run in `build-and-test`. The campaign is a wall-clock budget, so
+it is gated under `makh.notiming` in the stress multiplier (like the other
+UFUZZ timing harnesses), and bounded to a fixed K (≈200 programs, KFUZZ-sized).
 
 ## 6. Instrumentation change
 
@@ -131,11 +196,14 @@ COV_SOURCES, so the only risk is build time, verified before landing.
 
 ## 7. Cost / CI budget
 
-Per-iteration `fork+exec+wait` is far heavier than KFUZZ's in-process targets,
-so the worker runs a **batch** of programs per spawn (`/bin/ufuzz cov <seed0>
-<count>`) to amortise it, and the driver reads coverage per batch. K and the
-batch size are tuned so the campaign fits well inside the build-and-test budget
-(the U3 campaigns already run comfortably there).
+Per-program `fork+exec+wait` is heavier than KFUZZ's in-process targets, and v2
+deliberately pays that cost (one program per worker) to keep attribution exact —
+correctness over fork-thrift, per the review. K is therefore bounded modestly
+(≈200 programs, KFUZZ-sized) so the campaign fits inside the build-and-test
+budget; `proc.spawn_wait_many_no_leak` already shows many spawn/wait cycles run
+comfortably there. If profiling later shows the fork cost dominates, the fix is
+U4.1/Model B (in-process per-program coverage reads make batching safe again),
+NOT reintroducing attribution-destroying batches here.
 
 ## 8. Explicitly out of scope for U4 MVP
 
@@ -148,11 +216,35 @@ batch size are tuned so the campaign fits well inside the build-and-test budget
 - Any claim that coverage implies correctness. U4 feeds the oracles; it is not
   itself an oracle.
 
-## 9. Open questions for review
+## 9. Decisions (settled in review)
 
-1. Model A vs B for the MVP (recommendation: A; B as U4.1).
-2. C runtime generator vs bake-a-bank selection (recommendation: C generator).
-3. Which files to add to `COV_SOURCES` (minimum: syscall.c, ext2.c).
-4. The `MARGIN` and K for `coverage_guided_beats_random` — pick values that are
-   comfortably above run-to-run noise, justified by a measured guided-vs-random
-   gap rather than guessed.
+| Decision | Outcome |
+|---|---|
+| Model A (ring-0 driver + ring-3 workers) | **MVP** |
+| Model B (gated ring-3 coverage syscall) | deferred to U4.1 |
+| C runtime generator feeding `u3_run` | **yes** |
+| Bake-a-bank selection | fallback only |
+| Add `syscall.c` + `ext2.c` to `COV_SOURCES` | yes, after measuring build-time impact |
+| Novelty signal | **edge identity** (`current & ~virgin`), per-seed, not a count |
+| Batch per worker | **1 program** (attribution over fork-thrift) |
+| Persistent / on-disk corpus | deferred |
+| Concurrent / multi-process programs | deferred |
+| `MARGIN`, K | from a MEASURED guided-vs-random gap, not guessed |
+
+## 10. Pre-mortem — the failure we are designing against
+
+The dangerous failure here is not a kernel crash; it is a **measurement lie**:
+
+1. the driver reads only `cov_count()`;
+2. a worker runs many programs in a batch;
+3. coverage rises, but we cannot say which program caused it;
+4. the corpus then keeps useless seeds and/or discards fruitful ones;
+5. we announce "U4 is coverage-guided" while the feedback attribution is noise.
+
+v2 is built to make that impossible: edge-identity novelty via the virgin map,
+one program per worker so novelty binds to a single seed, an explicit
+reset + warmup so lifecycle edges don't masquerade as discoveries, and the
+`coverage_guided_beats_random` fail-first that collapses to random the moment
+the keep-seed rule is removed. The target outcome: when UFUZZ reaches a new
+syscall path, we know exactly which seed/program got it there — a corpus that
+learns from execution, not a random syscall generator wearing a corpus.
