@@ -75,6 +75,18 @@ _Static_assert(U3_MAX_H >= 4, "need handle headroom for deep fd-exhaustion stack
 #define U3G_O_RW_CREAT_TRUNC  0x242
 #define U3G_EXT2_PATH         1          /* index into u3g_paths: "/mnt/ufz" */
 
+/* fd-exhaustion boundary (U4.2 P2). A process can hold U3G_FD_BUDGET file fds at
+ * once: the kernel's VFS_MAX_FDS (32) minus the console fds 0..2, which fd_alloc
+ * never hands out. kernel/tests/test_ufuzz.c static-asserts this against
+ * VFS_MAX_FDS so the two cannot drift apart silently. */
+#define U3G_FD_BUDGET  29
+#define U3G_EMFILE     24
+#define U3G_EBADF      9
+_Static_assert(U3G_FD_BUDGET + 1 <= U3_MAX_H,
+               "the fd-exhaustion program needs one handle per open");
+_Static_assert(2 * (U3G_FD_BUDGET + 1) <= U3G_MAX_CALLS,
+               "the fd-exhaustion program (opens + closes) must fit");
+
 /* arch_prctl selector-switched call (U4.1). These are the real `code` values the
  * host validator resolves by sel_value; a generated program emits them as the
  * `code` IMM, and the matching argp shape (SET_FS takes the base by value, so an
@@ -111,6 +123,8 @@ static int u3g_live_addr[U3_MAX_H], u3g_naddr;
 static int u3g_overflow;            /* set if any emission exceeded a capacity (U4.2) */
 
 static int u3g_new_handle(const char* rt) {
+    /* Capacity guard: never write past u3g_handle_rtype (see u3g_new_buf). */
+    if (u3g_nhandles >= U3_MAX_H) { u3g_overflow = 1; return U3_MAX_H - 1; }
     int h = u3g_nhandles++;
     u3g_handle_rtype[h] = rt;
     return h;
@@ -351,6 +365,48 @@ static const u3_program* u3g_build_ext2(unsigned long base_seed, unsigned long m
     u3g_prog.nhandles = u3g_nhandles;
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 2;
+    u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
+    u3g_prog.calls = u3g_calls;
+    u3g_prog.ncalls = u3g_overflow ? (U3_MAX_CALLS + 1) : u3g_ncalls;
+    u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
+    return &u3g_prog;
+}
+
+/* fd-exhaustion boundary (U4.2 P2) — a SELF-CHECKING capacity test, not a
+ * coverage experiment. Open `ok_opens` + 1 files without closing any: the first
+ * `ok_opens` must succeed and the last must fail with exactly -EMFILE. Then close
+ * every handle: each successful open's close must return exactly 0 — which also
+ * proves the fds were DISTINCT (had the kernel handed out one slot twice, the
+ * second close of it would return -EBADF) — and closing the failed handle (fd -1)
+ * must return exactly -EBADF. The expectations are checked by the executor, so
+ * the program fails loudly if the boundary is anywhere but `ok_opens`.
+ * Called with U3G_FD_BUDGET it must pass; with U3G_FD_BUDGET - 1 it expects
+ * -EMFILE one open too early and MUST fail (the test's negative control).
+ * Opens are O_RDONLY of an initrd file: no filesystem side effect. */
+static const u3_program* u3g_build_emfile(int ok_opens) {
+    u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
+    u3g_overflow = 0;
+    int total = ok_opens + 1;
+
+    for (int i = 0; i < total; i++) {
+        int h = u3g_new_handle("fd");
+        u3_call* c = u3g_begin(U3G_OPEN, 2, U3_BIND_FD, h);
+        u3g_set(c, 0, U3_PATH, 0);                    /* /bin/hello */
+        u3g_set(c, 1, U3_IMM, U3G_O_RDONLY);
+        if (i < ok_opens) { c->expect_mode = U3_NONNEG; }
+        else              { c->expect_mode = U3_EXACT; c->expect_val = -U3G_EMFILE; }
+    }
+    for (int i = 0; i < total; i++) {
+        u3_call* c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_RES, i);
+        c->expect_mode = U3_EXACT;
+        c->expect_val  = (i < ok_opens) ? 0 : -U3G_EBADF;
+    }
+
+    u3g_prog.name = "gen_emfile"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    u3g_prog.nhandles = u3g_nhandles;
+    u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
+    u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
     u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
     u3g_prog.calls = u3g_calls;
     u3g_prog.ncalls = u3g_overflow ? (U3_MAX_CALLS + 1) : u3g_ncalls;

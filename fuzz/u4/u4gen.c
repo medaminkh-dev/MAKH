@@ -30,14 +30,16 @@ static void op_str(const u3_arg* a, char* buf, size_t n) {
     }
 }
 
-static void emit_ir(unsigned long seed, int mode) {
+static void emit_ir(unsigned long seed, unsigned long mut, int mode) {
     /* base==mut here so one seed sweeps both the skeleton and the selector/offset
      * space; the Python validator must accept every resulting program. mode 0 =
      * skeleton menu generator, mode 1 = ext2 block-map growth (direct/single/
      * double-indirect tiers), mode 2 = ext2 direct-tier control (U4.2 P1). */
-    const u3_program* p = (mode == 1) ? u3g_build_ext2(seed, seed, 3) :
-                          (mode == 2) ? u3g_build_ext2(seed, seed, 1) :
-                                        u3g_build(seed, seed);
+    const u3_program* p = (mode == 1) ? u3g_build_ext2(seed, mut, 3) :
+                          (mode == 2) ? u3g_build_ext2(seed, mut, 1) :
+                          (mode == 3) ? u3g_build_emfile(U3G_FD_BUDGET) :
+                          (mode == 4) ? u3g_build_emfile(U3G_FD_BUDGET - 1) :
+                                        u3g_build(seed, mut);
     printf("abi 1\n");
     printf("prng lcg %lu\n", seed);
     printf("handles");
@@ -66,9 +68,13 @@ int main(int argc, char** argv) {
     unsigned long start = argc > 1 ? strtoul(argv[1], 0, 10) : 0;
     unsigned long count = argc > 2 ? strtoul(argv[2], 0, 10) : 1;
     int mode = argc > 3 ? (int)strtoul(argv[3], 0, 10) : 0;   /* 0 skeleton, 1 ext2 */
+    /* Optional 4th arg: an explicit mut_seed, to dump the exact (base, mut)
+     * program a campaign reported. Without it mut == base (the sweep). */
+    int has_mut = argc > 4;
+    unsigned long mut = has_mut ? strtoul(argv[4], 0, 10) : 0;
     for (unsigned long i = 0; i < count; i++) {
         printf("### seed %lu\n", start + i);
-        emit_ir(start + i, mode);
+        emit_ir(start + i, has_mut ? mut : start + i, mode);
     }
     return 0;
 }

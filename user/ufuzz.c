@@ -442,11 +442,15 @@ static unsigned long parse_ul(const char* s) {
  * crashes/timeouts from the exit status and NEW coverage from the kernel map. */
 /* mode 0 = skeleton (menu generator); 1 = ext2 block-map growth across the
  * direct/single/double-indirect tiers (U4.2); 2 = ext2 DIRECT-tier only (the
- * control the tier-milestone test measures against). */
+ * control the tier-milestone test measures against); 3 = fd-exhaustion boundary
+ * (29 opens succeed, the 30th is -EMFILE); 4 = the same program expecting the
+ * boundary one open too early — it MUST fail (negative control). */
 static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed) {
     const u3_program* pg =
         (mode == 1) ? u3g_build_ext2(base_seed, mut_seed, 3) :
         (mode == 2) ? u3g_build_ext2(base_seed, mut_seed, 1) :
+        (mode == 3) ? u3g_build_emfile(U3G_FD_BUDGET) :
+        (mode == 4) ? u3g_build_emfile(U3G_FD_BUDGET - 1) :
                       u3g_build(base_seed, mut_seed);
     for (int i = 0; i < pg->ncalls; i++)                 /* index -> real SYS_ */
         ((u3_call*)pg->calls)[i].sysno = U3G_NR[pg->calls[i].sysno];

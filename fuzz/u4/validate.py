@@ -88,8 +88,11 @@ def main():
 
     # Validate EVERY mode the guest can run (so a C-port bug in any of them is
     # caught by the structural authority, not left as silent fuzzing noise).
-    modes = [(0, "skeleton"), (1, "ext2"), (2, "ext2-direct")]
-    total = sum(validate_mode(mode, label, n, abi) for mode, label in modes)
+    # (mode, label, how many seeds). The fd-exhaustion programs do not depend on
+    # the seed, so one instance of each is the whole space.
+    modes = [(0, "skeleton", n), (1, "ext2", n), (2, "ext2-direct", n),
+             (3, "emfile", 1), (4, "emfile-control", 1)]
+    total = sum(validate_mode(mode, label, cnt, abi) for mode, label, cnt in modes)
 
     # (4) Negative controls: the validator MUST reject these, or the whole check
     # above proves nothing. Each is syntactically parseable but breaks a rule.

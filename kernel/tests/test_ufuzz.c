@@ -27,6 +27,7 @@
 #include <cmdline.h>
 #include <kfuzz.h>
 #include <klog.h>
+#include <fs/vfs.h>
 
 /* These are wall-clock-budget test harnesses (watchdog timeouts, deferred-
  * reclaim settling), not kernel-race probes. The stress job runs the suite
@@ -475,4 +476,29 @@ KTEST(ufuzz, selfcheck_failures_are_never_ok) {
 KTEST(ufuzz, replay_restores_fs_base) {
     UFUZZ_SKIP_IF_NOTIMING();
     KEXPECT_EQ(u4_run_selfcheck(4), 0);
+}
+
+/* ---- U4.2 P2: fd-exhaustion boundary (a capacity test, NOT guided-vs-random) -
+ * Mode 3 is a self-checking program: 29 opens must succeed, the 30th must return
+ * exactly -EMFILE, each of the 29 closes must return exactly 0 (so the 29 fds
+ * were distinct), and closing the failed handle must return exactly -EBADF.
+ * Mode 4 is the same program expecting -EMFILE one open too early; it must be
+ * reported as a failure — proof that mode 3 passing pins the boundary at exactly
+ * 29 rather than passing whatever the kernel does. */
+_Static_assert(VFS_MAX_FDS - 3 == 29,
+               "U3G_FD_BUDGET in user/ufuzz_u3_gen.h assumes 29 allocatable fds");
+
+KTEST(ufuzz, u4_emfile_boundary_is_exact) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    (void)u4_run_cov(3, 0, 0);                  /* warmup: absorb first-touch cost */
+    ufuzz_settle();
+    size_t pg0 = pmm_get_free_memory();
+    size_t hp0 = kheap_get_used();
+
+    KEXPECT_EQ(u4_run_cov(3, 0, 0), 0);             /* boundary at exactly 29      */
+    KEXPECT_EQ(u4_run_cov(4, 0, 0), U4_OUT_OTHER);  /* control: 28 must be caught  */
+
+    ufuzz_settle();
+    KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* 29 open descriptions fully released, */
+    KEXPECT_EQ(kheap_get_used(), hp0);          /* incl. the control's exit with 29 open */
 }
