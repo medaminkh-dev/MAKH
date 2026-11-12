@@ -42,7 +42,19 @@
 #define U3_MAX_CALLS 72
 #endif
 
-/* Generator syscall table. The index is what a generated u3_call.sysno holds. */
+/* Generator syscall table. The index is what a generated u3_call.sysno holds.
+ *
+ * REPLAY-ISOLATION RULE for adding a call: replay runs a program twice in ONE
+ * process, so any per-process state a call can change must be back to its
+ * starting value before pass 2 — either released by the program itself (fds,
+ * mappings, the ext2 file) or reset by the executor between the passes
+ * (u3_worker_pg restores the FS base that arch_prctl SET_FS changes). State the
+ * current calls can touch: fd table (closed by the program), mappings (unmapped;
+ * addresses normalized in the trace), file offsets (die with the fd), the /mnt
+ * file (unlinked), FS base (restored). A new call that touches anything else —
+ * cwd, signal mask/handlers, brk, umask, GS base, rlimits — needs its reset added
+ * to u3_worker_pg first. The digest + trace comparison is the backstop: leaked
+ * state that changes any result or out-buffer shows up as a replay failure. */
 enum { U3G_OPEN, U3G_READ, U3G_WRITE, U3G_CLOSE,
        U3G_MMAP, U3G_MPROTECT, U3G_MUNMAP, U3G_GETPID, U3G_ARCH_PRCTL,
        U3G_LSEEK, U3G_UNLINK, U3G_NSYS };
