@@ -94,6 +94,7 @@ _Static_assert(U3_MAX_H >= 4, "need handle headroom for deep fd-exhaustion stack
 #define U3G_FD_BUDGET  29
 #define U3G_EMFILE     24
 #define U3G_EBADF      9
+#define U3G_EINVAL     22
 _Static_assert(U3G_FD_BUDGET + 1 <= U3_MAX_H,
                "the fd-exhaustion program needs one handle per open");
 _Static_assert(2 * (U3G_FD_BUDGET + 1) <= U3G_MAX_CALLS,
@@ -177,6 +178,7 @@ static void u3g_emit_open(void) {
     u3_call* c = u3g_begin(U3G_OPEN, 2, U3_BIND_FD, h);
     u3g_set(c, 0, U3_PATH, 0);            /* /bin/hello */
     u3g_set(c, 1, U3_IMM, U3G_O_RDONLY);
+    c->expect_mode = U3_NONNEG;           /* existing file, table not full: a new fd */
     u3g_live_fd[u3g_nfd++] = h;
 }
 static void u3g_emit_mmap(void) {
@@ -186,9 +188,13 @@ static void u3g_emit_mmap(void) {
     u3g_set(c, 1, U3_IMM, 4096);
     u3g_set(c, 2, U3_IMM, U3G_PROT_RW);
     u3g_set(c, 3, U3_IMM, U3G_MAP_PA);
+    c->expect_mode = U3_NONNEG;           /* one anonymous page: a user address */
     u3g_live_addr[u3g_naddr++] = h;
 }
-static void u3g_emit_getpid(void) { (void)u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0); }
+static void u3g_emit_getpid(void) {
+    u3_call* c = u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
+    c->expect_mode = U3_NONNEG;           /* the caller's pid */
+}
 
 static void u3g_emit_write(u3g_rng* r) {
     int fd = u3g_live_fd[u3g_below(r, u3g_nfd)];
@@ -196,6 +202,10 @@ static void u3g_emit_write(u3g_rng* r) {
     int b = u3g_new_buf(r, n, 1);
     u3_call* c = u3g_begin(U3G_WRITE, 3, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, fd); u3g_set(c, 1, U3_BUF, b); u3g_set(c, 2, U3_IMM, n);
+    /* Every skeleton fd is opened O_RDONLY (u3g_emit_open), so the contract says
+     * this write MUST be refused with -EBADF. A kernel that lets it through — the
+     * T-V01 defect — fails this expectation instead of passing silently. */
+    c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
 }
 static void u3g_emit_read(u3g_rng* r) {
     int fd = u3g_live_fd[u3g_below(r, u3g_nfd)];
@@ -203,6 +213,7 @@ static void u3g_emit_read(u3g_rng* r) {
     int b = u3g_new_buf(r, n, 0);
     u3_call* c = u3g_begin(U3G_READ, 3, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, fd); u3g_set(c, 1, U3_BUF, b); u3g_set(c, 2, U3_IMM, n);
+    c->expect_mode = U3_NONNEG;           /* readable fd: bytes read, 0 at EOF */
 }
 static void u3g_emit_close(int fd) {
     for (int i = 0; i < u3g_nfd; i++)                 /* drop from the live pool */
@@ -212,11 +223,13 @@ static void u3g_emit_close(int fd) {
         }
     u3_call* c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, fd);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;     /* a live fd closes cleanly */
 }
 static void u3g_emit_mprotect(u3g_rng* r) {
     int a = u3g_live_addr[u3g_below(r, u3g_naddr)];
     u3_call* c = u3g_begin(U3G_MPROTECT, 3, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, a); u3g_set(c, 1, U3_IMM, 4096); u3g_set(c, 2, U3_IMM, 0x1);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;     /* a live mapping */
 }
 static void u3g_emit_munmap(int a) {
     for (int i = 0; i < u3g_naddr; i++)
@@ -226,6 +239,7 @@ static void u3g_emit_munmap(int a) {
         }
     u3_call* c = u3g_begin(U3G_MUNMAP, 2, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, a); u3g_set(c, 1, U3_IMM, 4096);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;     /* a live mapping */
 }
 
 /* arch_prctl with a mut-chosen selector (U4.1): SET_FS (code 0x1002, base by
@@ -240,12 +254,15 @@ static void u3g_emit_arch_prctl(int selchoice, int buf) {
     if (selchoice == 0) {                       /* SET_FS: canonical base by value */
         u3g_set(c, 0, U3_IMM, U3G_ARCH_SET_FS);
         u3g_set(c, 1, U3_IMM, U3G_FS_SAFE);
+        c->expect_mode = U3_EXACT; c->expect_val = 0;
     } else if (selchoice == 1) {                /* GET_FS: write base to out buffer */
         u3g_set(c, 0, U3_IMM, U3G_ARCH_GET_FS);
         u3g_set(c, 1, U3_BUF, buf);
+        c->expect_mode = U3_EXACT; c->expect_val = 0;
     } else {                                    /* invalid code -> default arm      */
         u3g_set(c, 0, U3_IMM, 0x6666);
         u3g_set(c, 1, U3_BUF, buf);             /* argp unused by the default arm   */
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EINVAL;
     }
 }
 
@@ -349,29 +366,41 @@ static const u3_program* u3g_build_ext2(unsigned long base_seed, unsigned long m
     u3_call* c = u3g_begin(U3G_OPEN, 2, U3_BIND_FD, h);
     u3g_set(c, 0, U3_PATH, U3G_EXT2_PATH);
     u3g_set(c, 1, U3_IMM, U3G_O_RW_CREAT_TRUNC);
+    c->expect_mode = U3_NONNEG;
     u3g_live_fd[u3g_nfd++] = h;
 
+    /* Reference model of the file: after O_TRUNC it is empty, and its size is the
+     * furthest byte any write reached. That is enough to state the exact result
+     * of every call below. */
+    unsigned long fsize = 0;
     int nwrites = 2 + (int)u3g_below(&r, 5);        /* 2..6 positioned writes */
     for (int w = 0; w < nwrites; w++) {
         unsigned long off = u3g_ext2_offset(&m, tiers);
         c = u3g_begin(U3G_LSEEK, 3, U3_BIND_NONE, 0);
         u3g_set(c, 0, U3_RES, h); u3g_set(c, 1, U3_IMM, (long)off); u3g_set(c, 2, U3_IMM, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = (long)off;   /* the new offset */
         int n = 1 + (int)u3g_below(&r, 32);
         int b = u3g_new_buf(&r, n, 1);
         c = u3g_begin(U3G_WRITE, 3, U3_BIND_NONE, 0);
         u3g_set(c, 0, U3_RES, h); u3g_set(c, 1, U3_BUF, b); u3g_set(c, 2, U3_IMM, n);
+        c->expect_mode = U3_EXACT; c->expect_val = n;           /* all n bytes written */
+        if (off + (unsigned long)n > fsize) fsize = off + (unsigned long)n;
     }
     /* read a block back from offset 0 (exercises the read block-map walk and feeds
      * the out-buffer digest oracle). */
     c = u3g_begin(U3G_LSEEK, 3, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, h); u3g_set(c, 1, U3_IMM, 0); u3g_set(c, 2, U3_IMM, 0);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;
     int rb = u3g_new_buf(&r, 32, 0);
     c = u3g_begin(U3G_READ, 3, U3_BIND_NONE, 0);
     u3g_set(c, 0, U3_RES, h); u3g_set(c, 1, U3_BUF, rb); u3g_set(c, 2, U3_IMM, 32);
+    c->expect_mode = U3_EXACT;                       /* 32 bytes, or the whole file */
+    c->expect_val  = (fsize < 32) ? (long)fsize : 32;
 
     u3g_emit_close(h);                               /* close the fd (balance) */
     c = u3g_begin(U3G_UNLINK, 1, U3_BIND_NONE, 0);   /* remove the file (free tiers) */
     u3g_set(c, 0, U3_PATH, U3G_EXT2_PATH);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;
 
     u3g_prog.name = "gen_ext2"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
     u3g_prog.nhandles = u3g_nhandles;
