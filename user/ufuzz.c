@@ -227,17 +227,51 @@ static unsigned long u3_digest(const u3_program* pg) {
     return h;
 }
 
+/* Report a worker self-check failure. `diag` is the internal diagnostic:
+ * 0x1NN expectation at call NN, 0x2NN data-check, 0x3NN replay divergence at
+ * call NN, 0x400 out-buffer digest, 0x50N capacity. It must NOT be passed to
+ * exit(): the kernel keeps only the low 8 bits of an exit code (and the
+ * controller reads a status >= 128 as "killed by a signal"), so 0x100, 0x400 and
+ * 0x500 all became exit code 0 — a failed self-check reported as OK. Print the
+ * full diagnostic and exit with a nonzero class code in 1..127 instead. */
+enum { U3X_EXPECT = 101, U3X_DATA = 102, U3X_REPLAY = 103, U3X_DIGEST = 104,
+       U3X_CAPACITY = 105, U3X_UNKNOWN = 106 };
+static void u3_fail(int diag) {
+    int cls;
+    const char* what;
+    switch (diag >> 8) {
+    case 1:  cls = U3X_EXPECT;   what = "expectation";  break;
+    case 2:  cls = U3X_DATA;     what = "data-check";   break;
+    case 3:  cls = U3X_REPLAY;   what = "replay";       break;
+    case 4:  cls = U3X_DIGEST;   what = "digest";       break;
+    case 5:  cls = U3X_CAPACITY; what = "capacity";     break;
+    default: cls = U3X_UNKNOWN;  what = "unknown";      break;
+    }
+    puts_("  u3 self-check FAIL: "); puts_(what);
+    puts_(" detail="); putu_((unsigned long)(diag & 0xff)); puts_("\n");
+    uexit(cls);
+}
+
 static void u3_worker_pg(const u3_program* pg) {
     long t1[U3_MAX_CALLS], t2[U3_MAX_CALLS];
+    /* Replay isolation: pass 2 must start from the process state pass 1 started
+     * from. A program may change this thread's FS base (arch_prctl SET_FS); left
+     * alone, a GET_FS issued before that SET_FS reads the original base on pass 1
+     * and pass 1's leftover on pass 2. Save the base now, restore it between the
+     * passes. (fds and mappings are released by the program itself; mmap
+     * addresses are normalized in the trace.) */
+    unsigned long fs0 = 0;
+    usyscall(SYS_ARCH_PRCTL, U3G_ARCH_GET_FS, (long)&fs0, 0);
     int rc = u3_run(pg, t1);
-    if (rc) uexit(rc);
+    if (rc) u3_fail(rc);
     unsigned long d1 = u3_digest(pg);               /* out-buffers after run 1 */
     if (pg->replay) {
+        usyscall(SYS_ARCH_PRCTL, U3G_ARCH_SET_FS, (long)fs0, 0);
         int rc2 = u3_run(pg, t2);
-        if (rc2) uexit(rc2);
+        if (rc2) u3_fail(rc2);
         for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++)
-            if (t1[i] != t2[i]) uexit(0x300 | i);   /* non-deterministic return */
-        if (u3_digest(pg) != d1) uexit(0x400);      /* non-deterministic out-buffers */
+            if (t1[i] != t2[i]) u3_fail(0x300 | i); /* non-deterministic return */
+        if (u3_digest(pg) != d1) u3_fail(0x400);    /* non-deterministic out-buffers */
     }
     uexit(0);
 }
@@ -420,7 +454,67 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
     return run_one(WK_U3GEN, 0).outcome;
 }
 
+/* Oracle canaries: `/bin/ufuzz selfcheck <kind>` runs a tiny program BUILT TO FAIL
+ * one specific worker self-check, through the normal worker path. It must
+ * therefore never report OUT_OK — if it does, that self-check is blind.
+ *   0  return-value expectation violated at call index 0
+ *   1  return-value expectation violated at call index 1
+ *   2  out-buffer bytes differ between the two replay passes (getrandom)
+ *   3  program larger than the executor's call capacity
+ * Kind 4 is the opposite, a POSITIVE control that must report OUT_OK: it reads
+ * the FS base (GET_FS) and then changes it (SET_FS). Replay runs the program
+ * twice in one process, so unless the executor restores the FS base between the
+ * passes, pass 2 reads the value pass 1 left behind and the digest diverges. */
+static int run_selfcheck(int kind) {
+    u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
+    u3g_overflow = 0;
+    u3g_rng r = { 1 };
+    u3_call* c;
+    long nr0 = SYS_GETPID;
+    if (kind == 0) {
+        c = u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = -1;          /* getpid never returns -1 */
+    } else if (kind == 1) {
+        (void)u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
+        c = u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = -1;
+    } else if (kind == 2) {
+        int b = u3g_new_buf(&r, 16, 0);
+        c = u3g_begin(U3G_GETPID, 3, U3_BIND_NONE, 0);          /* sysno set below */
+        u3g_set(c, 0, U3_BUF, b); u3g_set(c, 1, U3_IMM, 16); u3g_set(c, 2, U3_IMM, 0);
+        nr0 = SYS_GETRANDOM;
+    } else if (kind == 4) {
+        int b = u3g_new_buf(&r, 8, 0);
+        u3g_emit_arch_prctl(1, b);                              /* GET_FS -> buf */
+        u3g_emit_arch_prctl(0, b);                              /* SET_FS        */
+    } else {
+        (void)u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
+    }
+    for (int i = 0; i < u3g_ncalls; i++)                        /* index -> real SYS_ */
+        u3g_calls[i].sysno = U3G_NR[u3g_calls[i].sysno];
+    if (kind == 2) u3g_calls[0].sysno = nr0;
+
+    u3g_prog.name = "selfcheck"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    u3g_prog.nhandles = 0;
+    u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
+    u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
+    u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
+    u3g_prog.calls = u3g_calls;
+    u3g_prog.ncalls = (kind == 3) ? (U3_MAX_CALLS + 1) : u3g_ncalls;
+    u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
+    g_gen_prog = &u3g_prog;
+    return run_one(WK_U3GEN, 0).outcome;
+}
+
+static int streq_(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
 int umain(int argc, char** argv) {
+    if (argc >= 3 && streq_(argv[1], "selfcheck"))
+        return run_selfcheck((int)parse_ul(argv[2]));    /* `/bin/ufuzz selfcheck <kind>` */
     if (argc >= 2 && streq_u3(argv[1]))
         return run_u3_campaign();                        /* `/bin/ufuzz u3` */
     if (argc >= 2 && streq_cov(argv[1]))                 /* `cov <mode> <base> <mut>` */

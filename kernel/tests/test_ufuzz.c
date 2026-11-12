@@ -313,6 +313,8 @@ static void u4_campaign(int mode, int guided, unsigned meta_seed, int K,
         if (st == 0) ok++;                       /* ran, replayed, digest-matched */
         else if (st == U4_OUT_FAULT) crashes++;
         else if (st == U4_OUT_TIMEOUT) timeouts++;
+        if (st != 0)                             /* attribute every non-clean run */
+            kprintf("u4: NOT-CLEAN mode=%d base=%u mut=%u status=%d\n", mode, base, mut, st);
         /* Keep the SKELETON that found new coverage, so guided can walk its
          * selector neighbourhood (do_arch_prctl switch arms) on later draws. */
         if (guided && nov > 0 && corpus_n < U4_CORPUS_MAX) corpus_base[corpus_n++] = base;
@@ -440,4 +442,37 @@ KTEST(ufuzz, u4_ext2_guided_vs_random_paired) {
     KEXPECT(gsum > 0);              /* both explore real coverage                 */
     KEXPECT(rsum > 0);
     KEXPECT(gcorp > 0);             /* guided forms a corpus                      */
+}
+
+/* ---- Oracle canaries: a failed worker self-check must never read as OK ------
+ * `/bin/ufuzz selfcheck <kind>` runs a program built to FAIL one specific
+ * self-check (see ufuzz.c run_selfcheck). The controller must classify every one
+ * as OUT_OTHER. If any comes back OUT_OK (0), that self-check is blind and every
+ * "clean" result that depends on it is unproven. */
+#define U4_OUT_OTHER 4
+
+static int u4_run_selfcheck(unsigned kind) {
+    char ks[16]; u4_utoa(kind, ks);
+    char* argv[] = { "/bin/ufuzz", "selfcheck", ks, 0 };
+    int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
+    if (pid <= 0) return -1;
+    int st = -1; sys_waitpid(pid, &st);
+    return st;
+}
+
+KTEST(ufuzz, selfcheck_failures_are_never_ok) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    KEXPECT_EQ(u4_run_selfcheck(0), U4_OUT_OTHER);   /* expectation violated at call 0  */
+    KEXPECT_EQ(u4_run_selfcheck(1), U4_OUT_OTHER);   /* expectation violated at call 1  */
+    KEXPECT_EQ(u4_run_selfcheck(2), U4_OUT_OTHER);   /* out-buffers differ across replay */
+    KEXPECT_EQ(u4_run_selfcheck(3), U4_OUT_OTHER);   /* program over the call capacity   */
+}
+
+/* Replay isolation: a program that reads the FS base and then changes it must
+ * still replay identically — the executor restores the FS base between the two
+ * passes. Hand-built (selfcheck kind 4), so it does not depend on which seeds
+ * the generator happens to map to that shape. */
+KTEST(ufuzz, replay_restores_fs_base) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    KEXPECT_EQ(u4_run_selfcheck(4), 0);
 }
