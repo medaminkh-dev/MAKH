@@ -118,4 +118,70 @@ Results: §7.
 
 ## 7. Results
 
-RESULTS_PENDING
+Ten campaigns ran exactly as pre-registered (§6) on build `88c11dc`: 21
+boots and 1008 program executions each.
+
+| Meta-seed | Guided | Random | Diff |
+|---|---|---|---|
+| 1 | 778 | 783 | −5 |
+| 2 | 774 | 768 | +6 |
+| 3 | 775 | 769 | +6 |
+| 4 | 770 | 769 | +1 |
+| 5 | 771 | 769 | +2 |
+
+Guided has more edges in 4 of 5 pairs, but the mean difference (+2.0) is far
+below the largest within-arm spread (15). **Verdict under the pre-registered
+rule: no measurable difference.**
+
+What the numbers show:
+
+- **The reachable surface saturates early.** Generation 0 (24 programs)
+  already confirms 760–775 edges; 20 more generations add 3–18 (guided) or 0–8
+  (random). The syscall surface these generators reach is small, which is what
+  U4.2 observed for ext2.
+- **Boot-to-boot noise is larger than the effect.** Pair 1 ran the *same*
+  generation-0 programs in both arms and confirmed 760 vs 775 edges in two
+  boots; the 2-run filter dropped 32–581 edges per campaign as single-run
+  noise. A difference of a few edges cannot be told apart from that.
+- **Exploratory, not pre-registered, so not a claim:** edges gained after
+  generation 0 were higher for guided in every pair (+18/+6/+6/+5/+3 vs
+  +8/0/0/+4/+1). A future protocol could pre-register that metric, with more
+  seeds and a noise model.
+- Valid-program ratio of the guided arms: 0.69–0.77 (mean per generation);
+  random arms are 1.0 by construction.
+
+### Findings
+
+The guided arms filed 26 programs in their crash corpora (random: none). Each
+was re-annotated by the deriver after the campaign:
+
+- **22 were model errors in the U5.3 deriver**, now fixed. The executor binds an
+  fd handle to whatever non-negative value the call returns; the deriver bound
+  handles only in fd-creating handlers. Mutations reached two shapes the
+  generator never emits: a self-`dup2` with a bind, and a value mutation that
+  turned `fcntl(F_DUPFD)` into `F_GETFD` while keeping the bind. Two positive
+  cases in `fuzz/u5/derive.py` pin the rule (both disagreed before the fix).
+  This is the U5.3 cross-check working in the other direction: the real kernel
+  corrected the independent model.
+- **4 (one signature, three campaigns) are a kernel / contract discrepancy —
+  UF-F001.** A zero-length `read`/`write` returns 0 without validating the fd:
+  `write(O_RDONLY fd, buf, 0)`, `write(-1, buf, 0)`, `read(-1, buf, 0)` and a
+  write to a never-opened fd all return 0 where the contract (and Linux) says
+  `-EBADF`; `write(-1, buf, 1)` correctly fails. Cause: `if (count == 0) return
+  0;` before the fd check in `do_write` / `do_read`
+  (`kernel/syscall/syscall.c`). POSIX permits not detecting errors for a
+  zero-length transfer on a regular file, so this is a contract divergence, not
+  a vulnerability. Reproducer: `fuzz/u8/findings/UF-F001_zero_length_ebadf.ir`
+  (`make test-suite SUITE=ufuzzmin BATCH=1 EXT2=...`); 4 of 5 programs violate,
+  the control passes. Fix: **pending a contract decision** (validate the fd
+  before the zero-length return, or document the exception).
+
+## 8. Limits
+
+- One CPU, QEMU-TCG; coverage is kernel `trace-pc` only (user and comparison
+  feedback are `NOT_IMPLEMENTED`).
+- Mutation value pools are restricted to what the deriver models; anything it
+  cannot predict is dropped, so whole behaviours (blocking I/O, signals) stay
+  out of reach of mutation.
+- The comparison is one budget on one machine; the verdict is about that
+  budget, not about guided mutation in general.

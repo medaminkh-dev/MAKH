@@ -177,7 +177,10 @@ class Model:
         """Resolve an fd operand to ("o", k) / ("a", n) / ("bad",) / ("abs", n)."""
         kind = op[0]
         if kind == u3.RES:
-            return self.hval.get(op[1], ("bad",))
+            v = self.hval.get(op[1], ("bad",))
+            if v[0] == "unknown":
+                raise Unknown("handle bound to a value the model does not know")
+            return v
         if kind == u3.SLOT:
             enc = op[1]
             k = enc & u3.SLOT_ORD_MASK
@@ -221,12 +224,14 @@ class Model:
             d.pipe.writers -= 1
 
     def bind(self, c, idents):
+        self._bound = True
         if c.bind is None:
             return
         for h, i in zip(c.bind[1], idents):
             self.hval[h] = i
 
     def fail_bind(self, c):
+        self._bound = True
         if c.bind is not None:
             for h in c.bind[1]:
                 self.hval[h] = ("bad",)
@@ -250,7 +255,28 @@ class Model:
         fn = getattr(self, "sys_" + c.sys, None)
         if fn is None:
             raise Unknown("no model for %s" % c.sys)
-        return fn(c, ctypes)
+        self._bound = False
+        pred = fn(c, ctypes)
+        if c.bind is not None and c.bind[0] == "fd" and len(c.bind[1]) == 1 and not self._bound:
+            self._bind_result(c, pred)
+        return pred
+
+    def _bind_result(self, c, pred):
+        """The executor's rule for an fd bind: the handle takes the call's return
+        value when it is non-negative, else it is invalid — whatever the call is.
+        A handler that creates an fd binds it itself; this covers every other
+        call that carries a bind (e.g. a self-dup2, or a mutated fcntl whose
+        command no longer creates an fd)."""
+        h = c.bind[1][0]
+        if pred[0] == "slot":
+            self.hval[h] = ("o", pred[1])
+        elif pred[0] == "exact" and pred[1] < 0:
+            self.hval[h] = ("bad",)
+        elif pred[0] == "exact":
+            v = pred[1]
+            self.hval[h] = ("a", v) if v <= 2 else ("abs", v)
+        else:
+            self.hval[h] = ("unknown",)
 
     def _imm(self, op, ctype):
         if op[0] != u3.IMM:
@@ -678,6 +704,37 @@ NEGATIVES = [
 ]
 
 
+# ---- positive cases: correct annotations the model must AGREE with -----------
+# The executor binds an fd handle to whatever non-negative value the call
+# returns, whatever the call is. U8's mutations reached two shapes the C
+# generator never emits, and the real kernel's results there are the truth:
+POSITIVES = [
+    ("self-dup2 binds its handle",
+     "abi 1\nprng lcg 0\nhandles fd fd\npath 0 /bin/hello\nneed 4 min\n"
+     "call open path:0 imm:0 -> fd:0 =slot:0\n"
+     "call dup2 res:0 slot:0 -> fd:1 =slot:0\n"
+     "call close res:1 =exact:0\n"
+     "call close res:0 =exact:-%d\n" % ERRNO["EBADF"]),
+    ("a non-creating fcntl with a bind takes its return value",
+     "abi 1\nprng lcg 0\nhandles fd fd\npath 0 /bin/hello\nneed 4 min\n"
+     "call open path:0 imm:0 -> fd:0 =slot:0\n"
+     "call fcntl res:0 imm:%d imm:0 -> fd:1 =exact:0\n"
+     "call close res:1 =exact:0\n"
+     "call close res:0 =exact:0\n" % K["F_GETFD"]),
+]
+
+
+def check_positives(abi):
+    for name, ir in POSITIVES:
+        rep = Report()
+        derive_program(u3.deserialize(ir), abi, "pos", 0, rep)
+        if rep.contra or rep.verdicts["UNPREDICTABLE"]:
+            fail("positive case %r: the model disagrees with the executor's binding rule "
+                 "(%d contradiction(s), %d unpredictable)"
+                 % (name, len(rep.contra), rep.verdicts["UNPREDICTABLE"]))
+    return len(POSITIVES)
+
+
 def check_negatives(abi):
     for name, ir in NEGATIVES:
         rep = Report()
@@ -713,6 +770,7 @@ def main(n):
             problems.append("mode %d (%s): predicted errno not documented: %r"
                             % (mode, label, r.errno_drift[0]))
     nneg = check_negatives(abi)
+    npos = check_positives(abi)
 
     for mode, label, _, _, control in MODES:
         r = reps[mode]
@@ -735,8 +793,8 @@ def main(n):
         fail("; ".join(problems))
     total = sum(r.programs for r in reps.values())
     print("U5 DERIVE-CHECK: PASS — %d programs (%d modes) re-derived independently; "
-          "no contradiction outside the negative control; %d negative cases detected."
-          % (total, len(MODES), nneg))
+          "no contradiction outside the negative control; %d negative cases detected, "
+          "%d positive cases agree." % (total, len(MODES), nneg, npos))
 
 
 # ---- mutation selftest: the check must depend on BOTH sides -----------------
