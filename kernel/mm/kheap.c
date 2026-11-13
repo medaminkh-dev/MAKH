@@ -572,8 +572,22 @@ size_t kheap_get_total(void) {
  * touched with interrupts disabled. kcalloc/krealloc/kmalloc_aligned build on
  * these and only touch caller-owned memory outside the lock.
  */
+/* Test-only fault injection (U5.2), the kheap twin of pmm_test_fail_after: when
+ * armed with kheap_test_fail_after(n), the next n kmalloc/kcalloc calls succeed
+ * and the one after that returns NULL (once), then it disarms. It counts EVERY
+ * caller, so a KTEST must arm it with interrupts disabled around a call that
+ * does not sleep, making the count deterministic. Disabled (-1) in all normal
+ * operation; nothing calls the setter outside KTESTs and there is no Ring-3
+ * interface to it. */
+static int64_t kheap_fail_in = -1;
+void kheap_test_fail_after(int64_t n) { kheap_fail_in = n; }
+
 void* kmalloc(size_t size) {
     irqflags_t f = local_irq_save();
+    if (kheap_fail_in >= 0) {
+        if (kheap_fail_in == 0) { kheap_fail_in = -1; local_irq_restore(f); return NULL; }
+        kheap_fail_in--;
+    }
     void* p = kmalloc_locked(size);
     local_irq_restore(f);
     return p;

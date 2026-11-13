@@ -11,6 +11,7 @@
 #include <lib/string.h>
 #include <mm/kheap.h>
 #include <errno.h>
+#include <irq.h>
 
 KTEST(vfs, create_write_read_close) {
     int fd = vfs_open("/scratch.txt", O_CREAT | O_RDWR);
@@ -376,4 +377,41 @@ KTEST(vfs, console_fds_are_always_open) {
     KEXPECT_EQ(vfs_close(0), 0);
     KEXPECT(vfs_file(0) == NULL);
     vfs_close(p[0]); vfs_close(p[1]);
+}
+
+/* ---- U5.2: vfs_pipe allocation-failure rollback ----------------------------
+ * vfs_pipe makes four allocations (vnode, pipe, read file, write file). Fail
+ * each one in turn with the kheap injector: the call must return -ENOMEM and
+ * leave the fd table and the heap exactly as found (every partial allocation
+ * freed, no fd published). Interrupts are off around the call so the injector
+ * counts only vfs_pipe's own allocations (it does not sleep). n = 4 fails none
+ * of them: the pipe must then succeed — proof the four failures above covered
+ * every allocation, not a prefix. */
+static unsigned vfs_fd_bitmap(void) {
+    unsigned m = 0;
+    for (int i = 0; i < VFS_MAX_FDS; i++) if (vfs_file(i)) m |= 1u << i;
+    return m;
+}
+KTEST(vfs, pipe_alloc_failure_rolls_back) {
+    (void)vfs_file(0);                          /* fd table allocated before arming */
+    for (int n = 0; n <= 4; n++) {
+        unsigned fds0 = vfs_fd_bitmap();
+        size_t hp0 = kheap_get_used();
+        int p[2] = { -1, -1 };
+        irqflags_t f = local_irq_save();
+        kheap_test_fail_after(n);
+        int rc = vfs_pipe(p);
+        kheap_test_fail_after(-1);
+        local_irq_restore(f);
+        if (n < 4) {
+            KEXPECT_EQ(rc, -ENOMEM);
+            KEXPECT_EQ(vfs_fd_bitmap(), fds0);  /* no fd published */
+            KEXPECT_EQ(kheap_get_used(), hp0);  /* every partial allocation freed */
+        } else {
+            KEXPECT_EQ(rc, 0);
+            if (rc == 0) { vfs_close(p[0]); vfs_close(p[1]); }
+            KEXPECT_EQ(vfs_fd_bitmap(), fds0);
+            KEXPECT_EQ(kheap_get_used(), hp0);
+        }
+    }
 }
