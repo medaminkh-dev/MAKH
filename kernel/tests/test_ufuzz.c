@@ -849,3 +849,14 @@ KTEST(ufuzzcamp, run) {
     kfuzz_cov_enable(prev);
     kprintf("UFZ1 camp end count=%lu runs=%lu\n", count, runs);
 }
+
+/* ---- UF-F001 regression (found by U8 mutation) --------------------------------
+ * A zero-length read/write must validate its fd like any other: -EBADF for an
+ * invalid fd, a never-opened fd, a write to an O_RDONLY description, and a read
+ * from fd -1. Program 4 of the batch (write(-1, buf, 1)) is the control that
+ * always held. The reproducer is the committed batch, baked into the initrd. */
+KTEST(ufuzz, uf_f001_zero_length_validates_fd) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    for (unsigned k = 0; k < 5; k++)
+        KEXPECT_EQ(u7_run_ir("/share/uf-f001.ir", k, 0, 0, 0), 0);
+}

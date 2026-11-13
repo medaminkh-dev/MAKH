@@ -117,6 +117,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **resources:** —
 - **side effects:** advances the open-file offset
 - **concurrency:** may block on a pipe/tty until data or EOF
+- **notes:** count 0 transfers nothing but still validates fd: -EBADF for an invalid fd or a description not open for reading (UF-F001)
 
 ### `write` — SYS_WRITE (nr 1, implemented)
 
@@ -129,6 +130,7 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
 - **errno:** `EBADF`, `EFAULT`, `EPIPE`
 - **resources:** —
 - **side effects:** advances the open-file offset; may raise SIGPIPE on a broken pipe
+- **notes:** count 0 transfers nothing but still validates fd: -EBADF for an invalid fd or a description not open for writing (UF-F001)
 
 ### `open` — SYS_OPEN (nr 2, implemented)
 

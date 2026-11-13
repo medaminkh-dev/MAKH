@@ -7,7 +7,7 @@
 and assembly, built brick by brick — a phase lands only when its tests are
 green. 1.3.0 finished KFUZZ, the fuzzer that runs *inside* the kernel. 1.4.0
 adds its counterpart: **UFUZZ**, which attacks the kernel the way a hostile
-program does — through the syscall interface, from ring 3. **239 in-kernel
+program does — through the syscall interface, from ring 3. **240 in-kernel
 tests passing**, a 12×4 stress run clean.
 
 ## The headline
@@ -57,14 +57,17 @@ and severity in **[SECURITY_ADVISORY_1.4.0](SECURITY_ADVISORY_1.4.0.md)**.
 - Two threads sharing an fd table could receive the same slot.
 - `F_DUPFD` floor handling, and fds 0–2 as always-open descriptors (`dup2` of a
   console fd, `fstat` of a redirected one).
+- **UF-F001** — a zero-length `read`/`write` now validates its fd.
 
-## The first natural finding
+## The first natural finding — found, reproduced, fixed
 
 **UF-F001** — found by U8's mutation engine in three independent campaigns, not
-planted: a zero-length `read`/`write` returns 0 without validating the fd
+planted: a zero-length `read`/`write` returned 0 without validating the fd
 (`write(-1, buf, 0)` == 0; the contract and Linux say `-EBADF`). No data or
-privilege impact; POSIX permits it for regular files. Reproducer committed; the
-fix waits for a contract decision.
+privilege impact. Fixed: a zero-length call now reports exactly the fd error a
+1-byte call would. The committed reproducer is a permanent regression test
+(`ufuzz.uf_f001_zero_length_validates_fd`: 4 programs failed before the fix, all
+pass after).
 
 The same campaigns also corrected the independent model itself: 22 of the 26
 programs the mutated arms flagged were U5.3 deriver errors (an fd bind takes
@@ -85,13 +88,15 @@ whatever the call returns), now fixed and pinned by tests.
 | 9 | Replay and dedup on a fixed regression set | ✅ U6 fixtures |
 | 10 | Corpus import/export preserves programs | ✅ byte-identical |
 | 11 | Race mode states single-CPU limits | ⚠️ U9 not built — no race mode exists, so none is claimed |
-| 12 | A natural finding, only if verified | ✅ UF-F001 |
+| 12 | A natural finding, only if verified | ✅ UF-F001 — found, reproduced, fixed |
 | 13 | Published campaign results with commit/configuration/budget | ✅ [U8 §6–7](UFUZZ_U8_CORPUS.md) |
 | 14 | Hardware-only checks marked | ✅ T-S01's `#GP` panic: `PENDING_HARDWARE` |
 | 15 | README, release notes, advisory reflect what shipped | ✅ |
 
-Items 6 and 11 are not met: user-space coverage and the single-CPU race mode
-(U9-A) are future bricks.
+**Items 6 and 11 are open, and 1.4.0 is tagged with them open, by decision:**
+user-space coverage domains and the single-CPU race mode (U9-A) are not built,
+so nothing about them is claimed. Race testing moves to the SMP 2.0.0 line,
+where it can be measured on more than one CPU instead of simulated on one.
 
 ## Claims register (spec §15)
 

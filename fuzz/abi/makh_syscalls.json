@@ -54,7 +54,8 @@
       "errno":["EBADF","EFAULT","EINVAL"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
       "side_effects":"advances the open-file offset",
-      "concurrency":"may block on a pipe/tty until data or EOF" },
+      "concurrency":"may block on a pipe/tty until data or EOF",
+      "notes":"count 0 transfers nothing but still validates fd: -EBADF for an invalid fd or a description not open for reading (UF-F001)" },
 
     { "name": "write", "sys": "SYS_WRITE", "nr": 1, "impl": "implemented", "handler": "do_write", "src": "kernel/syscall/syscall.c",
       "args": [
@@ -65,7 +66,8 @@
       "ret":{"ctype":"ssize_t","meaning":"bytes written; -errno on error"},
       "errno":["EBADF","EFAULT","EPIPE"],
       "resources":{"creates":[],"consumes":[],"releases":[]},
-      "side_effects":"advances the open-file offset; may raise SIGPIPE on a broken pipe" },
+      "side_effects":"advances the open-file offset; may raise SIGPIPE on a broken pipe",
+      "notes":"count 0 transfers nothing but still validates fd: -EBADF for an invalid fd or a description not open for writing (UF-F001)" },
 
     { "name": "open", "sys": "SYS_OPEN", "nr": 2, "impl": "implemented", "handler": "do_open", "src": "kernel/syscall/syscall.c",
       "args": [

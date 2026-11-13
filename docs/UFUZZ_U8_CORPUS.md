@@ -172,9 +172,11 @@ was re-annotated by the deriver after the campaign:
   (`kernel/syscall/syscall.c`). POSIX permits not detecting errors for a
   zero-length transfer on a regular file, so this is a contract divergence, not
   a vulnerability. Reproducer: `fuzz/u8/findings/UF-F001_zero_length_ebadf.ir`
-  (`make test-suite SUITE=ufuzzmin BATCH=1 EXT2=...`); 4 of 5 programs violate,
-  the control passes. Fix: **pending a contract decision** (validate the fd
-  before the zero-length return, or document the exception).
+  (`make test-suite SUITE=ufuzzmin BATCH=1 EXT2=...`); 4 of 5 programs violated,
+  the control passed. **Fixed in 1.4.0:** a zero-length call reports the fd
+  error a 1-byte call would; the reproducer is the regression test
+  `ufuzz.uf_f001_zero_length_validates_fd` (fail-first: 4 failures before the
+  fix, 5/5 after).
 
 ## 8. Limits
 

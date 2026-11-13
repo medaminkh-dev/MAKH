@@ -11,7 +11,7 @@
 [![Commercial license](https://img.shields.io/badge/commercial-available-success.svg)](LICENSING.md)
 ![Arch](https://img.shields.io/badge/arch-x86--64-informational)
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
-![Tests](https://img.shields.io/badge/in--kernel%20tests-239%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/in--kernel%20tests-240%20passing-brightgreen)
 
 [Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 

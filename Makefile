@@ -309,7 +309,7 @@ ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 build/u7sample.ir: build/u4gen tools/u7_batch.py
 	@python3 tools/u7_batch.py sample $@
 
-$(INITRD): build/u7sample.ir Makefile $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
+$(INITRD): build/u7sample.ir fuzz/u8/findings/UF-F001_zero_length_ebadf.ir Makefile $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
 	@echo "Building initrd.tar (+ user programs + tcc sysroot + make + selfhost)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
@@ -342,6 +342,7 @@ $(INITRD): build/u7sample.ir Makefile $(shell find initrd user/sysroot user/make
 	@cp user/selfhost/Makefile build/initrd/share/selfhost/Makefile
 	@cp user/musl/hello.c build/initrd/share/selfhost/muslhello.c   # the shipped source, verbatim
 	@cp build/u7sample.ir build/initrd/share/u7sample.ir      # U7: run-ir equivalence sample
+	@cp fuzz/u8/findings/UF-F001_zero_length_ebadf.ir build/initrd/share/uf-f001.ir   # regression
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.

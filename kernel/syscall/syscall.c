@@ -74,7 +74,15 @@ void syscall_init(void) {
 /* -------------------------------------------------------------------------- */
 
 static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (count == 0) return 0;
+    /* A zero-length write transfers nothing but still validates the fd: it
+     * reports exactly the error a 1-byte write would (UF-F001; Linux checks the
+     * fd first too). Backed: the description must be writable. Unbacked: only
+     * stdout/stderr are the console. */
+    if (count == 0) {
+        file_t* zf = vfs_file((int)fd);
+        if (zf) return ((zf->flags & O_ACCMODE) == O_RDONLY) ? -EBADF : 0;
+        return (fd == 1 || fd == 2) ? 0 : -EBADF;
+    }
     /* An open description (a file, or a pipe dup2'd onto 0/1/2) takes priority;
      * otherwise 1/2 fall back to the console. This keeps the default stdout path
      * unchanged while letting a pipeline redirect it (Phase 20-K). */
@@ -109,7 +117,13 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
 }
 
 static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (count == 0) return 0;
+    /* As do_write: a zero-length read validates the fd (UF-F001). Backed: the
+     * description must be readable. Unbacked: fds 0-2 are the console/EOF. */
+    if (count == 0) {
+        file_t* zf = vfs_file((int)fd);
+        if (zf) return ((zf->flags & O_ACCMODE) == O_WRONLY) ? -EBADF : 0;
+        return (fd <= 2) ? 0 : -EBADF;
+    }
     file_t* f = vfs_file((int)fd);
     if (!f) {                                      /* fall back: tty / EOF / EBADF */
         if (fd == 0) {

@@ -78,24 +78,29 @@ filled slot is described by its own file.
 **Regression:** `vfs.fcntl_dupfd_floor_contract`,
 `vfs.console_fds_are_always_open`, and every UFUZZ mode-5 program.
 
-## Confirmed, fix pending a contract decision
-
-### UF-F001 — zero-length `read`/`write` does not validate the fd
+### UF-F001 — zero-length `read`/`write` did not validate the fd
 **Where:** `do_read` / `do_write` (`kernel/syscall/syscall.c`).
 **Found by:** UFUZZ U8 structure-aware mutation (a length mutated to 0), in
-three independent campaigns.
-**Behaviour:** `if (count == 0) return 0;` runs before the fd is checked, so
-`write(-1, buf, 0)`, `read(-1, buf, 0)`, a zero-length write to a never-opened
-fd and a zero-length write to an `O_RDONLY` fd all return 0; the documented
-contract (and Linux) return `-EBADF`. A non-zero length is validated correctly.
-**Impact:** none on data or privilege — nothing is read or written. POSIX allows
-a zero-length transfer on a regular file not to detect errors, so this is a
-contract divergence, not a vulnerability.
-**Reproducer:** `fuzz/u8/findings/UF-F001_zero_length_ebadf.ir`.
+three independent campaigns — the first finding UFUZZ produced without a planted
+bug.
+**Impact:** `if (count == 0) return 0;` ran before the fd was checked, so
+`write(-1, buf, 0)`, `read(-1, buf, 0)`, a zero-length write to a never-opened fd
+and a zero-length write to an `O_RDONLY` fd all returned 0; the documented
+contract (and Linux) return `-EBADF`. Nothing was read or written, so there is no
+data or privilege impact; it was a contract divergence (POSIX lets a zero-length
+transfer on a regular file skip error detection).
+**Fix:** a zero-length call reports exactly the fd error a 1-byte call would —
+an invalid fd, or a description not open in that direction, is `-EBADF` — and
+otherwise returns 0 without touching anything. The ABI inventory documents it.
+**Regression:** `ufuzz.uf_f001_zero_length_validates_fd` runs the committed
+reproducer (`fuzz/u8/findings/UF-F001_zero_length_ebadf.ir`) through the ring-3
+executor: 4 programs failed before the fix, the control passed; all 5 pass after.
 
 ## Not fixed in 1.4.0 (open audit items, not confirmed vulnerabilities)
 
-Static-analysis candidates without a fail-first reproducer yet: FPU/XMM state
+`readv`/`writev` with no non-empty segment skip the fd check the same way
+(read from the code, not yet reproduced: the IR executor does not generate
+vectored I/O). Static-analysis candidates without a fail-first reproducer yet: FPU/XMM state
 across threads (no `fxsave`/`xsave`), the direction flag on interrupt entry,
 `IA32_FMASK` and `TF`, the FS base across `execve`, and `unlink`'s errno for a
 missing parent. A one-time 2-page growth on the first `pipe(NULL)` of a boot
