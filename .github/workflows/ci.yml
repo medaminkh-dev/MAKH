@@ -43,6 +43,8 @@ jobs:
         run: python3 fuzz/u3/emit.py --check
       - name: UFUZZ U4 generator — every program structurally valid (Python authority)
         run: make u4-gen-check
+      - name: UFUZZ U5.3 — expected results re-derived independently (+ mutation selftest)
+        run: make u5-derive-check
 
   build-and-test:
     runs-on: ubuntu-latest

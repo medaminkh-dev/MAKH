@@ -360,7 +360,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -387,8 +387,15 @@ build/u4gen: fuzz/u4/u4gen.c user/ufuzz_u3_gen.h user/ufuzz_u3_programs.h
 u4-gen-check: build/u4gen
 	@python3 fuzz/u4/validate.py
 
+# UFUZZ U5.3 (host side): re-derive every generated call's expected result with
+# an independent Python model and compare it with the C generator's annotation;
+# plus a mutation selftest proving the comparison depends on both sides.
+u5-derive-check: build/u4gen
+	@python3 fuzz/u5/derive.py
+	@python3 fuzz/u5/derive.py --mutation-selftest
+
 # All host-side UFUZZ gates.
-fuzz-check: abi-check u3-check u4-gen-check
+fuzz-check: abi-check u3-check u4-gen-check u5-derive-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)

@@ -56,6 +56,9 @@ static void emit_ir(unsigned long seed, unsigned long mut, int mode) {
         printf("\n");
     }
     for (int i = 0; i < p->npaths; i++) printf("path %d %s\n", i, p->paths[i]);
+    /* U5.3: the baseline precondition, so an independent deriver knows how many
+     * slots the program may assume (absent = no assumption). */
+    if (p->need_free) printf("need %d %s\n", p->need_free, p->need_exact ? "exact" : "min");
     for (int i = 0; i < p->ncalls; i++) {
         const u3_call* c = &p->calls[i];
         char tmp[32];
@@ -64,6 +67,16 @@ static void emit_ir(unsigned long seed, unsigned long mut, int mode) {
         if (c->bind == U3_BIND_FD)   printf(" -> fd:%d", c->bind_h0);
         if (c->bind == U3_BIND_ADDR) printf(" -> addr:%d", c->bind_h0);
         if (c->bind == U3_BIND_PIPE) printf(" -> fd:%d,%d", c->bind_h0, c->bind_h1);
+        /* U5.3: the C generator's expectation, as an annotation the Python
+         * deriver compares against but never uses to make its own prediction. */
+        switch (c->expect_mode) {
+        case U3_NONNEG: printf(" =nonneg"); break;
+        case U3_NEG:    printf(" =neg"); break;
+        case U3_EXACT:  printf(" =exact:%ld", c->expect_val); break;
+        case U3_SLOT:   printf(" =slot:%ld", c->expect_val); break;
+        case U3_BASEFL: printf(" =basefl:%ld", c->expect_val); break;
+        default:        printf(" =any"); break;
+        }
         printf("\n");
     }
     printf("\n");

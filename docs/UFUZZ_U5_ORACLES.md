@@ -1,15 +1,15 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Copyright (C) 2026 Amine Khemissi -->
 
-# MAKH UFUZZ — U5 oracles: U5.0, U5.1, U5.2
+# MAKH UFUZZ — U5 oracles: U5.0 – U5.3
 
 **Scope:** the result oracles added on top of U0–U4 (spec §4, U5 — Oracle
 Framework). U5.0 and U5.1 judge *what a call returned*; U5.2 extends the
 generated surface to the descriptor syscalls and adds an fd-state oracle.
 **Depends on:** U0 (ABI inventory), U1 (worker isolation), U2 (net-zero
 accounting), U3 (typed IR + validator), U4 (shared generator, coverage modes).
-**Not covered here:** U5.3 (independent re-derivation of expected results in
-Python) — planned, not implemented.
+U5.3 (§9) re-derives every generated expectation with an independent Python
+model, so the generator and the oracle cannot share one mistake unnoticed.
 
 All results below are `PASS_QEMU`. Nothing here is a hardware claim.
 
@@ -221,11 +221,88 @@ Commands: `make fuzz-check`; `make test-suite SUITE=ufuzz`;
 
 ## 8. Known limits
 
-- The textual IR does not carry expectations; the Python validator checks
-  structure only. Re-deriving expected results independently (U5.3) is the next
-  step, so the generator and the oracle cannot share one mistake unnoticed.
+- U5.3 checks the generator's expectations against a second model on the
+  host; it does not run the kernel. A kernel that disagrees with both models is
+  caught by the guest executor, not by U5.3.
 - `ioctl` on a *filled* slot 0–2 (e.g. stdout redirected to a pipe) still
   reports a tty.
 - `lseek` on a console copy returns an offset (Linux: `-ESPIPE`).
 - `FD_CLOEXEC` is accepted but not tracked; `pipe2` flags are ignored.
 - The single-CPU model holds; no claim is made about SMP descriptor races.
+
+## 9. U5.3 — independent re-derivation of expected results
+
+The guest checks the kernel against the C generator's expectations. If the
+generator's model of a syscall is wrong, the oracle is wrong the same way and a
+kernel bug that matches the mistake passes. U5.3 closes that gap on the host.
+
+### 9.1 Mechanism
+
+- `build/u4gen` writes each call's expectation into the IR as an annotation
+  (`=exact:-9`, `=slot:3`, `=nonneg`, `=basefl:1`, `=any`) and the program's
+  precondition as `need N min|exact`. `fuzz/u3/u3.py` parses both and
+  round-trips them; the structural validator ignores them.
+- `fuzz/u5/derive.py` walks every program with its own model — fd table in
+  baseline ordinals, open-file descriptions (flags, reference counts), pipes
+  (buffered bytes, readers, writers), file existence and size, live mappings —
+  and predicts each call's outcome. Its inputs are the calls and operands, the
+  ABI inventory (argument C types decide integer narrowing; documented errnos)
+  and the contract in §4.5. Numeric constants (`O_*`, `F_*`, `SEEK_*`,
+  `ARCH_*`, `AF_*`/`SOCK_*`, errno values, `PIPE_CAP`, `VFS_MAX_FDS`) are read
+  from the kernel headers and sources, not from the generator. The annotation
+  is read only by the comparison.
+- A program with no `need` line declares no free slots. The deriver then
+  *assumes* an allocation succeeds but does not claim its slot (the prediction
+  is downgraded to `nonneg`); every such assumption is counted in the report.
+
+### 9.2 Verdicts
+
+| Verdict | Meaning | Effect |
+|---|---|---|
+| AGREE | the C expectation is exactly the prediction | — |
+| WEAKER | the C expectation accepts the prediction but also other outcomes (e.g. `nonneg` where the slot is known) | counted per syscall, reported |
+| UNPREDICTABLE | the model cannot predict the call, or the C expectation is stronger than the model can confirm | counted; **fails** in modes 5 and 6 |
+| CONTRADICTION | the C expectation rejects the prediction | **fails** |
+
+Every predicted `-errno` must also be in the inventory's documented set for the
+syscall. Mode 4 (the EMFILE negative control) must produce a contradiction.
+Three hand-written programs with a wrong annotation (slot off by one, `-EBADF`
+where 0 is due, `F_SETFL` keeping an access-mode bit) must be detected.
+
+WEAKER expectations are reported, not tightened: U5.3 measures how strong the
+existing oracle is; it does not change the expectations to agree with itself.
+
+### 9.3 Mutation selftest
+
+`derive.py --mutation-selftest` proves the comparison depends on both sides.
+It compiles three mutated copies of the generator (the guest sources are not
+modified) and perturbs three deriver rules, and requires each to produce
+contradictions over 256 mode-5 programs while the unmutated pair produces none:
+
+| Side | Mutation | Contradictions (256 programs) |
+|---|---|---|
+| generator | `F_SETFL` keeps access-mode bits | 6 |
+| generator | pipe read expects the full request | 31 |
+| generator | `dup2` onto a live fd expects the source slot | 279 |
+| deriver | `F_SETFL` mask includes access-mode bits | 6 |
+| deriver | pipe read returns the full request | 31 |
+| deriver | `F_DUPFD` floor 0..2 may return 0..2 | 500 |
+
+### 9.4 Result
+
+`make u5-derive-check` (part of `make fuzz-check` and the CI `abi-check` job),
+4099 programs:
+
+| Mode | Programs | Agree | Weaker | Unpredictable | Contradiction |
+|---|---|---|---|---|---|
+| 0 skeleton | 1024 | 10157 | 0 | 0 | 0 |
+| 1 ext2 | 1024 | 13308 | 0 | 0 | 0 |
+| 2 ext2-direct | 1024 | 13308 | 0 | 0 | 0 |
+| 3 emfile | 1 | 31 | 29 (`open`) | 0 | 0 |
+| 4 emfile-control | 1 | 28 | 28 (`open`) | 0 | 2 (expected) |
+| 5 fdops | 1024 | 25282 | 0 | 0 | 0 |
+| 6 pipe-rollback | 1 | 61 | 0 | 0 | 0 |
+
+Modes 0–2 rest on 1441 / 1024 / 1024 assumed allocations (`open`, no `need`).
+The only weaker expectations are the EMFILE programs' `open` calls (`nonneg`
+where the slot is determined).

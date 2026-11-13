@@ -48,21 +48,27 @@ IMM, RES, NIL, BUF, PATH, IOV = "imm", "res", "null", "buf", "path", "iov"
 #       non-canonical, unmapped). Allowed only for a pointer arg; the call is
 #       expected to be refused (-EFAULT), never to dereference it.
 SLOT, BAD = "slot", "bad"
+# U5.3 expectation annotation kinds (`=kind[:value]` at the end of a call line).
+EXPECT_KINDS = ("any", "nonneg", "neg", "exact", "slot", "basefl")
 SLOT_ORD_MASK = 0xffff
 
 
 class Call:
-    __slots__ = ("sys", "args", "bind", "tag")
+    __slots__ = ("sys", "args", "bind", "tag", "expect")
 
-    def __init__(self, sys, args, bind=None, tag=None):
+    def __init__(self, sys, args, bind=None, tag=None, expect=None):
         self.sys = sys              # syscall name (matches the ABI inventory)
         self.args = args            # list of operand tuples
         self.bind = bind            # None, or (rtype, [handle_id,...]) created by this call
         self.tag = tag              # None, "after_release", or "before_create"
+        # U5.3: the generator's expectation, ("any"|"nonneg"|"neg",) or
+        # ("exact"|"slot"|"basefl", int). Carried for COMPARISON only: the
+        # validator ignores it and fuzz/u5/derive.py never reads it to predict.
+        self.expect = expect
 
 
 class Program:
-    __slots__ = ("abi", "prng", "buffers", "paths", "calls", "handles", "iovs")
+    __slots__ = ("abi", "prng", "buffers", "paths", "calls", "handles", "iovs", "need")
 
     def __init__(self, abi=ABI_VERSION, prng=("lcg", 0)):
         self.abi = abi
@@ -72,6 +78,7 @@ class Program:
         self.calls = []             # list of Call
         self.handles = []           # list of rtype, index == handle id
         self.iovs = []              # list of [ (buf_id, len), ... ]  (index == iov id)
+        self.need = None            # U5.2: None, or (free_slots, exact: bool)
 
 
 # ---- ABI access -----------------------------------------------------------
@@ -147,6 +154,8 @@ def serialize(p):
         out.append("buf %d %d %s" % (bid, size, data.hex()))
     for pid, s in p.paths:
         out.append("path %d %s" % (pid, s))
+    if p.need is not None:
+        out.append("need %d %s" % (p.need[0], "exact" if p.need[1] else "min"))
     for iid, segs in enumerate(p.iovs):
         out.append("iov %d %s" % (iid, " ".join("%d:%d" % (b, l) for b, l in segs)))
     for c in p.calls:
@@ -157,6 +166,8 @@ def serialize(p):
             line += " -> %s:%s" % (c.bind[0], ",".join(str(h) for h in c.bind[1]))
         if c.tag:
             line += " #%s" % c.tag
+        if c.expect is not None:
+            line += " =" + ":".join(str(x) for x in c.expect)
         out.append(line)
     return "\n".join(out) + "\n"
 
@@ -181,13 +192,15 @@ def deserialize(text):
                               bytes.fromhex(parts[3]) if len(parts) > 3 else b""))
         elif head == "path":
             p.paths.append((int(parts[1]), parts[2]))
+        elif head == "need":
+            p.need = (int(parts[1]), parts[2] == "exact")
         elif head == "iov":
             # "iov <id> b:l b:l ..." — id is positional (append in order)
             segs = [tuple(int(x) for x in seg.split(":")) for seg in parts[2:]]
             p.iovs.append(segs)
         elif head == "call":
             sys = parts[1]
-            args, bind, tag = [], None, None
+            args, bind, tag, expect = [], None, None, None
             i = 2
             while i < len(parts):
                 t = parts[i]
@@ -200,9 +213,16 @@ def deserialize(text):
                     tag = t[1:]
                     i += 1
                     continue
+                if t.startswith("="):
+                    k, _, v = t[1:].partition(":")
+                    if k not in EXPECT_KINDS:
+                        raise ValueError("bad expectation %r" % t)
+                    expect = (k, int(v)) if v else (k,)
+                    i += 1
+                    continue
                 args.append(_op_parse(t))
                 i += 1
-            p.calls.append(Call(sys, args, bind, tag))
+            p.calls.append(Call(sys, args, bind, tag, expect))
         else:
             raise ValueError("bad IR line %r" % line)
     return p
