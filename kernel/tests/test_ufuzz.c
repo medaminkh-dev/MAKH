@@ -467,6 +467,12 @@ KTEST(ufuzz, selfcheck_failures_are_never_ok) {
     KEXPECT_EQ(u4_run_selfcheck(1), U4_OUT_OTHER);   /* expectation violated at call 1  */
     KEXPECT_EQ(u4_run_selfcheck(2), U4_OUT_OTHER);   /* out-buffers differ across replay */
     KEXPECT_EQ(u4_run_selfcheck(3), U4_OUT_OTHER);   /* program over the call capacity   */
+    KEXPECT_EQ(u4_run_selfcheck(5), U4_OUT_OTHER);   /* undocumented errno for the syscall */
+}
+
+KTEST(ufuzz, contract_oracle_accepts_documented_errno) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    KEXPECT_EQ(u4_run_selfcheck(6), 0);              /* close(-1)=-EBADF is documented */
 }
 
 /* Replay isolation: a program that reads the FS base and then changes it must

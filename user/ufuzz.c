@@ -39,6 +39,7 @@
  */
 #include "usys.h"
 #include "ufuzz_u3_programs.h"   /* U3: baked typed-program set (generated) */
+#include "ufuzz_abi_errno.h"      /* U5: documented-errno table (generated) */
 
 /* usys.h exposes no direct exit wrapper (start.S exits with umain's return),
  * but a forked worker must exit without unwinding back into the controller. */
@@ -113,6 +114,7 @@ static void run_worker(int tc) {
  * each call's syscall as an index (U3G_*); U3G_NR maps that to the real SYS_
  * number before u3_run executes the program. */
 #include "ufuzz_u3_gen.h"
+static long u3_contract_nr;  /* test seam: canary overrides the syscall whose contract is consulted */
 static const long U3G_NR[U3G_NSYS] = {
     SYS_OPEN, SYS_READ, SYS_WRITE, SYS_CLOSE,
     SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_GETPID, SYS_ARCH_PRCTL,
@@ -181,6 +183,9 @@ static int u3_run(const u3_program* pg, long* trace) {
          * reproducible-vs-non-deterministic distinction, made concrete. */
         trace[i] = (c->bind == U3_BIND_ADDR && ret > 0) ? 0 : ret;
 
+        if (ret < 0 && ret >= -4095 && !u3_abi_errno_ok(u3_contract_nr ? u3_contract_nr : c->sysno, -ret))
+            return 0x600 | i;   /* errno outside the ABI inventory's documented set */
+
         switch (c->expect_mode) {
         case U3_NONNEG: if (ret < 0)  return 0x100 | i; break;
         case U3_NEG:    if (ret >= 0) return 0x100 | i; break;
@@ -235,7 +240,7 @@ static unsigned long u3_digest(const u3_program* pg) {
  * 0x500 all became exit code 0 — a failed self-check reported as OK. Print the
  * full diagnostic and exit with a nonzero class code in 1..127 instead. */
 enum { U3X_EXPECT = 101, U3X_DATA = 102, U3X_REPLAY = 103, U3X_DIGEST = 104,
-       U3X_CAPACITY = 105, U3X_UNKNOWN = 106 };
+       U3X_CAPACITY = 105, U3X_UNKNOWN = 106, U3X_CONTRACT = 107 };
 static void u3_fail(int diag) {
     int cls;
     const char* what;
@@ -245,6 +250,7 @@ static void u3_fail(int diag) {
     case 3:  cls = U3X_REPLAY;   what = "replay";       break;
     case 4:  cls = U3X_DIGEST;   what = "digest";       break;
     case 5:  cls = U3X_CAPACITY; what = "capacity";     break;
+    case 6:  cls = U3X_CONTRACT; what = "contract";     break;
     default: cls = U3X_UNKNOWN;  what = "unknown";      break;
     }
     puts_("  u3 self-check FAIL: "); puts_(what);
@@ -465,6 +471,9 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
  *   1  return-value expectation violated at call index 1
  *   2  out-buffer bytes differ between the two replay passes (getrandom)
  *   3  program larger than the executor's call capacity
+ * Kind 5: close(-1) returns -EBADF but the contract consulted is getpid's (no
+ * errnos documented) -> the errno-set oracle must fail it. Kind 6 is the same
+ * call with the real contract (EBADF documented) and must pass.
  * Kind 4 is the opposite, a POSITIVE control that must report OUT_OK: it reads
  * the FS base (GET_FS) and then changes it (SET_FS). Replay runs the program
  * twice in one process, so unless the executor restores the FS base between the
@@ -487,6 +496,10 @@ static int run_selfcheck(int kind) {
         c = u3g_begin(U3G_GETPID, 3, U3_BIND_NONE, 0);          /* sysno set below */
         u3g_set(c, 0, U3_BUF, b); u3g_set(c, 1, U3_IMM, 16); u3g_set(c, 2, U3_IMM, 0);
         nr0 = SYS_GETRANDOM;
+    } else if (kind == 5 || kind == 6) {
+        c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_IMM, -1);                              /* close(-1) -> -EBADF */
+        if (kind == 5) u3_contract_nr = SYS_GETPID;             /* getpid documents no errors */
     } else if (kind == 4) {
         int b = u3g_new_buf(&r, 8, 0);
         u3g_emit_arch_prctl(1, b);                              /* GET_FS -> buf */
