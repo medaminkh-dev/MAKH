@@ -11,7 +11,7 @@
 [![Commercial license](https://img.shields.io/badge/commercial-available-success.svg)](LICENSING.md)
 ![Arch](https://img.shields.io/badge/arch-x86--64-informational)
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
-![Tests](https://img.shields.io/badge/in--kernel%20tests-204%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/in--kernel%20tests-239%20passing-brightgreen)
 
 [Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 
@@ -139,6 +139,38 @@ flowchart LR
 - **Watchdog** — a target that hangs is reported with its seed.
 - **Replay** — `fuzz replay <seed> <target>` reproduces any finding exactly.
 
+## 🔍 UFUZZ: attacking the kernel from ring 3
+
+KFUZZ fuzzes the kernel from the inside; **UFUZZ** attacks it the way a hostile
+program does — through the syscall interface — and is built so that every
+verdict can be checked:
+
+```mermaid
+flowchart LR
+    A[ABI contract<br/>80 syscalls] --> G[typed program<br/>generator / mutator]
+    G -->|IR + expected result| W["ring-3 worker<br/>watchdog · replay<br/>fd baseline"]
+    D["independent model<br/>re-derives every<br/>expectation"] -.->|must agree| G
+    W -->|serial records| T["triage<br/>class · signature<br/>artifact · replay"]
+    T --> M[minimizer]
+    W -->|kernel edges| C[(corpus)]
+    C --> G
+```
+
+- **Contract oracles** — every generated call carries the result the ABI
+  requires; any errno must be documented; every replay pass must leave the fd
+  table as it found it.
+- **An oracle that is itself checked** — a second model re-derives every
+  expectation from the ABI and the kernel headers; mutation tests prove the two
+  must both be right to agree.
+- **Triage → replay → minimize** — every finding becomes a deduplicated
+  artifact with a fresh-boot replay command, and shrinks to its essence
+  (a planted `dup2` use-after-free: 26 calls → 7).
+- **Measured, not assumed** — coverage-guided mutation vs random generation was
+  compared under a rule fixed in advance; the honest verdict is in the docs.
+
+Start with **[RELEASE_1.4.0](docs/RELEASE_1.4.0.md)**; `make fuzz-check` runs the
+eight host-side gates without QEMU.
+
 ## 🖥️ The shell
 
 MakhOS boots to a fennec splash, then hands off to an interactive **ring-3
@@ -220,8 +252,10 @@ Watch the fennec splash, then type `help` at the `$` prompt.
 | `make smoke` | Boots the real image and types shell commands through the emulated keyboard |
 | `make stress` | Runs the whole suite many times in parallel to flush out timing bugs |
 | `make check-license` | Verifies every source file carries its SPDX license header |
+| `make fuzz-check` | The UFUZZ host gates: ABI inventory, IR, generator, independent expectations, triage, minimizer, corpus |
 
-CI runs the suite and a stress job on every push.
+CI runs the suite (and triages its log), the UFUZZ host gates, and a stress job
+on every push.
 
 ## 📈 Milestones
 
@@ -229,7 +263,8 @@ Boot → memory → interrupts → **preemptive scheduler** → **POSIX threads*
 **TCP/IP + e1000** → **KFUZZ** → **ring-3 userspace** → **COW address spaces** →
 **VFS + ext2** → **signals, pipes, job control** → **musl + busybox** →
 **self-hosting (tcc + make on MAKH)** → **higher-half kernel** →
-**framebuffer console + fennec splash** → interactive shell with history.
+**framebuffer console + fennec splash** → interactive shell with history →
+**UFUZZ, the ring-3 syscall fuzzer**.
 
 Every milestone is a phase with its own design document and a green test suite.
 The full, ordered list — 40+ phases, each linked to its doc — lives in the

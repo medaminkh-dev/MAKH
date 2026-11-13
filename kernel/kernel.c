@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 Amine Khemissi */
 /**
  * MakhOS - kernel.c
- * Version: 1.3.0
+ * Version: 1.4.0
  * Main kernel entry point
  */
 

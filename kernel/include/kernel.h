@@ -12,7 +12,7 @@
 
 /* Kernel version */
 #define KERNEL_NAME     "MakhOS"
-#define KERNEL_VERSION  "1.3.0"
+#define KERNEL_VERSION  "1.4.0"
 #define KERNEL_PHASE    "KFUZZ v2.5 — ext2-image + ring-3 sigreturn targets reach the last audit gaps"
 
 /* Kernel main entry point - called from boot.asm */
