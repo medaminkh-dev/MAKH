@@ -74,7 +74,8 @@ C_SOURCES_ORIG = \
     kernel/syscall/syscall.c \
     kernel/shell/shell.c \
     kernel/kfuzz/kfuzz.c \
-    kernel/kfuzz/kfuzz_targets.c
+    kernel/kfuzz/kfuzz_targets.c \
+    kernel/buildid.c
 
 # C source files - Architecture
 C_SOURCES_ARCH = \
@@ -360,7 +361,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check u6-triage-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -394,8 +395,13 @@ u5-derive-check: build/u4gen
 	@python3 fuzz/u5/derive.py
 	@python3 fuzz/u5/derive.py --mutation-selftest
 
+# UFUZZ U6 (host side): crash classification / triage / artifacts selftest over
+# real captured logs (fuzz/u6/fixtures) and cases derived from them.
+u6-triage-check:
+	@python3 fuzz/u6/selftest.py
+
 # All host-side UFUZZ gates.
-fuzz-check: abi-check u3-check u4-gen-check u5-derive-check
+fuzz-check: abi-check u3-check u4-gen-check u5-derive-check u6-triage-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)
@@ -406,6 +412,14 @@ $(KERNEL): $(OBJECTS)
 %.o: %.asm
 	@echo "AS  $<"
 	$(AS) $(ASFLAGS) -o $@ $<
+
+# Build identity (UFUZZ U6): `git describe --always --dirty`, recorded in
+# build/buildid.txt and rewritten only when it changes, so kernel/buildid.o is
+# recompiled (and the kernel relinked) only when the source revision changes.
+MAKH_BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+$(shell mkdir -p build; echo '$(MAKH_BUILD_ID)' | cmp -s - build/buildid.txt || echo '$(MAKH_BUILD_ID)' > build/buildid.txt)
+kernel/buildid.o: build/buildid.txt
+kernel/buildid.o: CFLAGS += -DMAKH_BUILD_ID='"$(MAKH_BUILD_ID)"'
 
 # Compile .c files
 %.o: %.c
@@ -523,9 +537,10 @@ test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 # adds makh.suite=SUITE, so only that KTEST suite runs.
 SUITE_ISO = makhos-suite.iso
 test-suite: $(KERNEL) $(INITRD) $(TESTDISK) $(EXT2IMG)
-	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite>"; exit 2)
+	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [REPLAY=<mode>:<base>:<mut>]"; exit 2)
+	@echo "$(REPLAY)" | grep -Eqx '([0-9]{1,10}:[0-9]{1,10}:[0-9]{1,10})?' || (echo "REPLAY must be <mode>:<base>:<mut>"; exit 2)
 	@rm -rf isodir-suite && mkdir -p isodir-suite/boot/grub
-	@sed 's/makh.test/makh.test makh.suite=$(SUITE)/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
+	@sed 's/makh.test/makh.test makh.suite=$(SUITE)$(if $(REPLAY), makh.ufuzz.replay=$(REPLAY))/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
 	@cp $(KERNEL) $(INITRD) isodir-suite/boot/
 	@grub-mkrescue -o $(SUITE_ISO) isodir-suite 2>/dev/null
 	@rm -rf isodir-suite

@@ -66,7 +66,8 @@ int  proc_tree_check(void);   /* 0 = parent/child lists consistent */
 
 /* Phase 20-A: user process model. (proc_spawn_user is public — see proc.h.) */
 int  sys_waitpid(int pid, int* status);   /* reap a child; -ECHILD if none   */
-void proc_user_fault(long vector) __attribute__((noreturn));
+void proc_user_fault(long vector, uint64_t err, uint64_t rip, uint64_t cr2)
+    __attribute__((noreturn));
 void proc_reap(struct process* t);        /* reap a ZOMBIE child (waitpid)    */
 
 /* Phase 20-A-2: fork / execve (need the live syscall trapframe). */

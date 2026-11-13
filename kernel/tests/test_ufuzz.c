@@ -95,6 +95,29 @@ static void ufuzz_settle(void) {
     }
 }
 
+/* U6: every testcase a campaign runs gets one `UFZ1 tc` line: a run-wide
+ * sequence number, the controller pid (joins the controller's `UFZ1 res` and
+ * the worker's diag/trace), the inputs, the exit status, and whether a failure
+ * is the INTENDED result (negative controls and canaries are not findings).
+ * The enclosing `[ RUN ]` line names the campaign. */
+static unsigned u6_tc;
+/* `UFZ1 tcb` is printed BEFORE the spawn, so a kernel crash or hang inside a
+ * testcase is still attributable to its inputs (the end line never comes). */
+static unsigned u6_tc_begin(const char* src, long a, unsigned b, unsigned c) {
+    kprintf("UFZ1 tcb n=%u src=%s a=%ld b=%u c=%u\n", u6_tc, src, a, b, c);
+    return u6_tc++;
+}
+static void u6_tc_end(unsigned n, int cpid, int st, int expect_fail) {
+    kprintf("UFZ1 tc n=%u cpid=%d status=%d expect=%s\n",
+            n, cpid, st, expect_fail ? "fail" : "ok");
+}
+/* U6: resource drift over a batch, printed before the net-zero assertion. */
+static void u6_drift(size_t pg0, size_t hp0) {
+    long dp = (long)pg0 - (long)pmm_get_free_memory();
+    long dh = (long)kheap_get_used() - (long)hp0;
+    if (dp || dh) kprintf("UFZ1 drift dpmm=%ld dheap=%ld\n", dp, dh);
+}
+
 KTEST(ufuzz, reset_campaign_no_drift) {
     UFUZZ_SKIP_IF_NOTIMING();
     /* Warm up with one campaign first. The very first /bin/ufuzz run pays a
@@ -125,6 +148,7 @@ KTEST(ufuzz, reset_campaign_no_drift) {
     }
 
     ufuzz_settle();
+    u6_drift(pg0, hp0);
     KEXPECT_EQ(pmm_get_free_memory(), pg0);
     KEXPECT_EQ(kheap_get_used(), hp0);
 }
@@ -236,9 +260,11 @@ static int u4_run_cov(int mode, unsigned base, unsigned mut) {
     char ds[16], bs[16], ms[16];
     u4_utoa((unsigned)mode, ds); u4_utoa(base, bs); u4_utoa(mut, ms);
     char* argv[] = { "/bin/ufuzz", "cov", ds, bs, ms, 0 };   /* cov <mode> <base> <mut> */
+    unsigned n = u6_tc_begin("cov", mode, base, mut);
     int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
-    if (pid <= 0) return -1;
+    if (pid <= 0) { u6_tc_end(n, pid, -1, 0); return -1; }
     int st = -1; sys_waitpid(pid, &st);
+    u6_tc_end(n, pid, st, mode == 4);                          /* mode 4: control */
     return st;
 }
 
@@ -258,6 +284,7 @@ KTEST(ufuzz, u4_generated_programs_run_clean) {
         KEXPECT_EQ(bad, 0);                     /* every generated program OUT_OK */
 
         ufuzz_settle();
+        u6_drift(pg0, hp0);
         KEXPECT_EQ(pmm_get_free_memory(), pg0); /* no page leak over the batch */
         KEXPECT_EQ(kheap_get_used(), hp0);      /* no heap leak (vnode/inode) over batch */
     }
@@ -310,6 +337,7 @@ static void u4_campaign(int mode, int guided, unsigned meta_seed, int K,
         kfuzz_cov_reset();
         int st = u4_run_cov(mode, base, mut);
         uint64_t nov = kfuzz_cov_fold_new(u4_virgin);
+        kprintf("UFZ1 edges n=%u new=%lu\n", u6_tc - 1, (unsigned long)nov);  /* U6 */
         bits += nov;
         if (st == 0) ok++;                       /* ran, replayed, digest-matched */
         else if (st == U4_OUT_FAULT) crashes++;
@@ -455,9 +483,13 @@ KTEST(ufuzz, u4_ext2_guided_vs_random_paired) {
 static int u4_run_selfcheck(unsigned kind) {
     char ks[16]; u4_utoa(kind, ks);
     char* argv[] = { "/bin/ufuzz", "selfcheck", ks, 0 };
+    /* Canary kinds built to fail (see run_selfcheck in user/ufuzz.c). */
+    int must_fail = kind <= 3 || kind == 5 || kind == 7 || kind == 9 || kind == 11;
+    unsigned n = u6_tc_begin("selfcheck", (long)kind, 0, 0);
     int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
-    if (pid <= 0) return -1;
+    if (pid <= 0) { u6_tc_end(n, pid, -1, must_fail); return -1; }
     int st = -1; sys_waitpid(pid, &st);
+    u6_tc_end(n, pid, st, must_fail);
     return st;
 }
 
@@ -518,6 +550,7 @@ KTEST(ufuzz, u4_emfile_boundary_is_exact) {
     KEXPECT_EQ(u4_run_cov(4, 0, 0), U4_OUT_OTHER);  /* control: 28 must be caught  */
 
     ufuzz_settle();
+    u6_drift(pg0, hp0);
     KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* 29 open descriptions fully released, */
     KEXPECT_EQ(kheap_get_used(), hp0);          /* incl. the control's exit with 29 open */
 }
@@ -544,6 +577,7 @@ KTEST(ufuzz, u52_fdops_programs_run_clean) {
     KEXPECT_EQ(bad, 0);
 
     ufuzz_settle();
+    u6_drift(pg0, hp0);
     KEXPECT_EQ(pmm_get_free_memory(), pg0);
     KEXPECT_EQ(kheap_get_used(), hp0);
 }
@@ -559,6 +593,39 @@ KTEST(ufuzz, u52_pipe_failure_paths_roll_back) {
     size_t hp0 = kheap_get_used();
     KEXPECT_EQ(u4_run_cov(6, 0, 0), 0);
     ufuzz_settle();
+    u6_drift(pg0, hp0);
     KEXPECT_EQ(pmm_get_free_memory(), pg0);
     KEXPECT_EQ(kheap_get_used(), hp0);
+}
+
+/* ---- U6: replay one generated program in a fresh boot -----------------------
+ * `make test-suite SUITE=ufuzzreplay REPLAY=<mode>:<base>:<mut>` boots with
+ * makh.ufuzz.replay=<mode>:<base>:<mut>; this runs that one program
+ * U6_REPLAY_RUNS times through the normal controller + worker path and prints
+ * how many runs were not clean and each run's status. It reports; it does not
+ * judge (a replay of a fixed bug is clean, of a live one is not). Without the
+ * cmdline key it does nothing, so the full suite is unaffected. */
+#define U6_REPLAY_RUNS 5
+static int u6_parse_u(const char** p, unsigned long* out) {
+    unsigned long v = 0; int n = 0;
+    while (**p >= '0' && **p <= '9') { v = v * 10 + (unsigned long)(**p - '0'); (*p)++; n++; }
+    *out = v;
+    return n > 0 && n <= 10;
+}
+KTEST(ufuzzreplay, run) {
+    char spec[48];
+    if (!cmdline_value("makh.ufuzz.replay", spec, sizeof spec)) return;
+    const char* p = spec;
+    unsigned long m, b, c;
+    KASSERT_TEST(u6_parse_u(&p, &m) && *p++ == ':' && u6_parse_u(&p, &b) &&
+                 *p++ == ':' && u6_parse_u(&p, &c) && *p == '\0');
+    int nonclean = 0;
+    kprintf("UFZ1 replay begin a=%lu b=%lu c=%lu runs=%d\n", m, b, c, U6_REPLAY_RUNS);
+    for (int i = 0; i < U6_REPLAY_RUNS; i++) {
+        int st = u4_run_cov((int)m, (unsigned)b, (unsigned)c);
+        if (st != 0) nonclean++;
+        kprintf("UFZ1 replay run=%d status=%d\n", i, st);
+    }
+    kprintf("UFZ1 replay end a=%lu b=%lu c=%lu runs=%d nonclean=%d\n",
+            m, b, c, U6_REPLAY_RUNS, nonclean);
 }

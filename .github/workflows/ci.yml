@@ -45,6 +45,8 @@ jobs:
         run: make u4-gen-check
       - name: UFUZZ U5.3 — expected results re-derived independently (+ mutation selftest)
         run: make u5-derive-check
+      - name: UFUZZ U6 — triage selftest (real fixtures + derived cases)
+        run: make u6-triage-check
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -70,7 +72,24 @@ jobs:
         # the old 240s (they are ~1.5x slower and 1.3.0's ext2-image fuzz target
         # adds real block I/O), which timed the run out mid-suite. Give generous
         # headroom — well under the 20-minute job cap.
-        run: python3 tools/run_tests.py makhos-test.iso --timeout 900
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/run_tests.py makhos-test.iso --timeout 900 2>&1 | tee build/suite.log
+
+      - name: UFUZZ U6 — triage the suite log (no finding, every artifact complete)
+        if: always()
+        run: |
+          make build/u4gen
+          python3 tools/ufuzz_triage.py build/suite.log --check --fail-on-findings
+
+      - name: Upload UFUZZ artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ufuzz-artifacts
+          path: build/ufuzz-artifacts
+          if-no-files-found: ignore
 
   stress:
     runs-on: ubuntu-latest

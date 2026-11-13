@@ -15,6 +15,7 @@
 #include <klog.h>
 #include <cmdline.h>
 #include <proc.h>
+#include <proc_internal.h>
 #include <kfuzz.h>
 #include <arch/usermode.h>
 #include <mm/vmspace.h>
@@ -155,8 +156,9 @@ void exception_handler(registers_t* regs) {
     if (vector < 32 && (regs->cs & 3) == 3 && usermode_active())
         usermode_fault(vector);
     if (vector < 32 && (regs->cs & 3) == 3 && proc_current() && proc_current()->is_user) {
-        extern void proc_user_fault(long vector);
-        proc_user_fault(vector);              /* terminate the process (SIGSEGV) */
+        uint64_t cr2 = 0;
+        if (vector == 14) __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+        proc_user_fault(vector, regs->err_code, regs->rip, cr2);  /* SIGSEGV */
     }
 
     /* Phase 15: if a KFUZZ target is running, a CPU fault (vectors 0-31) is a

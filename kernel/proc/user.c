@@ -539,9 +539,14 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
 
 /* Called from the exception handler when a running user process faults. The
  * process is terminated with 128 + SIGSEGV (POSIX convention). Never returns. */
-void proc_user_fault(long vector) {
+void proc_user_fault(long vector, uint64_t err, uint64_t rip, uint64_t cr2) {
     KLOG_W("USER", "pid %u killed by SIGSEGV (vector %ld)\n",
            current_process ? current_process->pid : 0, vector);
+    /* UFUZZ U6: a machine-readable fault record (the parent only sees exit
+     * status 139); err is 0xdeadbeef for vectors without an error code. */
+    kprintf("UFZ1 ufault pid=%u vec=%ld err=0x%lx rip=0x%lx cr2=0x%lx\n",
+            current_process ? current_process->pid : 0, vector,
+            (unsigned long)err, (unsigned long)rip, (unsigned long)cr2);
     thread_exit(128 + SIGSEGV);
 }
 

@@ -926,6 +926,10 @@ void kernel_main(void) {
      * This is what `make test` and CI drive.
      * ------------------------------------------------------------------- */
     if (cmdline_has("makh.test")) {
+        /* UFUZZ U6: name the build in the log, so triage can attach it to every
+         * finding from this run. */
+        extern const char makh_build_id[];
+        kprintf("UFZ1 build id=%s\n", makh_build_id);
         /* "makh.suite=NAME" narrows the run to one suite (make test-suite). */
         char suite[32];
         int fails = cmdline_value("makh.suite", suite, sizeof suite)

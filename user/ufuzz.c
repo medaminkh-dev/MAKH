@@ -54,6 +54,10 @@ static void putu_(unsigned long v) {
     while (v) { b[--i] = (char)('0' + v % 10); v /= 10; }
     uwrite(1, &b[i], (unsigned)(23 - i));
 }
+static void putl_(long v) {                     /* signed decimal */
+    if (v < 0) { puts_("-"); putu_((unsigned long)(-(v + 1)) + 1UL); }
+    else putu_((unsigned long)v);
+}
 
 /* ---- timing -------------------------------------------------------------- */
 static unsigned long now_ms(void) {
@@ -169,6 +173,10 @@ static struct { unsigned long base, len; } u3_iov_scratch[U3_MAX_SEG];
  * contract required — printed by u3_fail so a NOT-CLEAN run is attributable from
  * the serial log alone. want_mode distinguishes the expectation kinds. */
 static long u3_diag_nr, u3_diag_ret, u3_diag_want; static int u3_diag_mode = -1;
+static long u3_diag_a[4];          /* U6: the call's resolved arguments (selector) */
+/* U6: the per-call return trace of the pass in progress, so a failing worker
+ * can print it (UFZ1 trace) — the artifact's syscall sequence + results. */
+static long* u3_tcur; static int u3_tlen, u3_pass;
 
 /* Returns 0 on success, else a nonzero diagnostic code (what diverged). */
 static int u3_run(const u3_program* pg, long* trace) {
@@ -227,15 +235,17 @@ static int u3_run(const u3_program* pg, long* trace) {
          * vs -errno), not the allocator-chosen address — the design's
          * reproducible-vs-non-deterministic distinction, made concrete. */
         trace[i] = (c->bind == U3_BIND_ADDR && ret > 0) ? 0 : ret;
-
-        if (ret < 0 && ret >= -4095 && !u3_abi_errno_ok(u3_contract_nr ? u3_contract_nr : c->sysno, -ret))
-            return 0x600 | i;   /* errno outside the ABI inventory's documented set */
-
+        u3_tlen = i + 1;
         u3_diag_nr = c->sysno; u3_diag_ret = ret; u3_diag_mode = c->expect_mode;
+        for (int k = 0; k < 4; k++) u3_diag_a[k] = a[k];
         u3_diag_want = c->expect_val;
         if (c->expect_mode == U3_SLOT) (void)u3_slot(c->expect_val, &u3_diag_want);
         if (c->expect_mode == U3_BASEFL && c->expect_val >= 0 && c->expect_val < U3_NFD)
             u3_diag_want = u3_base_fl[c->expect_val];
+
+        if (ret < 0 && ret >= -4095 && !u3_abi_errno_ok(u3_contract_nr ? u3_contract_nr : c->sysno, -ret))
+            return 0x600 | i;   /* errno outside the ABI inventory's documented set */
+
         switch (c->expect_mode) {
         case U3_NONNEG: if (ret < 0)  return 0x100 | i; break;
         case U3_NEG:    if (ret >= 0) return 0x100 | i; break;
@@ -315,6 +325,24 @@ static void u3_fail(int diag) {
     case 7:  cls = U3X_ISOLATION; what = "isolation";   break;
     default: cls = U3X_UNKNOWN;  what = "unknown";      break;
     }
+    /* U6: machine-readable record of this failure, then the trace of the pass
+     * that failed. Integers and fixed tokens only. */
+    long pid = ugetpid();
+    puts_("UFZ1 diag pid="); putl_(pid); puts_(" pass="); putl_(u3_pass);
+    puts_(" cls="); putl_(cls); puts_(" what="); puts_(what);
+    puts_(" diag="); putl_(diag); puts_(" call="); putl_(diag & 0xff);
+    if ((diag >> 8) == 1 || (diag >> 8) == 6) {   /* expectation / contract */
+        puts_(" nr="); putl_(u3_diag_nr); puts_(" emode="); putl_(u3_diag_mode);
+        puts_(" ret="); putl_(u3_diag_ret); puts_(" want="); putl_(u3_diag_want);
+        puts_(" a0="); putl_(u3_diag_a[0]); puts_(" a1="); putl_(u3_diag_a[1]);
+    }
+    puts_("\n");
+    if (u3_tcur) {
+        puts_("UFZ1 trace pid="); putl_(pid); puts_(" pass="); putl_(u3_pass);
+        puts_(" n="); putl_(u3_tlen); puts_(" v=");
+        for (int i = 0; i < u3_tlen; i++) { if (i) puts_(","); putl_(u3_tcur[i]); }
+        puts_("\n");
+    }
     puts_("  u3 self-check FAIL: "); puts_(what);
     puts_(" detail="); putu_((unsigned long)(diag & 0xff));
     if ((diag >> 8) == 1) {                     /* expectation: name the call */
@@ -345,6 +373,7 @@ static void u3_worker_pg(const u3_program* pg) {
      * depends on a specific number of free slots declares it (need_free; exact
      * for programs that predict exhaustion) and fails loudly (0x7FE) otherwise. */
     long snap[U3_NFD];
+    u3_tcur = 0; u3_pass = 0;
     int e = u3_fdsnap(u3_base_fl);
     if (e) u3_fail(e);
     u3_nfree = 0;
@@ -352,6 +381,7 @@ static void u3_worker_pg(const u3_program* pg) {
     if (pg->need_free &&
         (pg->need_exact ? u3_nfree != pg->need_free : u3_nfree < pg->need_free))
         u3_fail(0x7FE);
+    u3_tcur = t1; u3_tlen = 0; u3_pass = 1;
     int rc = u3_run(pg, t1);
     if (rc) u3_fail(rc);
     if ((e = u3_fdsnap(snap)) != 0) u3_fail(e);
@@ -360,6 +390,7 @@ static void u3_worker_pg(const u3_program* pg) {
     unsigned long d1 = u3_digest(pg);               /* out-buffers after run 1 */
     if (pg->replay) {
         usyscall(SYS_ARCH_PRCTL, U3G_ARCH_SET_FS, (long)fs0, 0);
+        u3_tcur = t2; u3_tlen = 0; u3_pass = 2;
         int rc2 = u3_run(pg, t2);
         if (rc2) u3_fail(rc2);
         if ((e = u3_fdsnap(snap)) != 0) u3_fail(e);
@@ -382,7 +413,7 @@ static void u3gen_worker(void) { u3_worker_pg(g_gen_prog); }
 /* ---- outcome classification --------------------------------------------- */
 enum { OUT_OK = 0, OUT_EXPECTED_ERR, OUT_FAULT, OUT_TIMEOUT, OUT_OTHER };
 
-struct result { int outcome; int status; unsigned long ms; };
+struct result { int outcome; int status; unsigned long ms; long wpid; };
 
 /* Budget per worker, in ms. A finite worker needs microseconds of CPU; this is
  * wall-clock, so it must be generous enough that even a heavily time-sliced
@@ -410,13 +441,14 @@ static void worker_entry(void) {
  * the watchdog guarantees the worker is reaped within ~BUDGET_MS even if it
  * wedges. */
 static struct result run_one(int kind, int arg) {
-    struct result r = { OUT_OTHER, -1, 0 };
+    struct result r = { OUT_OTHER, -1, 0, -1 };
     unsigned long t0 = now_ms();
 
     g_worker_kind = kind; g_worker_arg = arg;
     long wpid = ufork();
     if (wpid == 0) { worker_entry(); uexit(99); }   /* child: never returns */
     if (wpid < 0)  { r.outcome = OUT_OTHER; return r; }
+    r.wpid = wpid;
 
     /* Watchdog: a second child that sleeps the budget then SIGKILLs the worker.
      * Removing this fork is the fail-first: TC_HANG then wedges the controller
@@ -541,6 +573,17 @@ static unsigned long parse_ul(const char* s) {
  * control the tier-milestone test measures against); 3 = fd-exhaustion boundary
  * (29 opens succeed, the 30th is -EMFILE); 4 = the same program expecting the
  * boundary one open too early — it MUST fail (negative control). */
+/* U6: one machine-readable line per non-clean worker run, joining the worker
+ * pid (UFZ1 diag/trace/ufault) to this controller's pid and its inputs. */
+static void u6_res(const char* src, long a, long b, long c, struct result r) {
+    if (r.outcome == OUT_OK) return;
+    puts_("UFZ1 res src="); puts_(src);
+    puts_(" cpid="); putl_(ugetpid()); puts_(" wpid="); putl_(r.wpid);
+    puts_(" a="); putl_(a); puts_(" b="); putl_(b); puts_(" c="); putl_(c);
+    puts_(" outcome="); puts_(outcome_name(r.outcome));
+    puts_(" status="); putl_(r.status); puts_("\n");
+}
+
 static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed) {
     const u3_program* pg =
         (mode == 1) ? u3g_build_ext2(base_seed, mut_seed, 3) :
@@ -553,7 +596,9 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
     for (int i = 0; i < pg->ncalls; i++)                 /* index -> real SYS_ */
         ((u3_call*)pg->calls)[i].sysno = U3G_NR[pg->calls[i].sysno];
     g_gen_prog = pg;
-    return run_one(WK_U3GEN, 0).outcome;
+    struct result r = run_one(WK_U3GEN, 0);
+    u6_res("cov", mode, (long)base_seed, (long)mut_seed, r);
+    return r.outcome;
 }
 
 /* Oracle canaries: `/bin/ufuzz selfcheck <kind>` runs a tiny program BUILT TO FAIL
@@ -643,7 +688,9 @@ static int run_selfcheck(int kind) {
     u3g_prog.ncalls = (kind == 3) ? (U3_MAX_CALLS + 1) : u3g_ncalls;
     u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
     g_gen_prog = &u3g_prog;
-    return run_one(WK_U3GEN, 0).outcome;
+    struct result res = run_one(WK_U3GEN, 0);
+    u6_res("selfcheck", kind, 0, 0, res);
+    return res.outcome;
 }
 
 static int streq_(const char* a, const char* b) {
