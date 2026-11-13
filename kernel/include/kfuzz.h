@@ -102,6 +102,12 @@ uint32_t kfuzz_cov_words(void);
  * leaves the kernel. */
 uint64_t kfuzz_cov_fold_new(uint64_t* virgin);
 
+/* U8: list (up to `max`, ascending) the indices of edges in the current map that
+ * `virgin` has not seen; return their total count. Folds into `virgin` only if
+ * `fold` is set, so a driver can list the same run's edges against a fixed map
+ * (the host's global virgin map) without consuming them. */
+uint64_t kfuzz_cov_fold_new_list(uint64_t* virgin, int fold, uint32_t* out, uint32_t max);
+
 /* -------- sandbox internals used by the exception handler -------- */
 int  kfuzz_in_sandbox(void);         /* 1 while a target is running */
 /* Record a CPU fault (regs is a registers_t*) and unwind to the harness. */

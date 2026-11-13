@@ -127,6 +127,26 @@ uint64_t kfuzz_cov_fold_new(uint64_t* virgin) {
     return n;
 }
 
+/* U8: the IDENTITY of the new edges, so a driver outside this boot (the host
+ * corpus) can keep a global virgin map. Lists up to `max` indices of edges set
+ * in the current map and not in `virgin`, in ascending order, into `out`;
+ * returns how many such edges there are in total (may exceed `max`). With
+ * `fold` set, also folds the map into `virgin` (as kfuzz_cov_fold_new). */
+uint64_t kfuzz_cov_fold_new_list(uint64_t* virgin, int fold, uint32_t* out, uint32_t max) {
+    uint64_t n = 0;
+    for (uint32_t i = 0; i < COV_WORDS; i++) {
+        uint64_t fresh = cov_map[i] & ~virgin[i];
+        while (fresh) {
+            uint32_t b = (uint32_t)__builtin_ctzll(fresh);
+            if (n < max) out[n] = i * 64 + b;
+            n++;
+            fresh &= fresh - 1;
+        }
+        if (fold) virgin[i] |= cov_map[i];
+    }
+    return n;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Sandbox state                                                              */
 /* -------------------------------------------------------------------------- */

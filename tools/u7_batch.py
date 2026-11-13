@@ -49,8 +49,9 @@ def debugfs_available():
     return shutil.which("debugfs") is not None
 
 
-def make_image(batch_path, out_img, base_img=EXT2):
-    """Copy the ext2 test image and write the batch to /u7/batch.ir in the copy."""
+def make_image(batch_path, out_img, base_img=EXT2, virgin=None):
+    """Copy the ext2 test image and write the batch to /u7/batch.ir in the copy;
+    with `virgin` (U8), also the global coverage virgin map to /u8/virgin.bin."""
     if not debugfs_available():
         raise RuntimeError("debugfs not found (install e2fsprogs)")
     if not os.path.exists(base_img):
@@ -58,6 +59,8 @@ def make_image(batch_path, out_img, base_img=EXT2):
     shutil.copyfile(base_img, out_img)
     # Fixed command text; the only variable part is a path we created.
     cmds = "mkdir /u7\nwrite %s /u7/batch.ir\n" % os.path.abspath(batch_path)
+    if virgin is not None:
+        cmds += "mkdir /u8\nwrite %s /u8/virgin.bin\n" % os.path.abspath(virgin)
     r = subprocess.run(["debugfs", "-w", "-f", "-", out_img], input=cmds, text=True,
                        capture_output=True)
     if r.returncode != 0:
@@ -66,6 +69,11 @@ def make_image(batch_path, out_img, base_img=EXT2):
                          text=True)
     if "Inode:" not in chk.stdout:
         raise RuntimeError("batch not present in %s" % out_img)
+    if virgin is not None:
+        chk = subprocess.run(["debugfs", "-R", "stat /u8/virgin.bin", out_img],
+                             capture_output=True, text=True)
+        if "Inode:" not in chk.stdout:
+            raise RuntimeError("virgin map not present in %s" % out_img)
     return out_img
 
 

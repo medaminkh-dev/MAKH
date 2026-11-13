@@ -368,7 +368,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check u8-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -413,8 +413,15 @@ u6-triage-check:
 u7-check: build/u4gen
 	@python3 fuzz/u7/selftest.py
 
+# UFUZZ U8 (host side): corpus format, structure-aware mutators, the
+# generational campaign's filter/keep/determinism/pairing logic and the
+# pre-registered comparison rule — against a real ufuzzcamp boot fixture and a
+# simulated kernel. Measured campaigns run locally (docs/UFUZZ_U8_CORPUS.md).
+u8-check: build/u4gen
+	@python3 fuzz/u8/selftest.py
+
 # All host-side UFUZZ gates.
-fuzz-check: abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check
+fuzz-check: abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check u8-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)
@@ -554,10 +561,11 @@ test-suite: $(KERNEL) $(INITRD) $(TESTDISK) $(EXT2IMG)
 	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [REPLAY=<mode>:<base>:<mut>] [BATCH=<runs> EXT2=<img>] [TIMEOUT=<s>]"; exit 2)
 	@echo "$(REPLAY)" | grep -Eqx '([0-9]{1,10}:[0-9]{1,10}:[0-9]{1,10})?' || (echo "REPLAY must be <mode>:<base>:<mut>"; exit 2)
 	@echo "$(BATCH)" | grep -Eqx '([0-9]{1,2})?' || (echo "BATCH must be <runs>"; exit 2)
+	@echo "$(CAMP)" | grep -Eqx '([0-9])?' || (echo "CAMP must be <runs>"; exit 2)
 	@echo "$(EXT2)" | grep -Eqx '[A-Za-z0-9_./-]*' || (echo "EXT2 must be a plain path"; exit 2)
 	@echo "$(TIMEOUT)" | grep -Eqx '[0-9]{1,5}' || (echo "TIMEOUT must be seconds"; exit 2)
 	@rm -rf isodir-suite && mkdir -p isodir-suite/boot/grub
-	@sed 's/makh.test/makh.test makh.suite=$(SUITE)$(if $(REPLAY), makh.ufuzz.replay=$(REPLAY))$(if $(BATCH), makh.ufuzz.batch=$(BATCH))/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
+	@sed 's/makh.test/makh.test makh.suite=$(SUITE)$(if $(REPLAY), makh.ufuzz.replay=$(REPLAY))$(if $(BATCH), makh.ufuzz.batch=$(BATCH))$(if $(CAMP), makh.ufuzz.camp=$(CAMP))/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
 	@cp $(KERNEL) $(INITRD) isodir-suite/boot/
 	@grub-mkrescue -o $(SUITE_ISO) isodir-suite 2>/dev/null
 	@rm -rf isodir-suite

@@ -754,3 +754,98 @@ KTEST(ufuzzmin, run) {
             (void)u7_run_ir("/mnt/u7/batch.ir", k, r, 0, 0);
     kprintf("UFZ1 batch end count=%lu runs=%lu\n", count, runs);
 }
+
+/* ---- U8: coverage edge identity for a host-side corpus ----------------------
+ * kfuzz_cov_fold_new_list must name exactly the edges kfuzz_cov_fold_new counts
+ * (same map, same virgin), list nothing when it does not fold and the same map
+ * is listed against a virgin that already holds it, and leave `virgin` alone
+ * when fold == 0. */
+static uint64_t u8_va[1 << 10], u8_vb[1 << 10];
+static uint32_t u8_ids[1 << 14];
+KTEST(ufuzz, u8_cov_list_matches_fold) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    uint32_t words = kfuzz_cov_words();
+    KASSERT_TEST(words <= (sizeof(u8_va) / sizeof(u8_va[0])));
+    for (uint32_t i = 0; i < words; i++) { u8_va[i] = 0; u8_vb[i] = 0; }
+    int prev = kfuzz_cov_enable(1);
+    kfuzz_cov_reset();
+    (void)u4_run_cov(5, 3, 23758);
+    kfuzz_cov_enable(prev);                    /* freeze the map */
+
+    uint64_t listed = kfuzz_cov_fold_new_list(u8_va, 0, u8_ids, sizeof u8_ids / sizeof u8_ids[0]);
+    int untouched = 1;
+    for (uint32_t i = 0; i < words; i++) if (u8_va[i]) untouched = 0;
+    KEXPECT(untouched);                        /* fold == 0 leaves virgin alone */
+    uint64_t counted = kfuzz_cov_fold_new(u8_vb);
+    KEXPECT(listed > 0);
+    KEXPECT_EQ(listed, counted);               /* same edges, by count ...      */
+    int same = 1, ascending = 1;
+    for (uint64_t k = 0; k < listed && k < sizeof u8_ids / sizeof u8_ids[0]; k++) {
+        uint32_t e = u8_ids[k];
+        if (!(u8_vb[e >> 6] & (1ull << (e & 63)))) same = 0;   /* ... and by identity */
+        if (k && u8_ids[k - 1] >= e) ascending = 0;
+    }
+    KEXPECT(same);
+    KEXPECT(ascending);
+    KEXPECT_EQ(kfuzz_cov_fold_new_list(u8_vb, 0, u8_ids, 1), 0);  /* nothing new now */
+    uint64_t folded = kfuzz_cov_fold_new_list(u8_va, 1, u8_ids, 0);
+    KEXPECT_EQ(folded, counted);               /* fold == 1 folds ... */
+    KEXPECT_EQ(kfuzz_cov_fold_new_list(u8_va, 0, u8_ids, 0), 0);   /* ... everything */
+}
+
+/* ---- U8: one generation of a host-driven campaign ----------------------------
+ * `makh.ufuzz.camp=<runs>` (tools/u7_batch.py image with /u8/virgin.bin): load
+ * the host's global virgin map, then run every program of /mnt/u7/batch.ir
+ * <runs> times with kernel coverage on, printing after each run the edges that
+ * are new against that FIXED map:
+ *   UFZ1 cov n=<tc> new=<count>          then
+ *   UFZ1 covid n=<tc> ids=<hex>,<hex>,...  (64 ids per line)
+ * The map is never folded here: the host intersects the runs of a program (the
+ * noise filter) and owns the global map. Without the key it does nothing. */
+static uint64_t u8_virgin[1 << 10];
+KTEST(ufuzzcamp, run) {
+    char spec[16];
+    if (!cmdline_value("makh.ufuzz.camp", spec, sizeof spec)) return;
+    const char* p = spec;
+    unsigned long runs;
+    KASSERT_TEST(u6_parse_u(&p, &runs) && *p == '\0' && runs >= 1 && runs <= 8);
+    uint32_t words = kfuzz_cov_words();
+    KASSERT_TEST(words <= (sizeof(u8_virgin) / sizeof(u8_virgin[0])));
+    for (uint32_t i = 0; i < words; i++) u8_virgin[i] = 0;
+    int vfd = vfs_open("/mnt/u8/virgin.bin", O_RDONLY);
+    long got = 0;
+    if (vfd >= 0) {
+        long r;
+        while ((size_t)got < words * 8 &&
+               (r = vfs_fd_read(vfd, (char*)u8_virgin + got, words * 8 - (size_t)got)) > 0)
+            got += r;
+        vfs_close(vfd);
+    }
+    KASSERT_TEST(got == 0 || got == (long)words * 8);
+    static char head[64];
+    KASSERT_TEST(u7_read_file("/mnt/u7/batch.ir", head, sizeof head) > 0);
+    const char* q = head;
+    while (*q && *q != '=') q++;
+    unsigned long count = 0;
+    KASSERT_TEST(*q == '=' && (q++, u6_parse_u(&q, &count)) && count >= 1 && count <= 4096);
+    kprintf("UFZ1 camp begin count=%lu runs=%lu virgin=%ld\n", count, runs, got);
+    int prev = kfuzz_cov_enable(1);
+    for (unsigned k = 0; k < count; k++)
+        for (unsigned r = 0; r < runs; r++) {
+            kfuzz_cov_reset();
+            (void)u7_run_ir("/mnt/u7/batch.ir", k, r, 0, 0);
+            uint64_t n = kfuzz_cov_fold_new_list(u8_virgin, 0, u8_ids,
+                                                 sizeof u8_ids / sizeof u8_ids[0]);
+            unsigned tc = u6_tc - 1;
+            kprintf("UFZ1 cov n=%u new=%lu\n", tc, (unsigned long)n);
+            uint64_t shown = n < sizeof u8_ids / sizeof u8_ids[0] ? n : sizeof u8_ids / sizeof u8_ids[0];
+            for (uint64_t i = 0; i < shown; i += 64) {
+                kprintf("UFZ1 covid n=%u ids=", tc);
+                for (uint64_t j = i; j < shown && j < i + 64; j++)
+                    kprintf(j == i ? "%x" : ",%x", u8_ids[j]);
+                kprintf("\n");
+            }
+        }
+    kfuzz_cov_enable(prev);
+    kprintf("UFZ1 camp end count=%lu runs=%lu\n", count, runs);
+}

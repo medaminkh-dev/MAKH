@@ -52,6 +52,8 @@ jobs:
           command -v debugfs || sudo apt-get install -y --no-install-recommends e2fsprogs
           command -v debugfs
           make u7-check
+      - name: UFUZZ U8 — corpus / mutation / campaign selftest
+        run: make u8-check
 
   build-and-test:
     runs-on: ubuntu-latest
