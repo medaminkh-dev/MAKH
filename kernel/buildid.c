@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 Amine Khemissi */
 /*
  * Build identity (UFUZZ U6): the source revision this kernel was built from,
- * `git describe --always --dirty` at build time, so every crash artifact can
+ * its abbreviated commit hash ("-dirty" if modified), so every crash artifact can
  * name the exact build it came from. The Makefile recompiles this file only
  * when the identity changes (build/buildid.txt).
  */

@@ -29,7 +29,7 @@ serial log; every record is one line of integers and fixed tokens.
 
 | Record | Printed by | When | Fields |
 |---|---|---|---|
-| `UFZ1 build` | kernel (`makh.test`) | boot | `id` = `git describe --always --dirty` at build |
+| `UFZ1 build` | kernel (`makh.test`) | boot | `id` = abbreviated commit hash at build (`-dirty` if modified; `unknown` outside git) |
 | `UFZ1 tcb` | KTEST | before each spawn | `n` (run-wide), `src` cov/selfcheck, `a b c` = mode/base/mut or kind |
 | `UFZ1 tc` | KTEST | after each run | `n`, `cpid`, `status`, `expect` ok/fail |
 | `UFZ1 res` | controller | non-clean run | `src cpid wpid a b c outcome status` |

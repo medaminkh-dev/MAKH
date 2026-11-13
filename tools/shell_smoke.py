@@ -12,6 +12,7 @@ usage: tools/shell_smoke.py [makhos.iso] [--timeout SECONDS]
 exit status: 0 = every check passed, 1 = a check failed, 2 = setup error
 """
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -20,23 +21,30 @@ import time
 
 QEMU = "qemu-system-x86_64"
 
-# (command, substring that must appear in its output)
+# (command, substring that must appear in its output). The default boot runs
+# the ring-3 /bin/sh, so each command is a real fork+execve from the initrd.
 SCRIPT = [
     ("help", "ping <ip> [count]"),
     ("ifconfig", "inet 10.0.2.15"),
     ("ping 10.0.2.2 3", "3 received"),
-    ("arp", "52:55:0a:00:02:02"),
     ("ping 127.0.0.1 2", "2 received"),
-    ("mem", "integrity ok"),
-    ("ps", "netd"),
-    ("netstat", "ip rx"),
-    ("fuzz string 300", "0 crashes"),
-    ("fuzz netrx 300", "0 crashes"),
-    ("nosuchcmd", "command not found"),
+    ("uname -s | cut -c 2-", "AKH"),
+    ("cat /hello.txt", "phase 18 vfs brick"),
+    ("ls /bin", "ufuzz"),
+    ("nosuchcmd", "nosuchcmd: not found"),
 ]
 
+# The ring-3 shell's prompt: "makh:<cwd>$ ", name and path wrapped in SGR colors.
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+PROMPT = re.compile(r"makh:\S*\$ ")
+
+
+def at_prompt(s):
+    return PROMPT.search(ANSI.sub("", s)) is not None
+
+
 KEYMAP = {" ": "spc", ".": "dot", "-": "minus", "<": "shift-comma",
-          ">": "shift-dot", "/": "slash", "_": "shift-minus", ":": "shift-semicolon"}
+          ">": "shift-dot", "/": "slash", "|": "shift-backslash", "_": "shift-minus", ":": "shift-semicolon"}
 
 
 def keys_for(text):
@@ -109,15 +117,11 @@ def main():
     failed = 0
     try:
         mon = connect_monitor()
-        # The boot-time keyboard self-test waits for four keystrokes.
-        if not wait_for(lambda s: "[KEYBOARD] Ready for input" in s or "MakhOS> " in s, timeout):
+        if not wait_for(lambda s: "[KEYBOARD] Ready for input" in s, timeout):
             print("FAIL: keyboard never came up")
             print(serial()[-2000:])
             return 1
-        if "MakhOS> " not in serial():
-            type_line(mon, "TEST", newline=False)
-
-        if not wait_for(lambda s: "MakhOS> " in s, timeout):
+        if not wait_for(at_prompt, timeout):
             print("FAIL: never reached the shell prompt")
             print(serial()[-2000:])
             return 1
@@ -126,6 +130,9 @@ def main():
             before = len(serial())
             type_line(mon, command)
             ok = wait_for(lambda s: expect in s[before:], 20)
+            # Type the next line only once the shell is reading again: keys sent
+            # while a command still runs belong to that command, not the shell.
+            ok = ok and wait_for(lambda s: at_prompt(s[s.index(expect, before):]), 20)
             out = serial()[before:]
             status = "ok  " if ok else "FAIL"
             print(f"[{status}] {command!r:24} expects {expect!r}")
