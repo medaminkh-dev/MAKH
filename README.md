@@ -4,7 +4,7 @@
 
 
 
-### A from-scratch x86-64 operating system kernel that fuzzes itself from ring 0 — and compiles itself.
+### A from-scratch x86-64 operating system kernel that fuzzes itself from ring 0 and from ring 3 — and compiles itself.
 
 [![CI](https://github.com/medaminkh-dev/MAKH/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/medaminkh-dev/MAKH/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
@@ -13,7 +13,7 @@
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
 ![Tests](https://img.shields.io/badge/in--kernel%20tests-240%20passing-brightgreen)
 
-[Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
+[Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [UFUZZ](#-ufuzz-attacking-the-kernel-from-ring-3) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 
 </div>
 
@@ -26,12 +26,15 @@ schedules threads preemptively, runs **ring-3 user programs**, speaks **TCP/IP**
 over a real Intel e1000 NIC, mounts **ext2** disks, and even **compiles C on itself**
 with `tcc` + `make`.
 
-Its signature: a **coverage-guided fuzzer that attacks the kernel from inside
-ring 0** (KFUZZ), survives the CPU faults it provokes, and prints the exact seed
-to reproduce each one.
+Its signature: **two fuzzers that attack the kernel from both sides of the
+privilege boundary.** **KFUZZ** works from inside ring 0 — it survives the CPU
+faults it provokes and prints the exact seed to reproduce each one. **UFUZZ**
+works from ring 3, through the syscall interface, the way a hostile program
+would — and judges every call against the ABI contract with an oracle that is
+itself cross-checked by an independent model.
 
 Everything is built **brick by brick** (طوبة طوبة): a phase lands only when its
-tests are green — **204 in-kernel tests**, a stress runner, and CI on every push.
+tests are green — **240 in-kernel tests**, a stress runner, and CI on every push.
 
 ```console
 $ help
@@ -58,6 +61,10 @@ handful of things here are genuinely rare for a from-scratch OS:
 - **It fuzzes its own kernel from ring 0.** KFUZZ runs a coverage-guided fuzzer
   *inside* the kernel, turning `#PF`/`#GP` faults into reproducible reports via an
   assembly `setjmp`/`longjmp` sandbox — instead of triple-faulting the machine.
+- **It attacks itself from ring 3 too.** UFUZZ throws typed syscall programs at
+  the kernel, knows the result each call *must* return, and turns every
+  disagreement into a classified, replayable, minimized finding — it found and
+  fixed a real contract bug nobody planted.
 - **It self-hosts.** MakhOS runs `tcc` and GNU `make` *on itself*, rebuilds a
   program it ships from source, and runs the result — the self-hosting summit for
   a kernel this size.
@@ -72,7 +79,7 @@ handful of things here are genuinely rare for a from-scratch OS:
   font and a warm palette, a **fennec boot splash** with a spinning loader, and an
   interactive line-editing shell with **command history** and keyboard shortcuts.
 
-<sub>Keywords: operating system · OS kernel · x86-64 · osdev · bare metal · freestanding C · hobby OS · kernel fuzzing · coverage-guided · ring 0 · TCP/IP stack · POSIX · ext2 · musl · self-hosting · framebuffer · QEMU</sub>
+<sub>Keywords: operating system · OS kernel · x86-64 · osdev · bare metal · freestanding C · hobby OS · kernel fuzzing · syscall fuzzing · coverage-guided · ring 0 · ring 3 · TCP/IP stack · POSIX · ext2 · musl · self-hosting · framebuffer · QEMU</sub>
 
 ## ✨ Highlights
 
@@ -114,6 +121,22 @@ and a ring-3 `/bin/sh` with pipes, job control, history and ~25 commands.
 </td>
 </tr>
 </table>
+
+## 🛡️ Two fuzzers, both sides of the boundary
+
+|  | 🔬 **KFUZZ** | 🔍 **UFUZZ** |
+|---|---|---|
+| **Attacks from** | inside ring 0 | ring 3, through the syscall interface |
+| **Plays the role of** | a bad input reaching kernel code | a hostile user program |
+| **Inputs** | seeds into kernel targets (heap, pmm, string, pthread, shell, netrx, ELF, ext2 images, uaccess…) | typed syscall programs over an 80-syscall ABI contract, mutated structurally |
+| **Oracle** | heap walker, process-tree check, bad-free counter, known-verdict ELF | the exact result the contract requires, documented errnos, fd state — cross-checked by an independent model |
+| **A failure becomes** | a sandboxed fault with its seed, not a dead machine | a classified, deduplicated artifact, replayed in a fresh boot and minimized |
+| **Replay** | `fuzz replay <seed> <target>` | `make test-suite SUITE=ufuzzreplay REPLAY=<mode>:<base>:<mut>` |
+| **Since** | Phase 15 (v2 in 1.2–1.3) | 1.4 |
+
+Both share the kernel's `trace-pc` coverage map, the fail-first discipline — no
+oracle counts until it has been shown to fail — and the rule that a finding is
+only claimed once it reproduces.
 
 ## 🔬 KFUZZ: the kernel fuzzes itself
 

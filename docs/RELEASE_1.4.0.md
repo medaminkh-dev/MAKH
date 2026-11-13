@@ -125,7 +125,30 @@ python3 fuzz/u8/campaign.py guided 1 --gens 20 --batch 24 --out build/u8/g1
 
 All results are `PASS_QEMU` (one CPU, QEMU-TCG) unless marked otherwise.
 
+## Assets
+
+| File | What it is |
+|---|---|
+| `makhos-1.4.0.iso` | Bootable ISO — `qemu-system-x86_64 -cdrom makhos-1.4.0.iso -vga std -m 128M` |
+| `MAKH-1.4.0-src.tar.gz` | Full source tree (`make && make run`) |
+| `MAKH-1.4.0-src.zip` | Full source tree (zip) |
+| `SHA256SUMS` | Checksums for the three files above |
+
+## Build from source
+
+Needs `gcc`, `nasm`, `grub-mkrescue` (with `xorriso`) and `qemu-system-x86_64`.
+
+```sh
+tar xzf MAKH-1.4.0-src.tar.gz && cd MAKH-1.4.0
+make            # build makhos.kernel + makhos.iso
+make run        # boot it in QEMU
+make test       # run the 240 in-kernel tests
+make stress     # 24×4 stress campaign
+make fuzz-check # the 8 UFUZZ host-side gates (no QEMU)
+fuzz 2000       # drive KFUZZ over all targets from the shell
+```
+
 ## License
 
 Dual-licensed: **GNU AGPL-3.0** (see `LICENSE`) or a **commercial license**
-(see `LICENSING.md`).
+(see `LICENSING.md`). Earlier revisions were BSD-3-Clause; see `NOTICE`.
