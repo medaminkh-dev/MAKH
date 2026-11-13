@@ -19,7 +19,7 @@
 #                       a canary that PASSES is one)
 #
 # Records (one line each, integers and fixed tokens only):
-#   UFZ1 build id=<git describe>
+#   UFZ1 build id=<commit hash>[-dirty]
 #   UFZ1 tcb n= src=cov|selfcheck a= b= c=          testcase begins (KTEST)
 #   UFZ1 tc n= cpid= status= expect=ok|fail          testcase ends (KTEST)
 #   UFZ1 res src= cpid= wpid= a= b= c= outcome= status=   non-clean run (controller)

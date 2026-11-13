@@ -12,6 +12,7 @@
 ![Arch](https://img.shields.io/badge/arch-x86--64-informational)
 ![Language](https://img.shields.io/badge/C%20%2B%20asm-freestanding-lightgrey)
 ![Tests](https://img.shields.io/badge/in--kernel%20tests-240%20passing-brightgreen)
+[![Release](https://img.shields.io/badge/release-v1.4.0-orange)](https://github.com/medaminkh-dev/MAKH/releases/tag/v1.4.0)
 
 [Quick start](#-quick-start) · [What makes it different](#-what-makes-makhos-different) · [KFUZZ](#-kfuzz-the-kernel-fuzzes-itself) · [UFUZZ](#-ufuzz-attacking-the-kernel-from-ring-3) · [Shell](#-the-shell) · [Architecture](#-architecture) · [Docs](#-documentation)
 

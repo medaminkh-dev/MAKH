@@ -434,10 +434,12 @@ $(KERNEL): $(OBJECTS)
 	@echo "AS  $<"
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# Build identity (UFUZZ U6): `git describe --always --dirty`, recorded in
-# build/buildid.txt and rewritten only when it changes, so kernel/buildid.o is
-# recompiled (and the kernel relinked) only when the source revision changes.
-MAKH_BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+# Build identity (UFUZZ U6): the abbreviated commit hash, plus "-dirty" for
+# uncommitted changes. Tags are excluded so an old tag never names a new build.
+# Recorded in build/buildid.txt and rewritten only when it changes, so
+# kernel/buildid.o is recompiled (and the kernel relinked) only when the source
+# revision changes.
+MAKH_BUILD_ID := $(shell git describe --always --dirty --exclude='*' 2>/dev/null || echo unknown)
 $(shell mkdir -p build; echo '$(MAKH_BUILD_ID)' | cmp -s - build/buildid.txt || echo '$(MAKH_BUILD_ID)' > build/buildid.txt)
 kernel/buildid.o: build/buildid.txt
 kernel/buildid.o: CFLAGS += -DMAKH_BUILD_ID='"$(MAKH_BUILD_ID)"'

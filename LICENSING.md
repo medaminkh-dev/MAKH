@@ -40,6 +40,6 @@ Contributors therefore sign the [Contributor License Agreement](CLA.md) — see
 
 ## Trademarks
 
-The AGPL covers the code, not the names. "MakhOS", "MAKH" and "KFUZZ" may not
-be used to name or promote a modified version or a different product without
-permission. See [NOTICE](NOTICE).
+The AGPL covers the code, not the names. "MakhOS", "MAKH", "KFUZZ" and "UFUZZ"
+may not be used to name or promote a modified version or a different product
+without permission. See [NOTICE](NOTICE).
