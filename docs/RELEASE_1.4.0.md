@@ -145,7 +145,6 @@ make run        # boot it in QEMU
 make test       # run the 240 in-kernel tests
 make stress     # 24×4 stress campaign
 make fuzz-check # the 8 UFUZZ host-side gates (no QEMU)
-fuzz 2000       # drive KFUZZ over all targets from the shell
 ```
 
 ## License
