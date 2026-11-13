@@ -333,6 +333,16 @@ KTEST(vfs, fcntl_dupfd_floor_contract) {
         KEXPECT_EQ(r, want);                  /* never 0..2 */
         if (r >= 0) vfs_close((int)r);
     }
+    /* A floor ABOVE the lowest free fd must be honoured: the result is the
+     * lowest free fd >= floor, not the lowest free fd overall. */
+    int lowest = vfs_lowest_free_from3();
+    KASSERT_TEST(lowest >= 3 && lowest + 2 < VFS_MAX_FDS);
+    int floor = -1;
+    for (int i = lowest + 1; i < VFS_MAX_FDS; i++) if (!vfs_file(i)) { floor = i; break; }
+    KASSERT_TEST(floor > lowest);
+    r = vfs_fcntl(fd, F_DUPFD, floor);
+    KEXPECT_EQ(r, floor);
+    if (r >= 0) vfs_close((int)r);
     vfs_close(fd);
 }
 
