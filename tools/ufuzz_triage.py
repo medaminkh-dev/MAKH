@@ -312,6 +312,11 @@ def _replay_cov(a, b, c):
     return "make test-suite SUITE=ufuzzreplay REPLAY=%d:%d:%d" % (a, b, c)
 
 
+def _replay_ir(k):
+    return ("python3 tools/u7_batch.py image <batch.ir> build/u7.img && make test-suite "
+            "SUITE=ufuzzmin BATCH=3 EXT2=build/u7.img  (program %d of the batch)" % k)
+
+
 def _program_ir(u4gen, a, b, c):
     if not u4gen or not os.path.exists(u4gen):
         return None
@@ -370,6 +375,9 @@ def classify_log(st, syms, u4gen):
                       mode=b["a"], base=b["b"], mut=b["c"])
         if b["src"] == "selfcheck":
             inputs = dict(campaign=b["campaign"], testcase=n, src="selfcheck", kind=b["a"])
+        elif b["src"] == "ir":                  # U7: batch candidate a, run b
+            inputs = dict(campaign=b["campaign"], testcase=n, src="ir", candidate=b["a"],
+                          run=b["b"])
         if n in st.edges:
             inputs["new_edges"] = st.edges[n]
         if end is None:
@@ -387,6 +395,7 @@ def classify_log(st, syms, u4gen):
             expected.append(inputs)
             continue
         replay = (_replay_cov(b["a"], b["b"], b["c"]) if b["src"] == "cov"
+                  else _replay_ir(b["a"]) if b["src"] == "ir"
                   else "make test-suite SUITE=ufuzz  (selfcheck kind %d)" % b["a"])
         if status == 0 and exp == "fail":
             add("HARNESS_FAILURE", "canary-passed",
@@ -481,6 +490,9 @@ def classify_log(st, syms, u4gen):
         if n is None or n not in st.tcb:
             return None, None
         b = st.tcb[n]
+        if b["src"] == "ir":
+            return (dict(campaign=b["campaign"], testcase=n, src="ir", candidate=b["a"],
+                         run=b["b"]), _replay_ir(b["a"]))
         inp = dict(campaign=b["campaign"], testcase=n, src=b["src"],
                    mode=b["a"], base=b["b"], mut=b["c"])
         rp = _replay_cov(b["a"], b["b"], b["c"]) if b["src"] == "cov" else None

@@ -303,7 +303,13 @@ MAKE_PREBUILT = user/make/make
 ZIGCC     ?= python3 -m ziglang cc
 ZIGCFLAGS  = -target x86_64-linux-musl -fPIE -pie -static -Os -Wl,-s -Wall
 
-$(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
+# U7: a batch of generated programs in IR (with the generator's expectations),
+# baked into the initrd so a KTEST can run each one both as `cov` and as
+# `run-ir` and require identical results (list: tools/u7_batch.py SAMPLE).
+build/u7sample.ir: build/u4gen tools/u7_batch.py
+	@python3 tools/u7_batch.py sample $@
+
+$(INITRD): build/u7sample.ir Makefile $(shell find initrd user/sysroot user/make/proj user/selfhost -type f 2>/dev/null) $(USER_BINS) $(MUSL_PREBUILT) $(MUSL_FIO) $(MUSL_ENVTEST) $(BUSYBOX_PREBUILT) $(TCC_PREBUILT) $(MAKE_PREBUILT) user/tcc/hello.c user/tcc/full.c user/musl/hello.c
 	@echo "Building initrd.tar (+ user programs + tcc sysroot + make + selfhost)"
 	@rm -rf build/initrd && mkdir -p build/initrd/bin build/initrd/share
 	@cp -r initrd/. build/initrd/
@@ -335,6 +341,7 @@ $(INITRD): Makefile $(shell find initrd user/sysroot user/make/proj user/selfhos
 	@mkdir -p build/initrd/share/selfhost             # F21-d: MAKH rebuilds its own userland
 	@cp user/selfhost/Makefile build/initrd/share/selfhost/Makefile
 	@cp user/musl/hello.c build/initrd/share/selfhost/muslhello.c   # the shipped source, verbatim
+	@cp build/u7sample.ir build/initrd/share/u7sample.ir      # U7: run-ir equivalence sample
 	@(cd build/initrd && tar -cf $(abspath $(INITRD)) --format=ustar *)
 
 # Rebuild the checked-in musl program(s) from source. Needs `pip install ziglang`.
@@ -361,7 +368,7 @@ ISO    = makhos.iso
 # BUILD TARGETS
 # =============================================================================
 
-.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check u6-triage-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
+.PHONY: all clean run run-debug debug test test-suite smoke stress check-license abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check fuzz-check list-sources list-objects check-files size map clean-deps musl-progs
 
 all: $(KERNEL) $(ISO)
 
@@ -400,8 +407,14 @@ u5-derive-check: build/u4gen
 u6-triage-check:
 	@python3 fuzz/u6/selftest.py
 
+# UFUZZ U7 (host side): the IR minimizer's logic (closure, validity,
+# re-annotation, determinism, signature drift, thresholds, crash reboots) under
+# a simulated kernel. Real minimizations run locally (docs/UFUZZ_U7_MINIMIZE.md).
+u7-check: build/u4gen
+	@python3 fuzz/u7/selftest.py
+
 # All host-side UFUZZ gates.
-fuzz-check: abi-check u3-check u4-gen-check u5-derive-check u6-triage-check
+fuzz-check: abi-check u3-check u4-gen-check u5-derive-check u6-triage-check u7-check
 
 # Link kernel
 $(KERNEL): $(OBJECTS)
@@ -536,15 +549,19 @@ test: $(TEST_ISO) $(TESTDISK) $(EXT2IMG)
 # Fast inner loop: `make test-suite SUITE=ext2` boots a test ISO whose GRUB line
 # adds makh.suite=SUITE, so only that KTEST suite runs.
 SUITE_ISO = makhos-suite.iso
+TIMEOUT ?= 240
 test-suite: $(KERNEL) $(INITRD) $(TESTDISK) $(EXT2IMG)
-	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [REPLAY=<mode>:<base>:<mut>]"; exit 2)
+	@test -n "$(SUITE)" || (echo "usage: make test-suite SUITE=<suite> [REPLAY=<mode>:<base>:<mut>] [BATCH=<runs> EXT2=<img>] [TIMEOUT=<s>]"; exit 2)
 	@echo "$(REPLAY)" | grep -Eqx '([0-9]{1,10}:[0-9]{1,10}:[0-9]{1,10})?' || (echo "REPLAY must be <mode>:<base>:<mut>"; exit 2)
+	@echo "$(BATCH)" | grep -Eqx '([0-9]{1,2})?' || (echo "BATCH must be <runs>"; exit 2)
+	@echo "$(EXT2)" | grep -Eqx '[A-Za-z0-9_./-]*' || (echo "EXT2 must be a plain path"; exit 2)
+	@echo "$(TIMEOUT)" | grep -Eqx '[0-9]{1,5}' || (echo "TIMEOUT must be seconds"; exit 2)
 	@rm -rf isodir-suite && mkdir -p isodir-suite/boot/grub
-	@sed 's/makh.test/makh.test makh.suite=$(SUITE)$(if $(REPLAY), makh.ufuzz.replay=$(REPLAY))/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
+	@sed 's/makh.test/makh.test makh.suite=$(SUITE)$(if $(REPLAY), makh.ufuzz.replay=$(REPLAY))$(if $(BATCH), makh.ufuzz.batch=$(BATCH))/' grub-test.cfg > isodir-suite/boot/grub/grub.cfg
 	@cp $(KERNEL) $(INITRD) isodir-suite/boot/
 	@grub-mkrescue -o $(SUITE_ISO) isodir-suite 2>/dev/null
 	@rm -rf isodir-suite
-	@python3 tools/run_tests.py $(SUITE_ISO) --timeout 240
+	@python3 tools/run_tests.py $(SUITE_ISO) --timeout $(TIMEOUT)$(if $(EXT2), --ext2 $(EXT2))
 
 # Boot the normal image, type commands through the emulated PS/2 keyboard and
 # check what the shell prints (ping over the real e1000, arp, mem, ...).

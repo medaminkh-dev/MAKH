@@ -28,6 +28,7 @@
 #include <kfuzz.h>
 #include <klog.h>
 #include <fs/vfs.h>
+#include <lib/string.h>
 
 /* These are wall-clock-budget test harnesses (watchdog timeouts, deferred-
  * reclaim settling), not kernel-race probes. The stress job runs the suite
@@ -115,7 +116,13 @@ static void u6_tc_end(unsigned n, int cpid, int st, int expect_fail) {
 static void u6_drift(size_t pg0, size_t hp0) {
     long dp = (long)pg0 - (long)pmm_get_free_memory();
     long dh = (long)kheap_get_used() - (long)hp0;
-    if (dp || dh) kprintf("UFZ1 drift dpmm=%ld dheap=%ld\n", dp, dh);
+    if (dp || dh) {
+        kprintf("UFZ1 drift dpmm=%ld dheap=%ld\n", dp, dh);
+        /* Late reclamation or a real leak? Measure again after 2 s. */
+        sched_sleep_ms(2000);
+        kprintf("UFZ1 drift-late dpmm=%ld dheap=%ld\n",
+                (long)pg0 - (long)pmm_get_free_memory(), (long)kheap_get_used() - (long)hp0);
+    }
 }
 
 KTEST(ufuzz, reset_campaign_no_drift) {
@@ -563,7 +570,11 @@ KTEST(ufuzz, u4_emfile_boundary_is_exact) {
 KTEST(ufuzz, u52_fdops_programs_run_clean) {
     UFUZZ_SKIP_IF_NOTIMING();
     const unsigned K = 48;
-    (void)u4_run_cov(5, 0, 0);                  /* warmup: absorb first-touch cost */
+    /* Warm up with the SAME batch: the first pipe(NULL) of a boot grows pmm by
+     * 2 pages once (an identical second batch is exactly net-zero, measured), a
+     * one-time allocation, not a per-program leak. The asserted batch below must
+     * then be net-zero. (Which allocation it is remains an open audit item.) */
+    for (unsigned s = 0; s < K; s++) (void)u4_run_cov(5, s, s * 7919u + 1);
     ufuzz_settle();
     size_t pg0 = pmm_get_free_memory();
     size_t hp0 = kheap_get_used();
@@ -628,4 +639,118 @@ KTEST(ufuzzreplay, run) {
     }
     kprintf("UFZ1 replay end a=%lu b=%lu c=%lu runs=%d nonclean=%d\n",
             m, b, c, U6_REPLAY_RUNS, nonclean);
+}
+
+/* ---- U7: run a program from its IR ------------------------------------------
+ * `/bin/ufuzz run-ir <file> <k>` runs program k of a batch file through the same
+ * worker path as `cov`. Each run gets the U6 tcb/tc records (src=ir, a=k,
+ * b=run). An optional `--sum <path>` makes a clean worker write the digests of
+ * its return trace and its out-buffers there. */
+static int u7_spawn(char** argv, int* cpid) {
+    int pid = proc_spawn_user_argv("/bin/ufuzz", argv);
+    *cpid = pid;
+    if (pid <= 0) return -1;
+    int st = -1; sys_waitpid(pid, &st);
+    return st;
+}
+static int u7_run_ir(const char* file, unsigned k, unsigned run, const char* sum, int expect_fail) {
+    char ks[16]; u4_utoa(k, ks);
+    char* argv[] = { "/bin/ufuzz", "run-ir", (char*)file, ks, "--sum", (char*)sum, 0 };
+    if (!sum) argv[4] = 0;
+    unsigned n = u6_tc_begin("ir", (long)k, run, 0);
+    int cpid;
+    int st = u7_spawn(argv, &cpid);
+    u6_tc_end(n, cpid, st, expect_fail);
+    return st;
+}
+static int u7_run_cov_sum(int mode, unsigned base, unsigned mut, const char* sum) {
+    char ds[16], bs[16], ms[16];
+    u4_utoa((unsigned)mode, ds); u4_utoa(base, bs); u4_utoa(mut, ms);
+    char* argv[] = { "/bin/ufuzz", "cov", ds, bs, ms, "--sum", (char*)sum, 0 };
+    unsigned n = u6_tc_begin("cov", mode, base, mut);
+    int cpid;
+    int st = u7_spawn(argv, &cpid);
+    u6_tc_end(n, cpid, st, 0);
+    return st;
+}
+/* Read a small file into buf (NUL-terminated); returns bytes read or -1. */
+static long u7_read_file(const char* path, char* buf, size_t cap) {
+    int fd = vfs_open(path, O_RDONLY);
+    buf[0] = '\0';
+    if (fd < 0) return -1;
+    long n = 0, r;
+    while ((size_t)n < cap - 1 && (r = vfs_fd_read(fd, buf + n, cap - 1 - (size_t)n)) > 0) n += r;
+    vfs_close(fd);
+    buf[n] = '\0';
+    return n;
+}
+
+/* The same programs as tools/u7_batch.py SAMPLE (baked into the initrd as
+ * /share/u7sample.ir, each with the C generator's expectations). */
+static const struct { int mode; unsigned base, mut; } u7_sample[] = {
+    {0, 1, 1}, {1, 7, 7}, {2, 3, 3}, {5, 3, 23758}, {5, 11, 63353}, {6, 0, 0},
+};
+
+KTEST(ufuzz, u7_run_ir_matches_cov) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    for (unsigned k = 0; k < sizeof u7_sample / sizeof u7_sample[0]; k++) {
+        vfs_unlink("/u7a.sum"); vfs_unlink("/u7b.sum");
+        int sa = u7_run_cov_sum(u7_sample[k].mode, u7_sample[k].base, u7_sample[k].mut, "/u7a.sum");
+        int sb = u7_run_ir("/share/u7sample.ir", k, 0, "/u7b.sum", 0);
+        KEXPECT_EQ(sa, 0);
+        KEXPECT_EQ(sb, 0);
+        char a[64] = "", b[64] = "";
+        long na = u7_read_file("/u7a.sum", a, sizeof a);
+        long nb = u7_read_file("/u7b.sum", b, sizeof b);
+        KEXPECT_EQ(na, 34);                        /* "<16 hex> <16 hex>\n" */
+        KEXPECT(na == nb && memcmp(a, b, (size_t)(na > 0 ? na : 0)) == 0);
+        if (!(na == nb && na > 0 && memcmp(a, b, (size_t)na) == 0))
+            kprintf("u7: sample %u differs: cov=%s ir=%s\n", k, a, b);
+    }
+    vfs_unlink("/u7a.sum"); vfs_unlink("/u7b.sum");
+}
+
+/* Malformed input is a harness failure (controller outcome OTHER), never a
+ * fault or a hang. */
+KTEST(ufuzz, u7_run_ir_rejects_malformed) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    static const char* const bad[] = {
+        "# u7 batch count=1\n### prog 0\nhandles fd\ncall bogus imm:1\n",          /* unknown call */
+        "# u7 batch count=1\n### prog 0\nhandles fd\ncall close res:7 =exact:0\n", /* undeclared handle */
+        "# u7 batch count=1\n### prog 0\nhandles -\ncall close imm:1x =exact:0\n", /* bad number */
+        "# u7 batch count=1\n### prog 1\nhandles -\ncall getpid =nonneg\n",        /* no program 0 */
+    };
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        vfs_unlink("/u7bad.ir");
+        int fd = vfs_open("/u7bad.ir", O_CREAT | O_RDWR | O_TRUNC);
+        KASSERT_TEST(fd >= 0);
+        vfs_fd_write(fd, bad[i], strlen(bad[i]));
+        vfs_close(fd);
+        KEXPECT_EQ(u7_run_ir("/u7bad.ir", 0, 0, 0, 1), U4_OUT_OTHER);
+    }
+    vfs_unlink("/u7bad.ir");
+}
+
+/* ---- U7: run a batch of candidate programs -----------------------------------
+ * `makh.ufuzz.batch=<runs>` (tools/u7_batch.py image + run_tests.py --ext2):
+ * every program of /mnt/u7/batch.ir runs <runs> times. It reports through the
+ * U6 records; the host minimizer judges each candidate. Without the key it does
+ * nothing. */
+KTEST(ufuzzmin, run) {
+    char spec[16];
+    if (!cmdline_value("makh.ufuzz.batch", spec, sizeof spec)) return;
+    const char* p = spec;
+    unsigned long runs;
+    KASSERT_TEST(u6_parse_u(&p, &runs) && *p == '\0' && runs >= 1 && runs <= 16);
+    static char head[64];
+    KASSERT_TEST(u7_read_file("/mnt/u7/batch.ir", head, sizeof head) > 0);
+    const char* q = head;
+    while (*q && *q != '=') q++;
+    unsigned long count = 0;
+    KASSERT_TEST(*q == '=' && (q++, u6_parse_u(&q, &count)) && count >= 1 && count <= 4096);
+    kprintf("UFZ1 batch begin count=%lu runs=%lu\n", count, runs);
+    for (unsigned k = 0; k < count; k++)
+        for (unsigned r = 0; r < runs; r++)
+            (void)u7_run_ir("/mnt/u7/batch.ir", k, r, 0, 0);
+    kprintf("UFZ1 batch end count=%lu runs=%lu\n", count, runs);
 }

@@ -357,6 +357,27 @@ static void u3_fail(int diag) {
     uexit(cls);
 }
 
+/* U7: when set (`... --sum <path>`), a clean worker writes the FNV-1a digest of
+ * its pass-1 return trace and of its out-buffers to <path>, so a KTEST can
+ * check that two execution paths ran the SAME program identically. */
+static const char* g_sum_path;
+static void u7_hex(char* o, unsigned long v) {
+    for (int i = 15; i >= 0; i--) { o[i] = "0123456789abcdef"[v & 0xf]; v >>= 4; }
+}
+static void u7_write_sum(const u3_program* pg, const long* t, unsigned long bdig) {
+    unsigned long h = 1469598103934665603UL;
+    for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++) {
+        /* getpid's result is this worker's pid: the one return that legitimately
+         * differs between two processes running the same program. */
+        unsigned long v = (pg->calls[i].sysno == SYS_GETPID) ? 0 : (unsigned long)t[i];
+        for (int k = 0; k < 8; k++) { h ^= (v >> (8 * k)) & 0xff; h *= 1099511628211UL; }
+    }
+    char line[34];
+    u7_hex(line, h); line[16] = ' '; u7_hex(line + 17, bdig); line[33] = '\n';
+    long fd = uopen(g_sum_path, 0x241);            /* O_WRONLY|O_CREAT|O_TRUNC */
+    if (fd >= 0) { uwrite((int)fd, line, sizeof line); uclose((int)fd); }
+}
+
 static void u3_worker_pg(const u3_program* pg) {
     long t1[U3_MAX_CALLS], t2[U3_MAX_CALLS];
     /* Replay isolation: pass 2 must start from the process state pass 1 started
@@ -400,6 +421,7 @@ static void u3_worker_pg(const u3_program* pg) {
             if (t1[i] != t2[i]) u3_fail(0x300 | i); /* non-deterministic return */
         if (u3_digest(pg) != d1) u3_fail(0x400);    /* non-deterministic out-buffers */
     }
+    if (g_sum_path) u7_write_sum(pg, t1, d1);
     uexit(0);
 }
 
@@ -693,6 +715,242 @@ static int run_selfcheck(int kind) {
     return res.outcome;
 }
 
+
+/* ---- U7: run a program from its textual IR -----------------------------------
+ * `/bin/ufuzz run-ir <file> <k> [--sum <path>]` parses program <k> of a batch
+ * file — the U3 IR with U5.3 `=expect` annotations and an optional `need` line,
+ * programs separated by `### prog <k>` — into a u3_program and runs it through
+ * the SAME worker path as `cov` (fd baseline, replay, digest, errno contract,
+ * expectations). Only the syscalls the generator emits are accepted. Any parse
+ * problem is a HARNESS failure (worker class 106, controller outcome OTHER),
+ * never a fault. */
+#define U7_FILE_MAX  (256 * 1024)
+#define U7_MAX_PATHS 4
+#define U7_PATH_MAX  64
+static char u7_text[U7_FILE_MAX + 1];
+static u3_call u7_calls[U3_MAX_CALLS];
+static u3_buf u7_bufs[U3_MAX_BUFS];
+static unsigned char u7_bufdata[U3_MAX_BUFS][U3_MAX_BUFSZ];
+static char u7_pathdata[U7_MAX_PATHS][U7_PATH_MAX];
+static const char* u7_paths[U7_MAX_PATHS];
+static u3_program u7_prog;
+
+static const struct { const char* name; long nr; } U7_SYS[] = {
+    {"open", SYS_OPEN}, {"read", SYS_READ}, {"write", SYS_WRITE}, {"close", SYS_CLOSE},
+    {"mmap", SYS_MMAP}, {"mprotect", SYS_MPROTECT}, {"munmap", SYS_MUNMAP},
+    {"getpid", SYS_GETPID}, {"arch_prctl", SYS_ARCH_PRCTL}, {"lseek", SYS_LSEEK},
+    {"unlink", SYS_UNLINK}, {"pipe", SYS_PIPE}, {"pipe2", SYS_PIPE2}, {"dup2", SYS_DUP2},
+    {"fcntl", SYS_FCNTL}, {"openat", SYS_OPENAT}, {"socket", SYS_SOCKET},
+};
+
+static int u7_eq(const char* a, const char* b, int n) {   /* a[0..n) == b (NUL) */
+    int i = 0;
+    for (; i < n; i++) if (!b[i] || a[i] != b[i]) return 0;
+    return b[i] == '\0';
+}
+/* Parse a signed decimal number; *p advances. Returns 0 on success. */
+static int u7_num(const char** p, const char* end, long* out) {
+    const char* s = *p; int neg = 0; unsigned long v = 0; int n = 0;
+    if (s < end && *s == '-') { neg = 1; s++; }
+    while (s < end && *s >= '0' && *s <= '9') {
+        if (v > (~0UL - 9) / 10) return 1;
+        v = v * 10 + (unsigned long)(*s - '0'); s++; n++;
+    }
+    if (!n) return 1;
+    *out = neg ? -(long)v : (long)v;
+    *p = s;
+    return 0;
+}
+static int u7_hexbyte(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+/* Parse one program (the text in [s, e)). Returns 0 or a nonzero code. */
+static int u7_parse(const char* s, const char* e) {
+    int ncalls = 0, nbufs = 0, npaths = 0, nh = 0;
+    u7_prog.need_free = 0; u7_prog.need_exact = 0;
+    while (s < e) {
+        const char* le = s;
+        while (le < e && *le != '\n') le++;
+        const char* t = s; const char* toks[16]; int tl[16]; int nt = 0;
+        while (t < le && nt < 16) {
+            while (t < le && *t == ' ') t++;
+            if (t >= le) break;
+            toks[nt] = t;
+            while (t < le && *t != ' ') t++;
+            tl[nt] = (int)(t - toks[nt]); nt++;
+        }
+        s = le + 1;
+        if (nt == 0 || toks[0][0] == '#') continue;
+        if (u7_eq(toks[0], "abi", tl[0]) || u7_eq(toks[0], "prng", tl[0])) continue;
+        if (u7_eq(toks[0], "handles", tl[0])) {
+            /* Count every word on the line (the token array keeps only 16). */
+            int words = 0;
+            for (const char* w = toks[0]; w < le; ) {
+                while (w < le && *w == ' ') w++;
+                if (w >= le) break;
+                words++;
+                while (w < le && *w != ' ') w++;
+            }
+            nh = (nt == 2 && tl[1] == 1 && toks[1][0] == '-') ? 0 : words - 1;
+            if (nh > U3_MAX_H) return 0x10;
+            continue;
+        }
+        if (u7_eq(toks[0], "need", tl[0])) {
+            long v; const char* q = toks[1];
+            if (nt != 3 || u7_num(&q, toks[1] + tl[1], &v) || v < 0 || v > 32) return 0x11;
+            u7_prog.need_free = (int)v; u7_prog.need_exact = u7_eq(toks[2], "exact", tl[2]);
+            continue;
+        }
+        if (u7_eq(toks[0], "path", tl[0])) {
+            if (nt != 3 || npaths >= U7_MAX_PATHS || tl[2] >= U7_PATH_MAX) return 0x12;
+            for (int k = 0; k < tl[2]; k++) u7_pathdata[npaths][k] = toks[2][k];
+            u7_pathdata[npaths][tl[2]] = '\0';
+            u7_paths[npaths] = u7_pathdata[npaths]; npaths++;
+            continue;
+        }
+        if (u7_eq(toks[0], "buf", tl[0])) {
+            long id, len; const char* q = toks[1];
+            if (nt < 3 || nbufs >= U3_MAX_BUFS || u7_num(&q, toks[1] + tl[1], &id) || id != nbufs)
+                return 0x13;
+            q = toks[2];
+            if (u7_num(&q, toks[2] + tl[2], &len) || len < 0 || len > U3_MAX_BUFSZ) return 0x14;
+            for (int k = 0; k < len; k++) {
+                int hi = -1, lo = -1;
+                if (nt >= 4 && 2 * k + 1 < tl[3]) {
+                    hi = u7_hexbyte(toks[3][2 * k]); lo = u7_hexbyte(toks[3][2 * k + 1]);
+                }
+                u7_bufdata[nbufs][k] = (hi < 0 || lo < 0) ? 0 : (unsigned char)(hi * 16 + lo);
+            }
+            u7_bufs[nbufs].data = u7_bufdata[nbufs]; u7_bufs[nbufs].len = (int)len; nbufs++;
+            continue;
+        }
+        if (!u7_eq(toks[0], "call", tl[0])) return 0x15;
+        if (ncalls >= U3_MAX_CALLS || nt < 2) return 0x16;
+        u3_call* c = &u7_calls[ncalls++];
+        c->sysno = -1;
+        for (unsigned k = 0; k < sizeof U7_SYS / sizeof U7_SYS[0]; k++)
+            if (u7_eq(toks[1], U7_SYS[k].name, tl[1])) c->sysno = U7_SYS[k].nr;
+        if (c->sysno < 0) return 0x17;
+        c->nargs = 0; c->bind = U3_BIND_NONE; c->bind_h0 = c->bind_h1 = c->bind_buf = 0;
+        c->expect_mode = U3_ANY; c->expect_val = 0;
+        for (int k = 0; k < 6; k++) { c->args[k].kind = U3_IMM; c->args[k].val = 0; }
+        for (int i = 2; i < nt; i++) {
+            const char* q = toks[i]; const char* qe = toks[i] + tl[i]; long v;
+            if (tl[i] == 2 && q[0] == '-' && q[1] == '>') {        /* -> fd:h[,h] / addr:h */
+                if (++i >= nt) return 0x18;
+                q = toks[i]; qe = toks[i] + tl[i];
+                int isfd = (qe - q > 3 && q[0] == 'f' && q[1] == 'd' && q[2] == ':');
+                int isad = (qe - q > 5 && q[0] == 'a' && q[1] == 'd' && q[2] == 'd' && q[3] == 'r' && q[4] == ':');
+                if (!isfd && !isad) return 0x19;
+                q += isfd ? 3 : 5;
+                if (u7_num(&q, qe, &v) || v < 0 || v >= nh) return 0x1a;
+                c->bind_h0 = (int)v; c->bind = isfd ? U3_BIND_FD : U3_BIND_ADDR;
+                if (isfd && q < qe && *q == ',') {
+                    q++;
+                    if (u7_num(&q, qe, &v) || v < 0 || v >= nh) return 0x1b;
+                    c->bind_h1 = (int)v; c->bind = U3_BIND_PIPE;
+                    c->bind_buf = -1;
+                    for (int a = 0; a < c->nargs; a++)
+                        if (c->args[a].kind == U3_BUF) c->bind_buf = (int)c->args[a].val;
+                    if (c->bind_buf < 0) return 0x1c;
+                }
+                continue;
+            }
+            if (q[0] == '=') {                                    /* =kind[:v] */
+                const char* k = q + 1; const char* ke = k;
+                while (ke < qe && *ke != ':') ke++;
+                long ev = 0;
+                if (ke < qe) { const char* vq = ke + 1; if (u7_num(&vq, qe, &ev)) return 0x1d; }
+                int kl = (int)(ke - k);
+                if      (u7_eq(k, "any", kl))    c->expect_mode = U3_ANY;
+                else if (u7_eq(k, "nonneg", kl)) c->expect_mode = U3_NONNEG;
+                else if (u7_eq(k, "neg", kl))    c->expect_mode = U3_NEG;
+                else if (u7_eq(k, "exact", kl))  c->expect_mode = U3_EXACT;
+                else if (u7_eq(k, "slot", kl))   c->expect_mode = U3_SLOT;
+                else if (u7_eq(k, "basefl", kl)) c->expect_mode = U3_BASEFL;
+                else return 0x1e;
+                c->expect_val = ev;
+                continue;
+            }
+            if (c->nargs >= 4) return 0x1f;
+            u3_arg* a = &c->args[c->nargs++];
+            if (tl[i] == 4 && q[0] == 'n' && q[1] == 'u' && q[2] == 'l' && q[3] == 'l') {
+                a->kind = U3_NIL; a->val = 0; continue;
+            }
+            const char* col = q;
+            while (col < qe && *col != ':') col++;
+            if (col >= qe) return 0x20;
+            int kl = (int)(col - q);
+            const char* vq = col + 1;
+            if (u7_num(&vq, qe, &v) || vq != qe) return 0x21;
+            if      (u7_eq(q, "imm", kl))  a->kind = U3_IMM;
+            else if (u7_eq(q, "res", kl))  { a->kind = U3_RES;  if (v < 0 || v >= nh) return 0x22; }
+            else if (u7_eq(q, "buf", kl))  { a->kind = U3_BUF;  if (v < 0 || v >= nbufs) return 0x23; }
+            else if (u7_eq(q, "path", kl)) { a->kind = U3_PATH; if (v < 0 || v >= npaths) return 0x24; }
+            else if (u7_eq(q, "slot", kl)) a->kind = U3_FDSLOT;
+            else if (u7_eq(q, "bad", kl))  a->kind = U3_BADPTR;
+            else return 0x25;
+            a->val = v;
+        }
+    }
+    if (ncalls == 0) return 0x26;
+    u7_prog.name = "ir"; u7_prog.expect_fault = 0; u7_prog.replay = 1;
+    u7_prog.nhandles = nh;
+    u7_prog.bufs = u7_bufs; u7_prog.nbufs = nbufs;
+    u7_prog.paths = u7_paths; u7_prog.npaths = npaths;
+    u7_prog.iovs = 0; u7_prog.niovs = 0;
+    u7_prog.calls = u7_calls; u7_prog.ncalls = ncalls;
+    u7_prog.dcs = 0; u7_prog.ndcs = 0;
+    return 0;
+}
+
+/* Locate program k (`### prog <k>` headers) in the batch file and parse it. */
+static int u7_load(const char* file, unsigned long k) {
+    long fd = uopen(file, 0);
+    if (fd < 0) return 0x01;
+    long n = 0, r;
+    while (n < U7_FILE_MAX && (r = uread((int)fd, u7_text + n, (unsigned long)(U7_FILE_MAX - n))) > 0)
+        n += r;
+    uclose((int)fd);
+    if (n >= U7_FILE_MAX) return 0x02;
+    u7_text[n] = '\0';
+    const char* s = u7_text; const char* e = u7_text + n;
+    const char* start = 0; const char* stop = e;
+    while (s < e) {
+        const char* le = s;
+        while (le < e && *le != '\n') le++;
+        if (le - s > 9 && s[0] == '#' && s[1] == '#' && s[2] == '#' && s[3] == ' ' &&
+            s[4] == 'p' && s[5] == 'r' && s[6] == 'o' && s[7] == 'g' && s[8] == ' ') {
+            if (start) { stop = s; break; }
+            const char* q = s + 9; long v;
+            if (!u7_num(&q, le, &v) && (unsigned long)v == k) start = le + 1;
+        }
+        s = le + 1;
+    }
+    if (!start) return 0x03;
+    return u7_parse(start, stop);
+}
+
+static int run_ir_one(const char* file, unsigned long k) {
+    int e = u7_load(file, k);
+    if (e) {
+        /* A harness problem, reported in the same record format as a worker. */
+        long pid = ugetpid();
+        puts_("UFZ1 diag pid="); putl_(pid); puts_(" pass=0 cls=106 what=ir-parse diag=");
+        putl_(e); puts_(" call=0\n");
+        puts_("UFZ1 res src=ir cpid="); putl_(pid); puts_(" wpid="); putl_(pid);
+        puts_(" a="); putl_((long)k); puts_(" b=0 c=0 outcome=OTHER status=106\n");
+        return OUT_OTHER;
+    }
+    g_gen_prog = &u7_prog;
+    struct result r = run_one(WK_U3GEN, 0);
+    u6_res("ir", (long)k, 0, 0, r);
+    return r.outcome;
+}
+
 static int streq_(const char* a, const char* b) {
     if (!a || !b) return 0;
     while (*a && *a == *b) { a++; b++; }
@@ -704,6 +962,11 @@ int umain(int argc, char** argv) {
         return run_selfcheck((int)parse_ul(argv[2]));    /* `/bin/ufuzz selfcheck <kind>` */
     if (argc >= 2 && streq_u3(argv[1]))
         return run_u3_campaign();                        /* `/bin/ufuzz u3` */
+    /* U7: an optional trailing `--sum <path>` makes a clean worker write its
+     * trace/out-buffer digests there (equivalence checks). */
+    if (argc >= 3 && streq_(argv[argc - 2], "--sum")) { g_sum_path = argv[argc - 1]; argc -= 2; }
+    if (argc >= 4 && streq_(argv[1], "run-ir"))          /* `run-ir <file> <k>` */
+        return run_ir_one(argv[2], parse_ul(argv[3]));
     if (argc >= 2 && streq_cov(argv[1]))                 /* `cov <mode> <base> <mut>` */
         return run_cov_one(argc >= 3 ? (int)parse_ul(argv[2]) : 0,
                            argc >= 4 ? parse_ul(argv[3]) : 0,

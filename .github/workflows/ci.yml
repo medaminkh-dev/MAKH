@@ -47,6 +47,11 @@ jobs:
         run: make u5-derive-check
       - name: UFUZZ U6 — triage selftest (real fixtures + derived cases)
         run: make u6-triage-check
+      - name: UFUZZ U7 — minimizer selftest (simulated kernel) + debugfs present
+        run: |
+          command -v debugfs || sudo apt-get install -y --no-install-recommends e2fsprogs
+          command -v debugfs
+          make u7-check
 
   build-and-test:
     runs-on: ubuntu-latest
