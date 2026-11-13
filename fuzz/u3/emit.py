@@ -198,6 +198,10 @@ def _op_c(op):
         return "{U3_PATH, %d}" % op[1]
     if k == u3.IOV:
         return "{U3_IOV, %d}" % op[1]
+    if k == u3.SLOT:
+        return "{U3_FDSLOT, %d}" % op[1]
+    if k == u3.BAD:
+        return "{U3_BADPTR, %d}" % op[1]
     raise ValueError(op)
 
 
@@ -220,9 +224,9 @@ def render(progs, abi):
     L.append("#ifndef MAKHOS_UFUZZ_U3_PROGRAMS_H")
     L.append("#define MAKHOS_UFUZZ_U3_PROGRAMS_H")
     L.append("")
-    L.append("#define U3_IMM 0\n#define U3_RES 1\n#define U3_NIL 2\n#define U3_BUF 3\n#define U3_PATH 4\n#define U3_IOV 5")
+    L.append("#define U3_IMM 0\n#define U3_RES 1\n#define U3_NIL 2\n#define U3_BUF 3\n#define U3_PATH 4\n#define U3_IOV 5\n#define U3_FDSLOT 6\n#define U3_BADPTR 7")
     L.append("#define U3_BIND_NONE 0\n#define U3_BIND_FD 1\n#define U3_BIND_ADDR 2\n#define U3_BIND_PIPE 3")
-    L.append("#define U3_ANY 0\n#define U3_NONNEG 1\n#define U3_NEG 2\n#define U3_EXACT 3")
+    L.append("#define U3_ANY 0\n#define U3_NONNEG 1\n#define U3_NEG 2\n#define U3_EXACT 3\n#define U3_SLOT 4\n#define U3_BASEFL 5")
     L.append("#define U3_MAX_SEG %d" % MAX_SEG)
     L.append("")
     L.append("typedef struct { int kind; long val; } u3_arg;")
@@ -237,7 +241,8 @@ def render(progs, abi):
     L.append("                 const char* const* paths; int npaths;")
     L.append("                 const u3_iov* iovs; int niovs;")
     L.append("                 const u3_call* calls; int ncalls;")
-    L.append("                 const u3_dc* dcs; int ndcs; } u3_program;")
+    L.append("                 const u3_dc* dcs; int ndcs;")
+    L.append("                 int need_free, need_exact; } u3_program;")
     L.append("")
     for i, pg in enumerate(progs):
         # buffers
@@ -289,7 +294,7 @@ def render(progs, abi):
         iovs = ("u3_%d_iovs, %d" % (i, len(iovl))) if iovl else "0, 0"
         dcl = _dc_list(pg)
         dcs = ("u3_%d_dcs, %d" % (i, len(dcl))) if dcl else "0, 0"
-        L.append('  { "%s", %d, %d, %d, %s, %s, %s, u3_%d_calls, %d, %s },'
+        L.append('  { "%s", %d, %d, %d, %s, %s, %s, u3_%d_calls, %d, %s, 0, 0 },'
                  % (pg["name"], 1 if pg["expect_fault"] else 0, 1 if pg["replay"] else 0,
                     len(pg["handles"]), bufs, paths, iovs, i, len(pg["calls"]), dcs))
     L.append("};")

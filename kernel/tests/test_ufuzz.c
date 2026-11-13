@@ -468,6 +468,18 @@ KTEST(ufuzz, selfcheck_failures_are_never_ok) {
     KEXPECT_EQ(u4_run_selfcheck(2), U4_OUT_OTHER);   /* out-buffers differ across replay */
     KEXPECT_EQ(u4_run_selfcheck(3), U4_OUT_OTHER);   /* program over the call capacity   */
     KEXPECT_EQ(u4_run_selfcheck(5), U4_OUT_OTHER);   /* undocumented errno for the syscall */
+    KEXPECT_EQ(u4_run_selfcheck(7), U4_OUT_OTHER);   /* pipe(NULL) "expected" to succeed */
+    KEXPECT_EQ(u4_run_selfcheck(9), U4_OUT_OTHER);   /* fd leaked past a pass (isolation) */
+    KEXPECT_EQ(u4_run_selfcheck(11), U4_OUT_OTHER);  /* baseline cannot have 32 free fds */
+}
+
+/* U5.2 positive controls for the three new checks above: the same shapes with a
+ * correct expectation, a balanced fd lifecycle, a satisfiable precondition. */
+KTEST(ufuzz, fd_oracles_accept_correct_programs) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    KEXPECT_EQ(u4_run_selfcheck(8), 0);              /* pipe(NULL) = -EFAULT */
+    KEXPECT_EQ(u4_run_selfcheck(10), 0);             /* open + close leaves baseline */
+    KEXPECT_EQ(u4_run_selfcheck(12), 0);             /* need_free = 1 */
 }
 
 KTEST(ufuzz, contract_oracle_accepts_documented_errno) {
@@ -507,4 +519,19 @@ KTEST(ufuzz, u4_emfile_boundary_is_exact) {
     ufuzz_settle();
     KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* 29 open descriptions fully released, */
     KEXPECT_EQ(kheap_get_used(), hp0);          /* incl. the control's exit with 29 open */
+}
+
+/* Mode 6: every vfs_pipe failure path reachable from Ring 3 (EFAULT copy-out,
+ * write-end install failure with one slot free, read-end install failure with
+ * none), each followed by an allocation whose exact slot proves the rollback. */
+KTEST(ufuzz, u52_pipe_failure_paths_roll_back) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    (void)u4_run_cov(6, 0, 0);
+    ufuzz_settle();
+    size_t pg0 = pmm_get_free_memory();
+    size_t hp0 = kheap_get_used();
+    KEXPECT_EQ(u4_run_cov(6, 0, 0), 0);
+    ufuzz_settle();
+    KEXPECT_EQ(pmm_get_free_memory(), pg0);
+    KEXPECT_EQ(kheap_get_used(), hp0);
 }

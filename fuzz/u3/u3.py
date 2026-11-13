@@ -38,6 +38,17 @@ MAX_SEG = 4
 # runtime (each iov_base is the runtime address of that arena buffer — a thing
 # the host can't know, hence a dedicated operand rather than a flat buffer).
 IMM, RES, NIL, BUF, PATH, IOV = "imm", "res", "null", "buf", "path", "iov"
+# U5.2 fd-surface operands:
+#   ("slot", enc) — a descriptor NUMBER chosen relative to the worker's baseline:
+#       the executor resolves the low 16 bits as an ordinal into the fds that were
+#       FREE (>= 3) when the program started, and ORs back the remaining bits (so
+#       enc = k | 1<<32 tests int truncation). Used for fds the program does not
+#       hold a handle on: a free slot, a stale (closed) slot, a dup2 target.
+#   ("bad", addr) — a deliberately invalid pointer (NULL, kernel-half,
+#       non-canonical, unmapped). Allowed only for a pointer arg; the call is
+#       expected to be refused (-EFAULT), never to dereference it.
+SLOT, BAD = "slot", "bad"
+SLOT_ORD_MASK = 0xffff
 
 
 class Call:
@@ -108,6 +119,10 @@ def _op_str(op):
         return "path:%d" % op[1]
     if k == IOV:
         return "iov:%d" % op[1]
+    if k == SLOT:
+        return "slot:%d" % op[1]
+    if k == BAD:
+        return "bad:%d" % op[1]
     raise ValueError("bad operand %r" % (op,))
 
 
@@ -117,7 +132,7 @@ def _op_parse(tok):
     k, _, v = tok.partition(":")
     if k == IMM:
         return (IMM, int(v))
-    if k in (RES, BUF, PATH, IOV):
+    if k in (RES, BUF, PATH, IOV, SLOT, BAD):
         return (k, int(v))
     raise ValueError("bad operand token %r" % tok)
 
@@ -333,6 +348,21 @@ def validate(p, abi):
             elif kind == NIL:
                 if akind == "ptr" and not spec.get("optional"):
                     raise ValErr("call %d (%s) arg %d: NULL for a non-optional pointer %s"
+                                 % (idx, c.sys, ai, spec.get("name")))
+            elif kind == SLOT:
+                # A baseline-relative descriptor number: only for a scalar arg
+                # (an fd, or fcntl's F_DUPFD floor), never a pointer; the ordinal
+                # must be a real non-negative index.
+                if akind != "scalar":
+                    raise ValErr("call %d (%s) arg %d: slot for a non-scalar arg %s"
+                                 % (idx, c.sys, ai, spec.get("name")))
+                if op[1] < 0 or (op[1] & SLOT_ORD_MASK) >= 32:
+                    raise ValErr("call %d (%s) arg %d: slot %d has no ordinal in 0..31"
+                                 % (idx, c.sys, ai, op[1]))
+            elif kind == BAD:
+                # A deliberately invalid pointer stands only for a pointer arg.
+                if akind != "ptr":
+                    raise ValErr("call %d (%s) arg %d: bad pointer for a non-ptr arg %s"
                                  % (idx, c.sys, ai, spec.get("name")))
             elif kind == IMM:
                 # An immediate stands in only for a scalar (by-value) argument; a

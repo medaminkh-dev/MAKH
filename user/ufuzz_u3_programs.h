@@ -11,6 +11,8 @@
 #define U3_BUF 3
 #define U3_PATH 4
 #define U3_IOV 5
+#define U3_FDSLOT 6
+#define U3_BADPTR 7
 #define U3_BIND_NONE 0
 #define U3_BIND_FD 1
 #define U3_BIND_ADDR 2
@@ -19,6 +21,8 @@
 #define U3_NONNEG 1
 #define U3_NEG 2
 #define U3_EXACT 3
+#define U3_SLOT 4
+#define U3_BASEFL 5
 #define U3_MAX_SEG 4
 
 typedef struct { int kind; long val; } u3_arg;
@@ -33,7 +37,8 @@ typedef struct { const char* name; int expect_fault; int replay; int nhandles;
                  const char* const* paths; int npaths;
                  const u3_iov* iovs; int niovs;
                  const u3_call* calls; int ncalls;
-                 const u3_dc* dcs; int ndcs; } u3_program;
+                 const u3_dc* dcs; int ndcs;
+                 int need_free, need_exact; } u3_program;
 
 static const char* const u3_0_paths[] = {"/bin/hello"};
 static const u3_call u3_0_calls[] = {
@@ -132,16 +137,16 @@ static const u3_call u3_9_calls[] = {
 };
 
 static const u3_program U3_PROGRAMS[] = {
-  { "gen0", 0, 1, 1, 0, 0, u3_0_paths, 1, 0, 0, u3_0_calls, 6, 0, 0 },
-  { "gen1", 0, 1, 2, u3_1_bufs, 2, u3_1_paths, 1, 0, 0, u3_1_calls, 8, 0, 0 },
-  { "gen2", 0, 1, 3, 0, 0, u3_2_paths, 1, 0, 0, u3_2_calls, 7, 0, 0 },
-  { "pipe_roundtrip", 0, 1, 2, u3_3_bufs, 3, 0, 0, 0, 0, u3_3_calls, 5, u3_3_dcs, 1 },
-  { "mmap_success", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_4_calls, 3, 0, 0 },
-  { "mmap_fail", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_5_calls, 2, 0, 0 },
-  { "ioctl_termios_roundtrip", 0, 1, 0, u3_6_bufs, 2, 0, 0, 0, 0, u3_6_calls, 3, u3_6_dcs, 1 },
-  { "ioctl_pgrp_roundtrip", 0, 1, 0, u3_7_bufs, 2, 0, 0, 0, 0, u3_7_calls, 3, u3_7_dcs, 1 },
-  { "arch_prctl_fs_roundtrip", 0, 1, 0, u3_8_bufs, 2, 0, 0, 0, 0, u3_8_calls, 2, u3_8_dcs, 1 },
-  { "iov_roundtrip", 0, 1, 2, u3_9_bufs, 5, 0, 0, u3_9_iovs, 2, u3_9_calls, 5, u3_9_dcs, 2 },
+  { "gen0", 0, 1, 1, 0, 0, u3_0_paths, 1, 0, 0, u3_0_calls, 6, 0, 0, 0, 0 },
+  { "gen1", 0, 1, 2, u3_1_bufs, 2, u3_1_paths, 1, 0, 0, u3_1_calls, 8, 0, 0, 0, 0 },
+  { "gen2", 0, 1, 3, 0, 0, u3_2_paths, 1, 0, 0, u3_2_calls, 7, 0, 0, 0, 0 },
+  { "pipe_roundtrip", 0, 1, 2, u3_3_bufs, 3, 0, 0, 0, 0, u3_3_calls, 5, u3_3_dcs, 1, 0, 0 },
+  { "mmap_success", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_4_calls, 3, 0, 0, 0, 0 },
+  { "mmap_fail", 0, 1, 1, 0, 0, 0, 0, 0, 0, u3_5_calls, 2, 0, 0, 0, 0 },
+  { "ioctl_termios_roundtrip", 0, 1, 0, u3_6_bufs, 2, 0, 0, 0, 0, u3_6_calls, 3, u3_6_dcs, 1, 0, 0 },
+  { "ioctl_pgrp_roundtrip", 0, 1, 0, u3_7_bufs, 2, 0, 0, 0, 0, u3_7_calls, 3, u3_7_dcs, 1, 0, 0 },
+  { "arch_prctl_fs_roundtrip", 0, 1, 0, u3_8_bufs, 2, 0, 0, 0, 0, u3_8_calls, 2, u3_8_dcs, 1, 0, 0 },
+  { "iov_roundtrip", 0, 1, 2, u3_9_bufs, 5, 0, 0, u3_9_iovs, 2, u3_9_calls, 5, u3_9_dcs, 2, 0, 0 },
 };
 static const int U3_NPROGRAMS = 10;
 

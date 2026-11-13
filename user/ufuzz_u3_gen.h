@@ -54,13 +54,21 @@
  * file (unlinked), FS base (restored). A new call that touches anything else —
  * cwd, signal mask/handlers, brk, umask, GS base, rlimits — needs its reset added
  * to u3_worker_pg first. The digest + trace comparison is the backstop: leaked
- * state that changes any result or out-buffer shows up as a replay failure. */
+ * state that changes any result or out-buffer shows up as a replay failure.
+ * The fd table is checked directly (U5.2): u3_worker_pg snapshots every fd's
+ * open state + F_GETFL before pass 1 and requires it unchanged after each pass,
+ * so fd-surface calls (pipe/pipe2/dup2/fcntl/openat/socket) must release every
+ * fd they create, must not dup2 onto an fd the worker inherited, and must not
+ * F_SETFL a description shared with an inherited fd (the console). */
 enum { U3G_OPEN, U3G_READ, U3G_WRITE, U3G_CLOSE,
        U3G_MMAP, U3G_MPROTECT, U3G_MUNMAP, U3G_GETPID, U3G_ARCH_PRCTL,
-       U3G_LSEEK, U3G_UNLINK, U3G_NSYS };
+       U3G_LSEEK, U3G_UNLINK,
+       U3G_PIPE, U3G_PIPE2, U3G_DUP2, U3G_FCNTL, U3G_OPENAT, U3G_SOCKET,
+       U3G_NSYS };
 static const char* const U3G_NAME[U3G_NSYS] = {
     "open", "read", "write", "close", "mmap", "mprotect", "munmap", "getpid",
-    "arch_prctl", "lseek", "unlink"
+    "arch_prctl", "lseek", "unlink",
+    "pipe", "pipe2", "dup2", "fcntl", "openat", "socket"
 };
 
 #define U3G_STEPS     8
@@ -315,6 +323,7 @@ static const u3_program* u3g_build(unsigned long base_seed, unsigned long mut_se
     while (u3g_naddr > 0) u3g_emit_munmap(u3g_live_addr[u3g_naddr - 1]);
 
     u3g_prog.name = "gen"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    u3g_prog.need_free = 0; u3g_prog.need_exact = 0;
     u3g_prog.nhandles = u3g_nhandles;
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
@@ -403,6 +412,7 @@ static const u3_program* u3g_build_ext2(unsigned long base_seed, unsigned long m
     c->expect_mode = U3_EXACT; c->expect_val = 0;
 
     u3g_prog.name = "gen_ext2"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    u3g_prog.need_free = 0; u3g_prog.need_exact = 0;
     u3g_prog.nhandles = u3g_nhandles;
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 2;
@@ -445,6 +455,9 @@ static const u3_program* u3g_build_emfile(int ok_opens) {
     }
 
     u3g_prog.name = "gen_emfile"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    /* The boundary is only meaningful if exactly U3G_FD_BUDGET slots are free at
+     * baseline; the executor checks that precondition instead of assuming it. */
+    u3g_prog.need_free = U3G_FD_BUDGET; u3g_prog.need_exact = 1;
     u3g_prog.nhandles = u3g_nhandles;
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
@@ -452,6 +465,444 @@ static const u3_program* u3g_build_emfile(int ok_opens) {
     u3g_prog.calls = u3g_calls;
     u3g_prog.ncalls = u3g_overflow ? (U3_MAX_CALLS + 1) : u3g_ncalls;
     u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
+    return &u3g_prog;
+}
+
+/* ===========================================================================
+ * U5.2 — fd-surface model (modes 5 and 6)
+ *
+ * Every call that allocates or releases a descriptor (open, openat, pipe, pipe2,
+ * dup2, fcntl F_DUPFD, socket, close — and dup2's implicit close of its target)
+ * goes through ONE model of the fd table, so every expected result is computed,
+ * never U3_ANY. The model works in baseline ORDINALS: ordinal k is the k-th fd
+ * >= 3 that was free when the worker started (the executor resolves it, see
+ * u3_slot in ufuzz.c). Allocation is lowest-free, and the program never touches
+ * an fd it did not create, so "lowest free fd >= slot(k)" is always
+ * slot(lowest free ordinal >= k).
+ *
+ * Contract encoded here (fds 0-2): they are always open — an empty slot is the
+ * implicit console. dup2 and F_DUPFD may use them as a SOURCE (the copy shares
+ * the console description, so its F_GETFL equals the baseline F_GETFL of the
+ * source: U3_BASEFL); only dup2 may target them, and the generator never does
+ * (it would clobber an inherited fd). F_DUPFD never returns 0-2: arg 0..2 means
+ * "lowest free fd >= 3". F_DUPFD arg < 0 -> -EINVAL; arg >= 32 -> -EMFILE.
+ * F_GETFD always 0 and F_SETFD accepted (FD_CLOEXEC is not tracked: partial).
+ *
+ * Mode 5 programs model U3G_M ordinals and declare need_free = U3G_M (minimum):
+ * they never hold more than U3G_LIVE_CAP fds, so every allocation the model
+ * predicts lands inside the modelled ordinals regardless of extra free slots,
+ * and they predict -EMFILE only from the absolute F_DUPFD bound. Mode 6 predicts
+ * exhaustion, so it declares need_free = U3G_FD_BUDGET exactly.
+ * =========================================================================== */
+#define U3G_M          12
+#define U3G_LIVE_CAP   8
+#define U3G_F_DUPFD    0
+#define U3G_F_GETFD    1
+#define U3G_F_SETFD    2
+#define U3G_F_GETFL    3
+#define U3G_F_SETFL    4
+#define U3G_O_WRONLY   0x1
+#define U3G_O_RDWR     0x2
+#define U3G_O_APPEND   0x400
+#define U3G_O_NONBLOCK 0x800
+#define U3G_O_CLOEXEC  0x80000
+#define U3G_AT_FDCWD   (-100)
+#define U3G_AF_INET    2
+#define U3G_SOCK_DGRAM 2
+#define U3G_EFAULT     14
+#define U3G_EAFNOSUPPORT 97
+#define U3G_PIPE_CAP   4096
+#define U3G_SLOT_HI    (1L << 32)        /* high bits a 32-bit fd arg must drop */
+
+enum { U3G_D_FILE, U3G_D_PR, U3G_D_PW, U3G_D_CON, U3G_D_SOCK };
+typedef struct { int kind, flags, pipe, refs, con_src; } u3g_desc;
+typedef struct { int buffered, readers, writers; } u3g_pipe_t;
+static u3g_desc    u3g_dsc[U3_MAX_H + 2];
+static u3g_pipe_t  u3g_pp[U3_MAX_H];
+static int u3g_ndsc, u3g_npp, u3g_m;
+static int u3g_odesc[32], u3g_oh[32];   /* ordinal -> desc id / bound handle, -1 free */
+
+static void u3g_fd_reset(int m) {
+    u3g_ndsc = u3g_npp = 0; u3g_m = m;
+    for (int o = 0; o < 32; o++) { u3g_odesc[o] = -1; u3g_oh[o] = -1; }
+}
+static int u3g_fd_lowest(int from) {               /* lowest free ordinal >= from */
+    for (int o = from < 0 ? 0 : from; o < u3g_m; o++) if (u3g_odesc[o] < 0) return o;
+    return -1;
+}
+static int u3g_fd_live(void) {
+    int n = 0;
+    for (int o = 0; o < u3g_m; o++) if (u3g_odesc[o] >= 0) n++;
+    return n;
+}
+static int u3g_fd_pick_live(u3g_rng* r) {          /* a random live ordinal, or -1 */
+    int n = u3g_fd_live();
+    if (!n) return -1;
+    int k = (int)u3g_below(r, n);
+    for (int o = 0; o < u3g_m; o++) if (u3g_odesc[o] >= 0 && k-- == 0) return o;
+    return -1;
+}
+static int u3g_fd_pick_free(u3g_rng* r) {          /* a random free modelled ordinal */
+    int n = u3g_m - u3g_fd_live();
+    if (n <= 0) return -1;
+    int k = (int)u3g_below(r, n);
+    for (int o = 0; o < u3g_m; o++) if (u3g_odesc[o] < 0 && k-- == 0) return o;
+    return -1;
+}
+static int u3g_desc_new(int kind, int flags, int pipe) {
+    int d = u3g_ndsc < U3_MAX_H + 2 ? u3g_ndsc++ : (u3g_overflow = 1, U3_MAX_H + 1);
+    u3g_dsc[d].kind = kind; u3g_dsc[d].flags = flags; u3g_dsc[d].pipe = pipe;
+    u3g_dsc[d].refs = 0; u3g_dsc[d].con_src = 0;
+    return d;
+}
+static void u3g_desc_ref(int d) { u3g_dsc[d].refs++; }
+static void u3g_desc_unref(int d) {                 /* last ref: a pipe end detaches */
+    if (--u3g_dsc[d].refs > 0) return;
+    if (u3g_dsc[d].kind == U3G_D_PR) u3g_pp[u3g_dsc[d].pipe].readers--;
+    if (u3g_dsc[d].kind == U3G_D_PW) u3g_pp[u3g_dsc[d].pipe].writers--;
+}
+static void u3g_fd_install(int o, int d, int h) { u3g_odesc[o] = d; u3g_oh[o] = h; u3g_desc_ref(d); }
+static void u3g_fd_vacate(int o) {
+    int d = u3g_odesc[o];
+    u3g_odesc[o] = -1; u3g_oh[o] = -1;
+    if (d >= 0) u3g_desc_unref(d);
+}
+/* Expected F_GETFL of a description. */
+static void u3g_expect_fl(u3_call* c, int d) {
+    if (u3g_dsc[d].kind == U3G_D_CON) { c->expect_mode = U3_BASEFL; c->expect_val = u3g_dsc[d].con_src; }
+    else                              { c->expect_mode = U3_EXACT;  c->expect_val = u3g_dsc[d].flags; }
+}
+static void u3g_set_fd(u3_call* c, int i, int o) { u3g_set(c, i, U3_RES, u3g_oh[o]); }
+
+/* --- creators: each binds a new handle at the model's lowest free ordinal --- */
+static void u3g_fx_open(int at) {                  /* open / openat of /bin/hello */
+    int o = u3g_fd_lowest(0), h = u3g_new_handle("fd");
+    u3_call* c;
+    if (at) {
+        c = u3g_begin(U3G_OPENAT, 3, U3_BIND_FD, h);
+        u3g_set(c, 0, U3_IMM, U3G_AT_FDCWD); u3g_set(c, 1, U3_PATH, 0);
+        u3g_set(c, 2, U3_IMM, U3G_O_RDONLY);
+    } else {
+        c = u3g_begin(U3G_OPEN, 2, U3_BIND_FD, h);
+        u3g_set(c, 0, U3_PATH, 0); u3g_set(c, 1, U3_IMM, U3G_O_RDONLY);
+    }
+    c->expect_mode = U3_SLOT; c->expect_val = o;
+    u3g_fd_install(o, u3g_desc_new(U3G_D_FILE, U3G_O_RDONLY, 0), h);
+}
+static void u3g_fx_socket(void) {                  /* AF_INET datagram socket */
+    int o = u3g_fd_lowest(0), h = u3g_new_handle("fd");
+    u3_call* c = u3g_begin(U3G_SOCKET, 3, U3_BIND_FD, h);
+    u3g_set(c, 0, U3_IMM, U3G_AF_INET); u3g_set(c, 1, U3_IMM, U3G_SOCK_DGRAM);
+    u3g_set(c, 2, U3_IMM, 0);
+    c->expect_mode = U3_SLOT; c->expect_val = o;
+    u3g_fd_install(o, u3g_desc_new(U3G_D_SOCK, U3G_O_RDWR, 0), h);
+}
+static void u3g_fx_pipe(int two, int pbuf, int flags) {
+    int o0 = u3g_fd_lowest(0), o1;
+    int h0 = u3g_new_handle("fd"), h1 = u3g_new_handle("fd");
+    u3_call* c = u3g_begin(two ? U3G_PIPE2 : U3G_PIPE, two ? 2 : 1, U3_BIND_PIPE, h0);
+    c->bind_h1 = h1; c->bind_buf = pbuf;
+    u3g_set(c, 0, U3_BUF, pbuf);
+    if (two) u3g_set(c, 1, U3_IMM, flags);         /* flags are not honoured (partial) */
+    c->expect_mode = U3_EXACT; c->expect_val = 0;
+    int p = u3g_npp < U3_MAX_H ? u3g_npp++ : (u3g_overflow = 1, U3_MAX_H - 1);
+    u3g_pp[p].buffered = 0; u3g_pp[p].readers = 1; u3g_pp[p].writers = 1;
+    u3g_fd_install(o0, u3g_desc_new(U3G_D_PR, 0, p), h0);   /* read end installed first */
+    o1 = u3g_fd_lowest(0);
+    u3g_fd_install(o1, u3g_desc_new(U3G_D_PW, U3G_O_WRONLY, p), h1);
+}
+/* dup2(live src, free slot k): returns slot k, sharing src's description. */
+static void u3g_fx_dup2_free(u3g_rng* r, u3g_rng* m) {
+    int so = u3g_fd_pick_live(r), ko = u3g_fd_pick_free(r);
+    int h = u3g_new_handle("fd");
+    u3_call* c = u3g_begin(U3G_DUP2, 2, U3_BIND_FD, h);
+    u3g_set_fd(c, 0, so);
+    long enc = ko | ((u3g_below(m, 4) == 0) ? U3G_SLOT_HI : 0);  /* int truncation */
+    u3g_set(c, 1, U3_FDSLOT, enc);
+    c->expect_mode = U3_SLOT; c->expect_val = ko;
+    u3g_fd_install(ko, u3g_odesc[so], h);
+}
+/* dup2(live src, live dst): dst's old description is released, dst now shares
+ * src's; dst keeps its handle. dst == src returns it unchanged. */
+static void u3g_fx_dup2_live(u3g_rng* r) {
+    int so = u3g_fd_pick_live(r), dob = u3g_fd_pick_live(r);
+    u3_call* c = u3g_begin(U3G_DUP2, 2, U3_BIND_NONE, 0);
+    u3g_set_fd(c, 0, so); u3g_set_fd(c, 1, dob);
+    c->expect_mode = U3_SLOT; c->expect_val = dob;
+    if (so != dob) {
+        int d = u3g_odesc[so], h = u3g_oh[dob];
+        u3g_desc_ref(d);                               /* ref before unref: same-desc safe */
+        u3g_desc_unref(u3g_odesc[dob]);
+        u3g_odesc[dob] = d; u3g_oh[dob] = h;
+    }
+}
+/* dup2 / F_DUPFD from a console fd (1 or 2): a copy of the console. */
+static void u3g_fx_dup_console(u3g_rng* r, u3g_rng* m) {
+    int src = 1 + (int)u3g_below(m, 2), ko, h = u3g_new_handle("fd");
+    u3_call* c;
+    if (u3g_below(m, 2)) {
+        ko = u3g_fd_pick_free(r);
+        c = u3g_begin(U3G_DUP2, 2, U3_BIND_FD, h);
+        u3g_set(c, 0, U3_IMM, src); u3g_set(c, 1, U3_FDSLOT, ko);
+    } else {
+        ko = u3g_fd_lowest(0);
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_FD, h);
+        u3g_set(c, 0, U3_IMM, src); u3g_set(c, 1, U3_IMM, U3G_F_DUPFD);
+        u3g_set(c, 2, U3_IMM, 3);
+    }
+    c->expect_mode = U3_SLOT; c->expect_val = ko;
+    int d = u3g_desc_new(U3G_D_CON, 0, 0);
+    u3g_dsc[d].con_src = src;
+    u3g_fd_install(ko, d, h);
+}
+/* F_DUPFD(live, floor): floor is a baseline slot, or 0..2 (-> lowest >= 3). */
+static void u3g_fx_dupfd(u3g_rng* r, u3g_rng* m) {
+    int so = u3g_fd_pick_live(r), fl, ko, h;
+    int lowfloor = (int)u3g_below(m, 2);
+    if (lowfloor) { fl = (int)u3g_below(m, 3); ko = u3g_fd_lowest(0); }
+    else {
+        fl = (int)u3g_below(r, u3g_m);
+        ko = u3g_fd_lowest(fl);
+        if (ko < 0) { fl = 0; ko = u3g_fd_lowest(0); }
+    }
+    h = u3g_new_handle("fd");
+    u3_call* c = u3g_begin(U3G_FCNTL, 3, U3_BIND_FD, h);
+    u3g_set_fd(c, 0, so); u3g_set(c, 1, U3_IMM, U3G_F_DUPFD);
+    if (lowfloor) u3g_set(c, 2, U3_IMM, fl); else u3g_set(c, 2, U3_FDSLOT, fl);
+    c->expect_mode = U3_SLOT; c->expect_val = ko;
+    u3g_fd_install(ko, u3g_odesc[so], h);
+}
+/* --- non-allocating fcntl --- */
+static void u3g_fx_fcntl_flags(u3g_rng* r, u3g_rng* m) {
+    int o = u3g_fd_pick_live(r), d = u3g_odesc[o];
+    int what = (int)u3g_below(m, 4);
+    if (what == 1 && u3g_dsc[d].kind == U3G_D_CON) what = 0;  /* never F_SETFL a shared console */
+    u3_call* c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+    u3g_set_fd(c, 0, o);
+    if (what == 0) {                                   /* F_GETFL */
+        u3g_set(c, 1, U3_IMM, U3G_F_GETFL);
+        u3g_expect_fl(c, d);
+    } else if (what == 1) {                            /* F_SETFL: only APPEND|NONBLOCK change */
+        static const int args[4] = { 0, U3G_O_APPEND, U3G_O_NONBLOCK,
+                                     U3G_O_APPEND | U3G_O_NONBLOCK | U3G_O_RDWR | U3G_O_WRONLY };
+        int a = args[u3g_below(m, 4)];
+        u3g_set(c, 1, U3_IMM, U3G_F_SETFL); u3g_set(c, 2, U3_IMM, a);
+        c->expect_mode = U3_EXACT; c->expect_val = 0;
+        int keep = U3G_O_APPEND | U3G_O_NONBLOCK;
+        u3g_dsc[d].flags = (u3g_dsc[d].flags & ~keep) | (a & keep);
+    } else if (what == 2) {                            /* F_GETFD: CLOEXEC not tracked */
+        u3g_set(c, 1, U3_IMM, U3G_F_GETFD);
+        c->expect_mode = U3_EXACT; c->expect_val = 0;
+    } else {                                           /* F_SETFD(FD_CLOEXEC): accepted */
+        u3g_set(c, 1, U3_IMM, U3G_F_SETFD); u3g_set(c, 2, U3_IMM, 1);
+        c->expect_mode = U3_EXACT; c->expect_val = 0;
+    }
+}
+/* --- pipe data: only calls that cannot block or raise SIGPIPE --- */
+static int u3g_fx_pipe_io(u3g_rng* r, int wbuf, int rbuf) {
+    int cand[32], n = 0;
+    for (int o = 0; o < u3g_m; o++) {
+        int d = u3g_odesc[o];
+        if (d < 0) continue;
+        u3g_pipe_t* p = &u3g_pp[u3g_dsc[d].pipe];
+        if (u3g_dsc[d].kind == U3G_D_PW && p->readers > 0 && p->buffered + 64 <= U3G_PIPE_CAP) cand[n++] = o;
+        if (u3g_dsc[d].kind == U3G_D_PR && (p->buffered > 0 || p->writers == 0)) cand[n++] = o;
+    }
+    if (!n) return 0;
+    int o = cand[u3g_below(r, n)], d = u3g_odesc[o];
+    u3g_pipe_t* p = &u3g_pp[u3g_dsc[d].pipe];
+    int len = 1 + (int)u3g_below(r, 64);
+    u3_call* c;
+    if (u3g_dsc[d].kind == U3G_D_PW) {
+        c = u3g_begin(U3G_WRITE, 3, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, o); u3g_set(c, 1, U3_BUF, wbuf); u3g_set(c, 2, U3_IMM, len);
+        c->expect_mode = U3_EXACT; c->expect_val = len;
+        p->buffered += len;
+    } else {
+        c = u3g_begin(U3G_READ, 3, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, o); u3g_set(c, 1, U3_BUF, rbuf); u3g_set(c, 2, U3_IMM, len);
+        int got = len < p->buffered ? len : p->buffered;
+        c->expect_mode = U3_EXACT; c->expect_val = got;
+        p->buffered -= got;
+    }
+    return 1;
+}
+static void u3g_fx_close(int o) {
+    u3_call* c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
+    u3g_set_fd(c, 0, o);
+    c->expect_mode = U3_EXACT; c->expect_val = 0;
+    u3g_fd_vacate(o);
+}
+/* --- adversarial calls: refused, so the model does not change --- */
+static void u3g_fx_adversarial(u3g_rng* r, u3g_rng* m, int pbuf) {
+    static const long badptr[4] = { 0, (long)0xffffffff80000000UL,
+                                    (long)0x0000800000000000UL, 0x1000 };
+    int live = u3g_fd_pick_live(r), fr = u3g_fd_pick_free(r);
+    int pick = (int)u3g_below(m, 12);
+    if (live < 0 && (pick >= 3 && pick <= 6)) pick = 0;   /* needs a live fd */
+    if (fr < 0 && (pick == 2 || pick == 8)) pick = 0;     /* needs a free slot */
+    u3_call* c;
+    (void)pbuf;
+    switch (pick) {
+    case 0: case 1: {                                     /* pipe/pipe2(bad ptr) */
+        int two = pick;
+        c = u3g_begin(two ? U3G_PIPE2 : U3G_PIPE, two ? 2 : 1, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_BADPTR, badptr[u3g_below(m, 4)]);
+        if (two) u3g_set(c, 1, U3_IMM, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EFAULT;
+        break;
+    }
+    case 2:                                               /* dup2(free/stale, free) */
+        c = u3g_begin(U3G_DUP2, 2, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_FDSLOT, fr); u3g_set(c, 1, U3_FDSLOT, fr);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    case 3: {                                             /* dup2(live, out-of-range) */
+        static const long nf[3] = { -1, 32, 0x7fffffff };
+        c = u3g_begin(U3G_DUP2, 2, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, live); u3g_set(c, 1, U3_IMM, nf[u3g_below(m, 3)]);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    }
+    case 4:                                               /* invalid fcntl cmd */
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, live); u3g_set(c, 1, U3_IMM, 999);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EINVAL;
+        break;
+    case 5:                                               /* F_DUPFD floor < 0 */
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, live); u3g_set(c, 1, U3_IMM, U3G_F_DUPFD); u3g_set(c, 2, U3_IMM, -1);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EINVAL;
+        break;
+    case 6: {                                             /* F_DUPFD floor >= 32 */
+        static const long fl[3] = { 32, 0x80000000L, 0x7fffffff };
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+        u3g_set_fd(c, 0, live); u3g_set(c, 1, U3_IMM, U3G_F_DUPFD);
+        u3g_set(c, 2, U3_IMM, fl[u3g_below(m, 3)]);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EMFILE;
+        break;
+    }
+    case 7: {                                             /* fcntl on a bad fd */
+        static const long bf[3] = { -1, 32, 0x7fffffff };
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_IMM, bf[u3g_below(m, 3)]); u3g_set(c, 1, U3_IMM, U3G_F_GETFL);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    }
+    case 8:                                               /* close/fcntl of a free slot */
+        if (u3g_below(m, 2)) {
+            c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
+            u3g_set(c, 0, U3_FDSLOT, fr);
+        } else {
+            c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+            u3g_set(c, 0, U3_FDSLOT, fr); u3g_set(c, 1, U3_IMM, U3G_F_GETFL);
+        }
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    case 9:                                               /* dup2(-1, free) */
+        c = u3g_begin(U3G_DUP2, 2, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_IMM, -1); u3g_set(c, 1, U3_IMM, 31);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    case 10:                                              /* unsupported family */
+        c = u3g_begin(U3G_SOCKET, 3, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_IMM, 99); u3g_set(c, 1, U3_IMM, U3G_SOCK_DGRAM); u3g_set(c, 2, U3_IMM, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EAFNOSUPPORT;
+        break;
+    default:                                              /* close(-1) */
+        c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_IMM, -1);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EBADF;
+        break;
+    }
+}
+
+static void u3g_fd_prog_finish(const char* name, int need_free, int need_exact) {
+    u3g_prog.name = name; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
+    u3g_prog.need_free = need_free; u3g_prog.need_exact = need_exact;
+    u3g_prog.nhandles = u3g_nhandles;
+    u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
+    u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
+    u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
+    u3g_prog.calls = u3g_calls;
+    u3g_prog.ncalls = u3g_overflow ? (U3_MAX_CALLS + 1) : u3g_ncalls;
+    u3g_prog.dcs = 0;           u3g_prog.ndcs = 0;
+}
+
+#define U3G_FD_STEPS 18
+/* Mode 5 "fdops": base_seed fixes which operation each step performs and on
+ * which fds; mut_seed picks argument VALUES (flags, floors, bad pointers,
+ * adversarial variants, the int-truncated dup2 target). */
+static const u3_program* u3g_build_fdops(unsigned long base_seed, unsigned long mut_seed) {
+    u3g_rng r = { base_seed }, m = { mut_seed };
+    u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
+    u3g_overflow = 0;
+    u3g_fd_reset(U3G_M);
+    int pbuf = u3g_new_buf(&r, 8, 0);          /* pipefd[2], reused by every pipe call */
+    int wbuf = u3g_new_buf(&r, 64, 1);         /* write source */
+    int rbuf = u3g_new_buf(&r, 64, 0);         /* read destination */
+
+    for (int step = 0; step < U3G_FD_STEPS; step++) {
+        int live = u3g_fd_live();
+        int room = (live + 2 <= U3G_LIVE_CAP) && (u3g_nhandles + 2 <= U3_MAX_H);
+        int op = (int)u3g_below(&r, 11);
+        if (u3g_ncalls + live + 2 >= U3G_MAX_CALLS) break;
+        if (!live && op >= 4 && op <= 8) op = 0;           /* those need a live fd */
+        if (!room && (op <= 5 || op == 9)) op = 10;        /* those allocate */
+        switch (op) {
+        case 0:  u3g_fx_open((int)u3g_below(&m, 2)); break;
+        case 1:  u3g_fx_pipe((int)u3g_below(&m, 2), pbuf,
+                             u3g_below(&m, 2) ? U3G_O_CLOEXEC : 0); break;
+        case 2:  if (room && live) { u3g_fx_dup2_free(&r, &m); break; }
+                 u3g_fx_socket(); break;
+        case 3:  u3g_fx_socket(); break;
+        case 4:  u3g_fx_dupfd(&r, &m); break;
+        case 5:  u3g_fx_dup2_free(&r, &m); break;
+        case 6:  u3g_fx_dup2_live(&r); break;
+        case 7:  u3g_fx_fcntl_flags(&r, &m); break;
+        case 8:  if (!u3g_fx_pipe_io(&r, wbuf, rbuf)) u3g_fx_fcntl_flags(&r, &m); break;
+        case 9:  u3g_fx_dup_console(&r, &m); break;
+        default: if (live && u3g_below(&r, 2)) u3g_fx_close(u3g_fd_pick_live(&r));
+                 else u3g_fx_adversarial(&r, &m, pbuf);
+                 break;
+        }
+    }
+    /* Drain pipes whose writers are gone (a read can never block then) and close
+     * everything: the fd table must end exactly at baseline. */
+    for (int o = u3g_m - 1; o >= 0; o--) if (u3g_odesc[o] >= 0) u3g_fx_close(o);
+    u3g_fd_prog_finish("gen_fdops", U3G_M, 0);
+    return &u3g_prog;
+}
+
+/* Mode 6 "pipe-rollback": deterministic exercise of every vfs_pipe failure path
+ * reachable from Ring 3, each followed by an allocation whose EXACT slot proves
+ * the failed pipe left nothing behind:
+ *   pipe(NULL) -> -EFAULT (do_pipe closes both ends it had installed);
+ *   with exactly ONE slot free: pipe -> -EMFILE after the read end was installed
+ *     (the write-end install fails; the read end must be rolled back), then an
+ *     open must get that last slot;
+ *   with NO slot free: pipe -> -EMFILE at the first install.
+ * It predicts exhaustion, so it requires exactly U3G_FD_BUDGET free slots. */
+static const u3_program* u3g_build_piperb(void) {
+    u3g_rng r = { 1 };
+    u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
+    u3g_overflow = 0;
+    u3g_fd_reset(U3G_FD_BUDGET);
+    int pbuf = u3g_new_buf(&r, 8, 0);
+    u3_call* c = u3g_begin(U3G_PIPE, 1, U3_BIND_NONE, 0);
+    u3g_set(c, 0, U3_BADPTR, 0);
+    c->expect_mode = U3_EXACT; c->expect_val = -U3G_EFAULT;
+    for (int i = 0; i < U3G_FD_BUDGET - 1; i++) u3g_fx_open(0);   /* slots 0..27 */
+    for (int pass = 0; pass < 2; pass++) {
+        int h0 = u3g_new_handle("fd"), h1 = u3g_new_handle("fd");
+        c = u3g_begin(U3G_PIPE, 1, U3_BIND_PIPE, h0);
+        c->bind_h1 = h1; c->bind_buf = pbuf;
+        u3g_set(c, 0, U3_BUF, pbuf);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EMFILE;
+        if (pass == 0) u3g_fx_open(0);                             /* must be slot 28 */
+    }
+    for (int o = u3g_m - 1; o >= 0; o--) if (u3g_odesc[o] >= 0) u3g_fx_close(o);
+    u3g_fd_prog_finish("gen_piperb", U3G_FD_BUDGET, 1);
     return &u3g_prog;
 }
 

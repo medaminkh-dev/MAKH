@@ -91,7 +91,8 @@ def main():
     # (mode, label, how many seeds). The fd-exhaustion programs do not depend on
     # the seed, so one instance of each is the whole space.
     modes = [(0, "skeleton", n), (1, "ext2", n), (2, "ext2-direct", n),
-             (3, "emfile", 1), (4, "emfile-control", 1)]
+             (3, "emfile", 1), (4, "emfile-control", 1),
+             (5, "fdops", n), (6, "pipe-rollback", 1)]
     total = sum(validate_mode(mode, label, cnt, abi) for mode, label, cnt in modes)
 
     # (4) Negative controls: the validator MUST reject these, or the whole check
@@ -109,6 +110,12 @@ def main():
         ("res-type-mismatch",
          "abi 1\nprng lcg 0\nhandles addr\n"
          "call mmap imm:0 imm:4096 imm:3 imm:34 -> addr:0\ncall close res:0\n"),
+        # a deliberately-bad pointer stands only for a pointer arg, never an fd
+        ("bad-for-scalar",
+         "abi 1\nprng lcg 0\nhandles -\ncall close bad:0\n"),
+        # a baseline slot stands only for a scalar, never a pointer
+        ("slot-for-pointer",
+         "abi 1\nprng lcg 0\nhandles -\ncall pipe slot:0\n"),
     ]
     for name, ir in negatives:
         try:

@@ -26,6 +26,8 @@ static void op_str(const u3_arg* a, char* buf, size_t n) {
     case U3_BUF:  snprintf(buf, n, "buf:%ld", a->val);  break;
     case U3_PATH: snprintf(buf, n, "path:%ld", a->val); break;
     case U3_IOV:  snprintf(buf, n, "iov:%ld", a->val);  break;
+    case U3_FDSLOT: snprintf(buf, n, "slot:%ld", a->val); break;
+    case U3_BADPTR: snprintf(buf, n, "bad:%ld", a->val);  break;
     default:      snprintf(buf, n, "imm:0");            break;
     }
 }
@@ -39,6 +41,8 @@ static void emit_ir(unsigned long seed, unsigned long mut, int mode) {
                           (mode == 2) ? u3g_build_ext2(seed, mut, 1) :
                           (mode == 3) ? u3g_build_emfile(U3G_FD_BUDGET) :
                           (mode == 4) ? u3g_build_emfile(U3G_FD_BUDGET - 1) :
+                          (mode == 5) ? u3g_build_fdops(seed, mut) :
+                          (mode == 6) ? u3g_build_piperb() :
                                         u3g_build(seed, mut);
     printf("abi 1\n");
     printf("prng lcg %lu\n", seed);
@@ -59,6 +63,7 @@ static void emit_ir(unsigned long seed, unsigned long mut, int mode) {
         for (int a = 0; a < c->nargs; a++) { op_str(&c->args[a], tmp, sizeof(tmp)); printf(" %s", tmp); }
         if (c->bind == U3_BIND_FD)   printf(" -> fd:%d", c->bind_h0);
         if (c->bind == U3_BIND_ADDR) printf(" -> addr:%d", c->bind_h0);
+        if (c->bind == U3_BIND_PIPE) printf(" -> fd:%d,%d", c->bind_h0, c->bind_h1);
         printf("\n");
     }
     printf("\n");

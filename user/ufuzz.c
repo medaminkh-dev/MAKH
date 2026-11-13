@@ -118,8 +118,42 @@ static long u3_contract_nr;  /* test seam: canary overrides the syscall whose co
 static const long U3G_NR[U3G_NSYS] = {
     SYS_OPEN, SYS_READ, SYS_WRITE, SYS_CLOSE,
     SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_GETPID, SYS_ARCH_PRCTL,
-    SYS_LSEEK, SYS_UNLINK
+    SYS_LSEEK, SYS_UNLINK,
+    SYS_PIPE, SYS_PIPE2, SYS_DUP2, SYS_FCNTL, SYS_OPENAT, SYS_SOCKET
 };
+
+/* ---- U5.2: baseline-relative descriptor state ----------------------------
+ * A worker does not assume which fds it starts with. Before pass 1 it records,
+ * for every fd 0..31, the F_GETFL result (or -1 if closed), cross-checked against
+ * fstat (the two probes must agree on open-vs-closed, else that disagreement is
+ * itself a finding). The fds >= 3 that were FREE at baseline, in ascending order,
+ * are what a U3_FDSLOT operand / U3_SLOT expectation ordinal k resolves to: with
+ * lowest-free allocation, "the k-th baseline-free slot" is exactly the fd a
+ * program's k-th outstanding allocation gets, whatever the worker inherited. */
+#define U3_NFD 32                          /* kernel VFS_MAX_FDS */
+#define U3_F_GETFL 3
+static long u3_base_fl[U3_NFD];
+static int  u3_free[U3_NFD], u3_nfree;
+static unsigned char u3_stbuf[256];        /* fstat scratch (struct stat fits) */
+
+static int u3_fdsnap(long* fl) {
+    for (int fd = 0; fd < U3_NFD; fd++) {
+        long r = usyscall(SYS_FCNTL, fd, U3_F_GETFL, 0);
+        long s = usyscall(SYS_FSTAT, fd, (long)u3_stbuf, 0);
+        if ((r >= 0) != (s == 0)) return 0x740 | fd;   /* probes disagree on fd */
+        fl[fd] = (r >= 0) ? r : -1;
+    }
+    return 0;
+}
+/* Resolve a baseline-relative slot encoding: ordinal in the low 16 bits, any
+ * higher bits ORed back (int-truncation cases). Returns 0 and sets *out, or a
+ * 0x7FD diagnostic if the ordinal has no baseline-free slot. */
+static int u3_slot(long enc, long* out) {
+    long k = enc & 0xffff;
+    if (k >= u3_nfree) return 0x7FD;
+    *out = (long)u3_free[k] | (enc & ~0xffffL);
+    return 0;
+}
 
 static unsigned char u3_arena[U3_MAX_BUFS][U3_MAX_BUFSZ];
 static long u3_hval[U3_MAX_H];
@@ -130,6 +164,11 @@ static int  u3_hstate[U3_MAX_H];   /* 0 pending, 1 live, 2 failed */
  * the call. One is enough — readv/writev take a single iov arg. Layout matches
  * the kernel's struct iovec (two 8-byte words). */
 static struct { unsigned long base, len; } u3_iov_scratch[U3_MAX_SEG];
+
+/* Last expectation failure (U5.2): which syscall, what it returned, what the
+ * contract required — printed by u3_fail so a NOT-CLEAN run is attributable from
+ * the serial log alone. want_mode distinguishes the expectation kinds. */
+static long u3_diag_nr, u3_diag_ret, u3_diag_want; static int u3_diag_mode = -1;
 
 /* Returns 0 on success, else a nonzero diagnostic code (what diverged). */
 static int u3_run(const u3_program* pg, long* trace) {
@@ -160,6 +199,12 @@ static int u3_run(const u3_program* pg, long* trace) {
             case U3_NIL:  a[k] = 0; break;
             case U3_BUF:  a[k] = (long)(unsigned long)u3_arena[op->val]; break;
             case U3_PATH: a[k] = (long)(unsigned long)pg->paths[op->val]; break;
+            case U3_BADPTR: a[k] = op->val; break;         /* deliberate invalid pointer */
+            case U3_FDSLOT: {
+                int e = u3_slot(op->val, &a[k]);
+                if (e) return e;
+                break;
+            }
             case U3_IOV: {
                 /* Build the iovec array now, pointing each segment at the
                  * runtime address of its arena buffer (the host can't know it). */
@@ -186,10 +231,25 @@ static int u3_run(const u3_program* pg, long* trace) {
         if (ret < 0 && ret >= -4095 && !u3_abi_errno_ok(u3_contract_nr ? u3_contract_nr : c->sysno, -ret))
             return 0x600 | i;   /* errno outside the ABI inventory's documented set */
 
+        u3_diag_nr = c->sysno; u3_diag_ret = ret; u3_diag_mode = c->expect_mode;
+        u3_diag_want = c->expect_val;
+        if (c->expect_mode == U3_SLOT) (void)u3_slot(c->expect_val, &u3_diag_want);
+        if (c->expect_mode == U3_BASEFL && c->expect_val >= 0 && c->expect_val < U3_NFD)
+            u3_diag_want = u3_base_fl[c->expect_val];
         switch (c->expect_mode) {
         case U3_NONNEG: if (ret < 0)  return 0x100 | i; break;
         case U3_NEG:    if (ret >= 0) return 0x100 | i; break;
         case U3_EXACT:  if (ret != c->expect_val) return 0x100 | i; break;
+        case U3_SLOT: {                                  /* exactly baseline slot k */
+            long want; int e = u3_slot(c->expect_val, &want);
+            if (e) return e;
+            if (ret != want) return 0x100 | i;
+            break;
+        }
+        case U3_BASEFL:                                  /* F_GETFL of baseline fd */
+            if (c->expect_val < 0 || c->expect_val >= U3_NFD ||
+                ret != u3_base_fl[c->expect_val]) return 0x100 | i;
+            break;
         default: break;   /* U3_ANY */
         }
 
@@ -240,7 +300,8 @@ static unsigned long u3_digest(const u3_program* pg) {
  * 0x500 all became exit code 0 — a failed self-check reported as OK. Print the
  * full diagnostic and exit with a nonzero class code in 1..127 instead. */
 enum { U3X_EXPECT = 101, U3X_DATA = 102, U3X_REPLAY = 103, U3X_DIGEST = 104,
-       U3X_CAPACITY = 105, U3X_UNKNOWN = 106, U3X_CONTRACT = 107 };
+       U3X_CAPACITY = 105, U3X_UNKNOWN = 106, U3X_CONTRACT = 107,
+       U3X_ISOLATION = 108 };
 static void u3_fail(int diag) {
     int cls;
     const char* what;
@@ -251,10 +312,20 @@ static void u3_fail(int diag) {
     case 4:  cls = U3X_DIGEST;   what = "digest";       break;
     case 5:  cls = U3X_CAPACITY; what = "capacity";     break;
     case 6:  cls = U3X_CONTRACT; what = "contract";     break;
+    case 7:  cls = U3X_ISOLATION; what = "isolation";   break;
     default: cls = U3X_UNKNOWN;  what = "unknown";      break;
     }
     puts_("  u3 self-check FAIL: "); puts_(what);
-    puts_(" detail="); putu_((unsigned long)(diag & 0xff)); puts_("\n");
+    puts_(" detail="); putu_((unsigned long)(diag & 0xff));
+    if ((diag >> 8) == 1) {                     /* expectation: name the call */
+        puts_(" nr="); putu_((unsigned long)u3_diag_nr);
+        puts_(" mode="); putu_((unsigned long)u3_diag_mode);
+        puts_(" ret="); if (u3_diag_ret < 0) { puts_("-"); putu_((unsigned long)-u3_diag_ret); }
+                        else putu_((unsigned long)u3_diag_ret);
+        puts_(" want="); if (u3_diag_want < 0) { puts_("-"); putu_((unsigned long)-u3_diag_want); }
+                         else putu_((unsigned long)u3_diag_want);
+    }
+    puts_("\n");
     uexit(cls);
 }
 
@@ -268,13 +339,32 @@ static void u3_worker_pg(const u3_program* pg) {
      * addresses are normalized in the trace.) */
     unsigned long fs0 = 0;
     usyscall(SYS_ARCH_PRCTL, U3G_ARCH_GET_FS, (long)&fs0, 0);
+    /* fd baseline (U5.2): what this worker started with, NOT an assumed empty
+     * table. Each pass must leave the fd state exactly as found (0x7NN after
+     * pass 1, 0x7(80|NN) after pass 2, NN = the fd that differs). A program that
+     * depends on a specific number of free slots declares it (need_free; exact
+     * for programs that predict exhaustion) and fails loudly (0x7FE) otherwise. */
+    long snap[U3_NFD];
+    int e = u3_fdsnap(u3_base_fl);
+    if (e) u3_fail(e);
+    u3_nfree = 0;
+    for (int fd = 3; fd < U3_NFD; fd++) if (u3_base_fl[fd] < 0) u3_free[u3_nfree++] = fd;
+    if (pg->need_free &&
+        (pg->need_exact ? u3_nfree != pg->need_free : u3_nfree < pg->need_free))
+        u3_fail(0x7FE);
     int rc = u3_run(pg, t1);
     if (rc) u3_fail(rc);
+    if ((e = u3_fdsnap(snap)) != 0) u3_fail(e);
+    for (int fd = 0; fd < U3_NFD; fd++)
+        if (snap[fd] != u3_base_fl[fd]) u3_fail(0x700 | fd);  /* pass 1 left fd state */
     unsigned long d1 = u3_digest(pg);               /* out-buffers after run 1 */
     if (pg->replay) {
         usyscall(SYS_ARCH_PRCTL, U3G_ARCH_SET_FS, (long)fs0, 0);
         int rc2 = u3_run(pg, t2);
         if (rc2) u3_fail(rc2);
+        if ((e = u3_fdsnap(snap)) != 0) u3_fail(e);
+        for (int fd = 0; fd < U3_NFD; fd++)
+            if (snap[fd] != u3_base_fl[fd]) u3_fail(0x780 | fd);
         for (int i = 0; i < pg->ncalls && i < U3_MAX_CALLS; i++)
             if (t1[i] != t2[i]) u3_fail(0x300 | i); /* non-deterministic return */
         if (u3_digest(pg) != d1) u3_fail(0x400);    /* non-deterministic out-buffers */
@@ -457,6 +547,8 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
         (mode == 2) ? u3g_build_ext2(base_seed, mut_seed, 1) :
         (mode == 3) ? u3g_build_emfile(U3G_FD_BUDGET) :
         (mode == 4) ? u3g_build_emfile(U3G_FD_BUDGET - 1) :
+        (mode == 5) ? u3g_build_fdops(base_seed, mut_seed) :
+        (mode == 6) ? u3g_build_piperb() :
                       u3g_build(base_seed, mut_seed);
     for (int i = 0; i < pg->ncalls; i++)                 /* index -> real SYS_ */
         ((u3_call*)pg->calls)[i].sysno = U3G_NR[pg->calls[i].sysno];
@@ -477,7 +569,14 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
  * Kind 4 is the opposite, a POSITIVE control that must report OUT_OK: it reads
  * the FS base (GET_FS) and then changes it (SET_FS). Replay runs the program
  * twice in one process, so unless the executor restores the FS base between the
- * passes, pass 2 reads the value pass 1 left behind and the digest diverges. */
+ * passes, pass 2 reads the value pass 1 left behind and the digest diverges.
+ * U5.2 pairs (odd kind must FAIL, the following even kind must PASS):
+ *   7 / 8   pipe(NULL) expected to succeed / expected -EFAULT (expectation oracle
+ *           on a refused pointer argument);
+ *   9 / 10  open() with no close / open()+close() (the fd-baseline isolation
+ *           guard: a program that leaks an fd past a pass must be caught);
+ *  11 / 12  need_free = 32 (more than the table can ever have free) / need_free
+ *           = 1 (the baseline-precondition check). */
 static int run_selfcheck(int kind) {
     u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
     u3g_overflow = 0;
@@ -500,6 +599,15 @@ static int run_selfcheck(int kind) {
         c = u3g_begin(U3G_CLOSE, 1, U3_BIND_NONE, 0);
         u3g_set(c, 0, U3_IMM, -1);                              /* close(-1) -> -EBADF */
         if (kind == 5) u3_contract_nr = SYS_GETPID;             /* getpid documents no errors */
+    } else if (kind == 7 || kind == 8) {
+        c = u3g_begin(U3G_PIPE, 1, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_BADPTR, 0);
+        c->expect_mode = U3_EXACT; c->expect_val = (kind == 7) ? 0 : -U3G_EFAULT;
+    } else if (kind == 9 || kind == 10) {
+        u3g_emit_open();                                        /* expect: a new fd */
+        if (kind == 10) u3g_emit_close(u3g_live_fd[0]);
+    } else if (kind == 11 || kind == 12) {
+        (void)u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
     } else if (kind == 4) {
         int b = u3g_new_buf(&r, 8, 0);
         u3g_emit_arch_prctl(1, b);                              /* GET_FS -> buf */
@@ -511,8 +619,14 @@ static int run_selfcheck(int kind) {
         u3g_calls[i].sysno = U3G_NR[u3g_calls[i].sysno];
     if (kind == 2) u3g_calls[0].sysno = nr0;
 
-    u3g_prog.name = "selfcheck"; u3g_prog.expect_fault = 0; u3g_prog.replay = 1;
-    u3g_prog.nhandles = 0;
+    /* 9/10 are single-pass: with replay, the leaked fd would already change
+     * pass 2's open() result and the trace check would catch it — the canary must
+     * be visible ONLY to the fd-baseline guard. */
+    u3g_prog.name = "selfcheck"; u3g_prog.expect_fault = 0;
+    u3g_prog.replay = (kind == 9 || kind == 10) ? 0 : 1;
+    u3g_prog.need_free = (kind == 11) ? 32 : (kind == 12) ? 1 : 0;
+    u3g_prog.need_exact = 0;
+    u3g_prog.nhandles = u3g_nhandles;
     u3g_prog.bufs = u3g_bufs;   u3g_prog.nbufs = u3g_nbufs;
     u3g_prog.paths = u3g_paths; u3g_prog.npaths = 1;
     u3g_prog.iovs = 0;          u3g_prog.niovs = 0;
