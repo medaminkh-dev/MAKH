@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 Amine Khemissi
+name: Release
+
+# Pushing a version tag (vX.Y.Z) on a commit of main publishes the GitHub
+# Release "MAKH X.Y.Z" with the four standard assets and docs/RELEASE_X.Y.Z.md
+# as its notes:
+#   makhos-X.Y.Z.iso          bootable ISO built from the tagged commit
+#   MAKH-X.Y.Z-src.tar.gz     `git archive` of the tagged commit
+#   MAKH-X.Y.Z-src.zip        the same tree as a zip
+#   SHA256SUMS                checksums of the three files above
+# Nothing is published unless every gate passes: the tag matches
+# KERNEL_VERSION, the notes exist, the commit is on main, the UFUZZ host gates
+# pass and the ISO boots to the shell (`make smoke`). CI has already run the
+# full in-kernel suite and the stress campaign on main.
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+
+permissions:
+  contents: write
+
+env:
+  CC: gcc-13
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag, the version and the notes
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          kver=$(sed -n 's/^#define KERNEL_VERSION *"\(.*\)"/\1/p' kernel/include/kernel.h)
+          [ "$ver" = "$kver" ] || { echo "::error::tag $tag does not match KERNEL_VERSION $kver"; exit 1; }
+          [ -f "docs/RELEASE_${ver}.md" ] || { echo "::error::docs/RELEASE_${ver}.md is missing"; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo "::error::$tag is not on main"; exit 1; }
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-13 nasm grub-pc-bin grub-common xorriso mtools \
+            qemu-system-x86 e2fsprogs
+
+      - name: UFUZZ host gates
+        run: make fuzz-check
+
+      - name: Build the ISO
+        run: make CC=$CC all
+
+      - name: The ISO boots to the shell
+        run: python3 tools/shell_smoke.py makhos.iso --timeout 240
+
+      - name: Assemble the assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ steps.ver.outputs.ver }}"
+          mkdir -p dist
+          cp makhos.iso "dist/makhos-$v.iso"
+          git archive --format=tar.gz --prefix="MAKH-$v/" -o "dist/MAKH-$v-src.tar.gz" HEAD
+          git archive --format=zip --prefix="MAKH-$v/" -o "dist/MAKH-$v-src.zip" HEAD
+          (cd dist && sha256sum "makhos-$v.iso" "MAKH-$v-src.tar.gz" "MAKH-$v-src.zip" > SHA256SUMS && cat SHA256SUMS)
+          # The notes without the SPDX comment lines at the top of the file.
+          awk 'NR<=3 && /^<!--.*-->$/ {next} {print}' "docs/RELEASE_$v.md" > dist/notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ steps.ver.outputs.ver }}"
+          gh release create "${GITHUB_REF_NAME}" --verify-tag \
+            --title "MAKH $v" --notes-file dist/notes.md \
+            "dist/makhos-$v.iso" "dist/MAKH-$v-src.tar.gz" "dist/MAKH-$v-src.zip" dist/SHA256SUMS
