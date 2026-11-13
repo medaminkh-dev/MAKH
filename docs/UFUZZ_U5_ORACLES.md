@@ -22,6 +22,7 @@ All results below are `PASS_QEMU`. Nothing here is a hardware claim.
 | fd baseline / isolation (U5.2) | `u3_worker_pg` | `isolation` (0x7NN, 0x7(80\|NN)) | selfcheck 10 | selfcheck 9 |
 | fd-slot precondition (U5.2) | `u3_worker_pg` | `isolation` 0x7FE | selfcheck 12 | selfcheck 11 |
 | fd probe agreement (U5.2) | `u3_fdsnap` | `isolation` 0x74N | — | — |
+| Independent re-derivation (U5.3, host) | `fuzz/u5/derive.py` | `U5 DERIVE-CHECK: FAIL` | unmutated generator/deriver pair (0 contradictions) | mode 4 control; 3 wrong annotations; 6 mutations |
 
 A worker that fails a self-check exits with a class code in 1..127
 (`U3X_EXPECT` 101 … `U3X_ISOLATION` 108), never with the raw diagnostic: the
@@ -214,8 +215,9 @@ were run, and the mutation was reverted.
 | `ufuzz.fd_oracles_accept_correct_programs` | selfcheck 8, 10, 12, 13 pass |
 | `ufuzz.selfcheck_failures_are_never_ok` | selfcheck 7, 9, 11 (with 0–3, 5) fail |
 | `vfs.fcntl_dupfd_floor_contract`, `vfs.console_fds_are_always_open`, `vfs.pipe_alloc_failure_rolls_back` | §5 |
+| `make u5-derive-check` (host, in `make fuzz-check` and the CI `abi-check` job) | §9: every expectation re-derived; mutation selftest |
 
-Commands: `make fuzz-check`; `make test-suite SUITE=ufuzz`;
+Commands: `make fuzz-check` (includes `make u5-derive-check`); `make test-suite SUITE=ufuzz`;
 `make all makhos-test.iso && python3 tools/run_tests.py makhos-test.iso --timeout 900`;
 `make makhos-stress.iso && bash tools/stress_tests.sh 12 4 makhos-stress.iso`.
 
