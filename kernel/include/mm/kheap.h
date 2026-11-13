@@ -57,6 +57,10 @@ void* kmalloc(size_t size);
 /* Test-only: expand the heap by `pages`, or NULL on failure (atomic). */
 void* kheap_test_expand(size_t pages);
 
+/* Test-only: the (n+1)-th kmalloc/kcalloc from now returns NULL once; -1 disarms.
+ * Counts every caller — arm it with interrupts disabled (see kheap.c). */
+void kheap_test_fail_after(int64_t n);
+
 /* Allocate zeroed memory (calloc equivalent) */
 void* kcalloc(size_t num, size_t size);
 

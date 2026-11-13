@@ -17,6 +17,27 @@
 #include <mm/kheap.h>
 #include <lib/string.h>
 
+/* T-M01: resolving the same ext2 path repeatedly must not leak vnodes. Before
+ * the inode-keyed cache in make_vnode(), each vfs_resolve() built a fresh
+ * vnode_t + ext2_vinfo_t for the target inode (and every component) and never
+ * freed it — file_put() only reclaims pipe/socket vnodes and the fs gc list is
+ * freed only at unmount, which the permanent mount never does — so the kernel
+ * heap grew without bound. */
+KTEST(ext2, repeated_resolve_does_not_leak) {
+    KASSERT_TEST(vfs_resolve("/mnt/hello.txt") != NULL);   /* warm the cache */
+
+    size_t base = kheap_get_used();
+    for (int i = 0; i < 300; i++)
+        KASSERT_TEST(vfs_resolve("/mnt/hello.txt") != NULL);
+    size_t after = kheap_get_used();
+
+    /* A cache hit allocates nothing (the inode re-read uses balanced PMM
+     * buffers, not the heap), so heap use is flat. Revert the cache and each
+     * iteration leaks a vnode_t + ext2_vinfo_t -> `after` grows by ~300
+     * allocations and this assertion fails. */
+    KEXPECT_EQ(after, base);
+}
+
 KTEST(ext2, reads_a_small_file) {
     vnode_t* vn = vfs_resolve("/mnt/hello.txt");
     KASSERT_TEST(vn != NULL);

@@ -22,3 +22,12 @@ initrd.tar
 
 # Build artifacts
 build/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# UFUZZ test fixtures are real serial logs the selftests read: keep them tracked
+# despite the *.log rule above.
+!fuzz/u6/fixtures/*.log
+!fuzz/u8/fixtures/*.log

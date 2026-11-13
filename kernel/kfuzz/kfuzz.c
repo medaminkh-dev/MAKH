@@ -108,6 +108,45 @@ uint64_t kfuzz_cov_count(void) {
     return n;
 }
 
+int kfuzz_cov_enable(int on) {
+    int prev = cov_enabled;
+    cov_enabled = on ? 1 : 0;
+    return prev;
+}
+
+uint32_t kfuzz_cov_words(void) { return COV_WORDS; }
+
+uint64_t kfuzz_cov_fold_new(uint64_t* virgin) {
+    uint64_t n = 0;
+    for (uint32_t i = 0; i < COV_WORDS; i++) {
+        uint64_t cur = cov_map[i];
+        uint64_t fresh = cur & ~virgin[i];   /* edges this run hit that are new */
+        if (fresh) n += popcount64(fresh);
+        virgin[i] |= cur;                     /* fold into the ever-seen set */
+    }
+    return n;
+}
+
+/* U8: the IDENTITY of the new edges, so a driver outside this boot (the host
+ * corpus) can keep a global virgin map. Lists up to `max` indices of edges set
+ * in the current map and not in `virgin`, in ascending order, into `out`;
+ * returns how many such edges there are in total (may exceed `max`). With
+ * `fold` set, also folds the map into `virgin` (as kfuzz_cov_fold_new). */
+uint64_t kfuzz_cov_fold_new_list(uint64_t* virgin, int fold, uint32_t* out, uint32_t max) {
+    uint64_t n = 0;
+    for (uint32_t i = 0; i < COV_WORDS; i++) {
+        uint64_t fresh = cov_map[i] & ~virgin[i];
+        while (fresh) {
+            uint32_t b = (uint32_t)__builtin_ctzll(fresh);
+            if (n < max) out[n] = i * 64 + b;
+            n++;
+            fresh &= fresh - 1;
+        }
+        if (fold) virgin[i] |= cov_map[i];
+    }
+    return n;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Sandbox state                                                              */
 /* -------------------------------------------------------------------------- */
@@ -161,7 +200,19 @@ static int oracles_ok(const char** why) {
 /* Watchdog - catches a target that never returns                             */
 /* -------------------------------------------------------------------------- */
 
-#define KFUZZ_WATCHDOG_MS 4000
+/* The watchdog detects an *infinite* hang (a target that never returns), so its
+ * budget must comfortably exceed the slowest legitimate single iteration — not
+ * sit just above the fast path. At 4s it misfired under the stress job (suite
+ * x12, 4 in parallel): a slow-but-finite ext2img mount of a mutated image, or
+ * simply the fuzzer thread being CPU-starved while the guest clock keeps
+ * advancing (TCG timer catch-up under host contention can jump clock_now_ms by
+ * seconds), made the per-iteration heartbeat stall past 4s and panicked with a
+ * false "hung on seed" — a CI flake, not a real hang (the same fixed-seed
+ * campaign passes every time in the single-QEMU build-and-test job). 20s keeps
+ * it a true infinite-hang detector while tolerating a heavily loaded host.
+ * (A genuinely slow mount on a hostile superblock is a separate finding worth
+ * bounding in the ext2 driver; this only stops the watchdog from crying wolf.) */
+#define KFUZZ_WATCHDOG_MS 20000
 
 static void* watchdog_main(void* arg) {
     (void)arg;

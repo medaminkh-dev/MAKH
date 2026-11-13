@@ -7,6 +7,7 @@
 #define SYS_WRITE     1
 #define SYS_OPEN      2
 #define SYS_CLOSE     3
+#define SYS_LSEEK     8
 #define SYS_IOCTL     16
 #define SYS_MMAP      9
 #define SYS_MPROTECT  10
@@ -37,6 +38,8 @@
 #define SYS_GETDENTS64     217
 #define SYS_PIPE           22
 #define SYS_DUP2           33
+#define SYS_OPENAT         257
+#define SYS_PIPE2          293
 #define SYS_CLONE          56
 #define SYS_FUTEX          202
 #define SYS_SET_TID_ADDRESS 218

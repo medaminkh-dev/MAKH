@@ -1,0 +1,1489 @@
+=== MAKH test runner ===
+qemu: qemu-system-x86_64 -cdrom makhos-suite.iso -m 256M -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -accel tcg -drive file=build/testdisk.img,if=none,id=vblk0,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off -drive file=build/ext2.img,if=none,id=vblk1,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk1,disable-modern=on,disable-legacy=off
+UFZ1 build id=275af01-dirty
+[ RUN  ] ufuzz.u52_pipe_failure_paths_roll_back
+UFZ1 tcb n=0 src=cov a=6 b=0 c=0
+UFZ1 diag pid=4 pass=1 cls=101 what=expectation diag=257 call=1 nr=2 emode=4 ret=5 want=3 a0=35184376311662 a1=0
+UFZ1 trace pid=4 pass=1 n=2 v=-14,5
+  u3 self-check FAIL: expectation detail=1 nr=2 mode=4 ret=5 want=3
+UFZ1 res src=cov cpid=3 wpid=4 a=6 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=0 cpid=3 status=4 expect=ok
+UFZ1 tcb n=1 src=cov a=6 b=0 c=0
+UFZ1 diag pid=7 pass=1 cls=101 what=expectation diag=257 call=1 nr=2 emode=4 ret=5 want=3 a0=35184376311662 a1=0
+UFZ1 trace pid=7 pass=1 n=2 v=-14,5
+  u3 self-check FAIL: expectation detail=1 nr=2 mode=4 ret=5 want=3
+UFZ1 res src=cov cpid=6 wpid=7 a=6 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=1 cpid=6 status=4 expect=ok
+    FAIL kernel/tests/test_ufuzz.c:594: u4_run_cov(6, 0, 0) == 0
+[ FAIL ] ufuzz.u52_pipe_failure_paths_roll_back (1 failures)
+[ RUN  ] ufuzz.u52_fdops_programs_run_clean
+UFZ1 tcb n=2 src=cov a=5 b=0 c=0
+UFZ1 tc n=2 cpid=9 status=0 expect=ok
+UFZ1 tcb n=3 src=cov a=5 b=0 c=1
+UFZ1 tc n=3 cpid=12 status=0 expect=ok
+UFZ1 tcb n=4 src=cov a=5 b=1 c=7920
+UFZ1 diag pid=16 pass=1 cls=108 what=isolation diag=1795 call=3
+UFZ1 trace pid=16 pass=1 n=24 v=3,5,0,7,14,8,7,2,0,-14,10,0,0,8,0,0,-14,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=3
+UFZ1 res src=cov cpid=15 wpid=16 a=5 b=1 c=7920 outcome=OTHER status=108
+UFZ1 tc n=4 cpid=15 status=4 expect=ok
+UFZ1 tcb n=5 src=cov a=5 b=2 c=15839
+UFZ1 tc n=5 cpid=18 status=0 expect=ok
+UFZ1 tcb n=6 src=cov a=5 b=3 c=23758
+UFZ1 diag pid=22 pass=1 cls=108 what=isolation diag=1796 call=4
+UFZ1 trace pid=22 pass=1 n=24 v=3,4,5,9,6,0,0,-22,0,0,14,8,6,-14,0,11,14,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=4
+UFZ1 res src=cov cpid=21 wpid=22 a=5 b=3 c=23758 outcome=OTHER status=108
+UFZ1 tc n=6 cpid=21 status=4 expect=ok
+UFZ1 tcb n=7 src=cov a=5 b=4 c=31677
+UFZ1 diag pid=25 pass=1 cls=101 what=expectation diag=263 call=7 nr=72 emode=4 ret=9 want=7 a0=1 a1=0
+UFZ1 trace pid=25 pass=1 n=8 v=3,2,4,0,3,0,-14,9
+  u3 self-check FAIL: expectation detail=7 nr=72 mode=4 ret=9 want=7
+UFZ1 res src=cov cpid=24 wpid=25 a=5 b=4 c=31677 outcome=OTHER status=101
+UFZ1 tc n=7 cpid=24 status=4 expect=ok
+UFZ1 tcb n=8 src=cov a=5 b=5 c=39596
+UFZ1 tc n=8 cpid=27 status=0 expect=ok
+UFZ1 tcb n=9 src=cov a=5 b=6 c=47515
+UFZ1 tc n=9 cpid=30 status=0 expect=ok
+UFZ1 tcb n=10 src=cov a=5 b=7 c=55434
+UFZ1 tc n=10 cpid=33 status=0 expect=ok
+UFZ1 tcb n=11 src=cov a=5 b=8 c=63353
+UFZ1 tc n=11 cpid=36 status=0 expect=ok
+UFZ1 tcb n=12 src=cov a=5 b=9 c=71272
+UFZ1 diag pid=40 pass=1 cls=108 what=isolation diag=1801 call=9
+UFZ1 trace pid=40 pass=1 n=26 v=3,4,5,6,14,7,0,28,0,-9,-14,0,13,-22,0,10,0,0,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=9
+UFZ1 res src=cov cpid=39 wpid=40 a=5 b=9 c=71272 outcome=OTHER status=108
+UFZ1 tc n=12 cpid=39 status=4 expect=ok
+UFZ1 tcb n=13 src=cov a=5 b=10 c=79191
+UFZ1 diag pid=43 pass=1 cls=108 what=isolation diag=1797 call=5
+UFZ1 trace pid=43 pass=1 n=25 v=0,0,9,6,0,3,12,4,8,10,18,-22,-22,-9,-24,10,-14,18,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=5
+UFZ1 res src=cov cpid=42 wpid=43 a=5 b=10 c=79191 outcome=OTHER status=108
+UFZ1 tc n=13 cpid=42 status=4 expect=ok
+UFZ1 tcb n=14 src=cov a=5 b=11 c=87110
+UFZ1 tc n=14 cpid=45 status=0 expect=ok
+UFZ1 tcb n=15 src=cov a=5 b=12 c=95029
+UFZ1 diag pid=49 pass=1 cls=101 what=expectation diag=259 call=3 nr=257 emode=4 ret=6 want=4 a0=-100 a1=35184376311662
+UFZ1 trace pid=49 pass=1 n=4 v=-14,0,0,6
+  u3 self-check FAIL: expectation detail=3 nr=257 mode=4 ret=6 want=4
+UFZ1 res src=cov cpid=48 wpid=49 a=5 b=12 c=95029 outcome=OTHER status=101
+UFZ1 tc n=15 cpid=48 status=4 expect=ok
+UFZ1 tcb n=16 src=cov a=5 b=13 c=102948
+UFZ1 diag pid=52 pass=1 cls=108 what=isolation diag=1801 call=9
+UFZ1 trace pid=52 pass=1 n=26 v=3,8,4,14,5,6,2,11,-9,0,4,-9,8,0,0,-14,-97,-14,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=9
+UFZ1 res src=cov cpid=51 wpid=52 a=5 b=13 c=102948 outcome=OTHER status=108
+UFZ1 tc n=16 cpid=51 status=4 expect=ok
+UFZ1 tcb n=17 src=cov a=5 b=14 c=110867
+UFZ1 diag pid=55 pass=1 cls=108 what=isolation diag=1798 call=6
+UFZ1 trace pid=55 pass=1 n=25 v=3,13,4,7,5,3,9,6,0,-24,0,0,0,0,-14,-9,-24,63,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=6
+UFZ1 res src=cov cpid=54 wpid=55 a=5 b=14 c=110867 outcome=OTHER status=108
+UFZ1 tc n=17 cpid=54 status=4 expect=ok
+UFZ1 tcb n=18 src=cov a=5 b=15 c=118786
+UFZ1 diag pid=58 pass=1 cls=108 what=isolation diag=1801 call=9
+UFZ1 trace pid=58 pass=1 n=26 v=3,12,4,0,0,-14,0,6,5,-97,37,-97,-9,-14,53,0,0,-24,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=9
+UFZ1 res src=cov cpid=57 wpid=58 a=5 b=15 c=118786 outcome=OTHER status=108
+UFZ1 tc n=18 cpid=57 status=4 expect=ok
+UFZ1 tcb n=19 src=cov a=5 b=16 c=126705
+UFZ1 diag pid=61 pass=1 cls=108 what=isolation diag=1802 call=10
+UFZ1 trace pid=61 pass=1 n=24 v=3,9,3,4,5,0,6,0,7,8,-24,-22,-14,-9,0,-24,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=10
+UFZ1 res src=cov cpid=60 wpid=61 a=5 b=16 c=126705 outcome=OTHER status=108
+UFZ1 tc n=19 cpid=60 status=4 expect=ok
+UFZ1 tcb n=20 src=cov a=5 b=17 c=134624
+UFZ1 tc n=20 cpid=63 status=0 expect=ok
+UFZ1 tcb n=21 src=cov a=5 b=18 c=142543
+UFZ1 tc n=21 cpid=66 status=0 expect=ok
+UFZ1 tcb n=22 src=cov a=5 b=19 c=150462
+UFZ1 diag pid=70 pass=1 cls=101 what=expectation diag=272 call=16 nr=72 emode=4 ret=9 want=6 a0=2 a1=0
+UFZ1 trace pid=70 pass=1 n=17 v=3,4,12,10,0,5,2,7,14,0,7,-9,0,-14,0,0,9
+  u3 self-check FAIL: expectation detail=16 nr=72 mode=4 ret=9 want=6
+UFZ1 res src=cov cpid=69 wpid=70 a=5 b=19 c=150462 outcome=OTHER status=101
+UFZ1 tc n=22 cpid=69 status=4 expect=ok
+UFZ1 tcb n=23 src=cov a=5 b=20 c=158381
+UFZ1 diag pid=73 pass=1 cls=108 what=isolation diag=1802 call=10
+UFZ1 trace pid=73 pass=1 n=26 v=3,4,4,14,0,0,7,2048,8,0,9,7,0,0,6,-14,0,0,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=10
+UFZ1 res src=cov cpid=72 wpid=73 a=5 b=20 c=158381 outcome=OTHER status=108
+UFZ1 tc n=23 cpid=72 status=4 expect=ok
+UFZ1 tcb n=24 src=cov a=5 b=21 c=166300
+UFZ1 diag pid=76 pass=1 cls=101 what=expectation diag=272 call=16 nr=2 emode=4 ret=11 want=9 a0=35184376311662 a1=0
+UFZ1 trace pid=76 pass=1 n=17 v=3,4,0,7,8,11,-24,-14,-9,-97,-9,57,0,7,0,39,11
+  u3 self-check FAIL: expectation detail=16 nr=2 mode=4 ret=11 want=9
+UFZ1 res src=cov cpid=75 wpid=76 a=5 b=21 c=166300 outcome=OTHER status=101
+UFZ1 tc n=24 cpid=75 status=4 expect=ok
+UFZ1 tcb n=25 src=cov a=5 b=22 c=174219
+UFZ1 diag pid=79 pass=1 cls=101 what=expectation diag=273 call=17 nr=33 emode=3 ret=7 want=-9 a0=7 a1=7
+UFZ1 trace pid=79 pass=1 n=18 v=13,13,2,13,2,9,3,4,10,5,11,0,-9,-24,-14,-97,-9,7
+  u3 self-check FAIL: expectation detail=17 nr=33 mode=3 ret=7 want=-9
+UFZ1 res src=cov cpid=78 wpid=79 a=5 b=22 c=174219 outcome=OTHER status=101
+UFZ1 tc n=25 cpid=78 status=4 expect=ok
+UFZ1 tcb n=26 src=cov a=5 b=23 c=182138
+UFZ1 diag pid=82 pass=1 cls=108 what=isolation diag=1802 call=10
+UFZ1 trace pid=82 pass=1 n=25 v=3,4,5,6,7,2,5,0,8,9,-9,-14,-9,2,-9,-24,9,-9,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=10
+UFZ1 res src=cov cpid=81 wpid=82 a=5 b=23 c=182138 outcome=OTHER status=108
+UFZ1 tc n=26 cpid=81 status=4 expect=ok
+UFZ1 tcb n=27 src=cov a=5 b=24 c=190057
+UFZ1 tc n=27 cpid=84 status=0 expect=ok
+UFZ1 tcb n=28 src=cov a=5 b=25 c=197976
+UFZ1 diag pid=88 pass=1 cls=101 what=expectation diag=260 call=4 nr=72 emode=4 ret=7 want=5 a0=4 a1=0
+UFZ1 trace pid=88 pass=1 n=5 v=3,4,0,-14,7
+  u3 self-check FAIL: expectation detail=4 nr=72 mode=4 ret=7 want=5
+UFZ1 res src=cov cpid=87 wpid=88 a=5 b=25 c=197976 outcome=OTHER status=101
+UFZ1 tc n=28 cpid=87 status=4 expect=ok
+UFZ1 tcb n=29 src=cov a=5 b=26 c=205895
+UFZ1 tc n=29 cpid=90 status=0 expect=ok
+UFZ1 tcb n=30 src=cov a=5 b=27 c=213814
+UFZ1 diag pid=94 pass=1 cls=101 what=expectation diag=270 call=14 nr=33 emode=3 ret=7 want=-9 a0=7 a1=7
+UFZ1 trace pid=94 pass=1 n=15 v=3,4,9,5,-22,14,9,10,12,-9,-14,10,-9,0,7
+  u3 self-check FAIL: expectation detail=14 nr=33 mode=3 ret=7 want=-9
+UFZ1 res src=cov cpid=93 wpid=94 a=5 b=27 c=213814 outcome=OTHER status=101
+UFZ1 tc n=30 cpid=93 status=4 expect=ok
+UFZ1 tcb n=31 src=cov a=5 b=28 c=221733
+UFZ1 tc n=31 cpid=96 status=0 expect=ok
+UFZ1 tcb n=32 src=cov a=5 b=29 c=229652
+UFZ1 tc n=32 cpid=99 status=0 expect=ok
+UFZ1 tcb n=33 src=cov a=5 b=30 c=237571
+UFZ1 diag pid=103 pass=1 cls=108 what=isolation diag=1802 call=10
+UFZ1 trace pid=103 pass=1 n=25 v=-97,3,5,4,0,0,0,-14,8,-24,0,1,7,6,0,0,9,-22,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=10
+UFZ1 res src=cov cpid=102 wpid=103 a=5 b=30 c=237571 outcome=OTHER status=108
+UFZ1 tc n=33 cpid=102 status=4 expect=ok
+UFZ1 tcb n=34 src=cov a=5 b=31 c=245490
+UFZ1 tc n=34 cpid=105 status=0 expect=ok
+UFZ1 tcb n=35 src=cov a=5 b=32 c=253409
+UFZ1 tc n=35 cpid=108 status=0 expect=ok
+UFZ1 tcb n=36 src=cov a=5 b=33 c=261328
+UFZ1 tc n=36 cpid=111 status=0 expect=ok
+UFZ1 tcb n=37 src=cov a=5 b=34 c=269247
+UFZ1 tc n=37 cpid=114 status=0 expect=ok
+UFZ1 tcb n=38 src=cov a=5 b=35 c=277166
+UFZ1 diag pid=118 pass=1 cls=101 what=expectation diag=264 call=8 nr=72 emode=4 ret=7 want=4 a0=13 a1=0
+UFZ1 trace pid=118 pass=1 n=9 v=3,12,12,5,14,-14,13,2,7
+  u3 self-check FAIL: expectation detail=8 nr=72 mode=4 ret=7 want=4
+UFZ1 res src=cov cpid=117 wpid=118 a=5 b=35 c=277166 outcome=OTHER status=101
+UFZ1 tc n=38 cpid=117 status=4 expect=ok
+UFZ1 tcb n=39 src=cov a=5 b=36 c=285085
+UFZ1 tc n=39 cpid=120 status=0 expect=ok
+UFZ1 tcb n=40 src=cov a=5 b=37 c=293004
+UFZ1 diag pid=124 pass=1 cls=101 what=expectation diag=272 call=16 nr=72 emode=4 ret=12 want=9 a0=1 a1=0
+UFZ1 trace pid=124 pass=1 n=17 v=3,13,7,0,0,0,-14,-14,-22,31,31,0,0,0,12,0,12
+  u3 self-check FAIL: expectation detail=16 nr=72 mode=4 ret=12 want=9
+UFZ1 res src=cov cpid=123 wpid=124 a=5 b=37 c=293004 outcome=OTHER status=101
+UFZ1 tc n=40 cpid=123 status=4 expect=ok
+UFZ1 tcb n=41 src=cov a=5 b=38 c=300923
+UFZ1 diag pid=127 pass=1 cls=108 what=isolation diag=1802 call=10
+UFZ1 trace pid=127 pass=1 n=26 v=3,0,11,0,0,4,9,5,0,0,9,-9,6,0,0,-14,-14,-22,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=10
+UFZ1 res src=cov cpid=126 wpid=127 a=5 b=38 c=300923 outcome=OTHER status=108
+UFZ1 tc n=41 cpid=126 status=4 expect=ok
+UFZ1 tcb n=42 src=cov a=5 b=39 c=308842
+UFZ1 tc n=42 cpid=129 status=0 expect=ok
+UFZ1 tcb n=43 src=cov a=5 b=40 c=316761
+UFZ1 tc n=43 cpid=132 status=0 expect=ok
+UFZ1 tcb n=44 src=cov a=5 b=41 c=324680
+UFZ1 diag pid=136 pass=1 cls=101 what=expectation diag=272 call=16 nr=72 emode=3 ret=0 want=-9 a0=9 a1=3
+UFZ1 trace pid=136 pass=1 n=17 v=3,0,0,6,7,5,7,8,11,-14,-22,0,6,-9,-22,-9,0
+  u3 self-check FAIL: expectation detail=16 nr=72 mode=3 ret=0 want=-9
+UFZ1 res src=cov cpid=135 wpid=136 a=5 b=41 c=324680 outcome=OTHER status=101
+UFZ1 tc n=44 cpid=135 status=4 expect=ok
+UFZ1 tcb n=45 src=cov a=5 b=42 c=332599
+UFZ1 diag pid=139 pass=1 cls=108 what=isolation diag=1800 call=8
+UFZ1 trace pid=139 pass=1 n=26 v=3,4,9,2,5,6,14,7,0,-24,0,11,-14,-22,-9,-9,0,0,0,0,0,0,0,0,0,0
+  u3 self-check FAIL: isolation detail=8
+UFZ1 res src=cov cpid=138 wpid=139 a=5 b=42 c=332599 outcome=OTHER status=108
+UFZ1 tc n=45 cpid=138 status=4 expect=ok
+UFZ1 tcb n=46 src=cov a=5 b=43 c=340518
+UFZ1 diag pid=142 pass=1 cls=101 what=expectation diag=271 call=15 nr=72 emode=4 ret=9 want=5 a0=2 a1=0
+UFZ1 trace pid=142 pass=1 n=16 v=3,4,0,7,10,8,0,13,0,12,-14,0,0,0,0,9
+  u3 self-check FAIL: expectation detail=15 nr=72 mode=4 ret=9 want=5
+UFZ1 res src=cov cpid=141 wpid=142 a=5 b=43 c=340518 outcome=OTHER status=101
+UFZ1 tc n=46 cpid=141 status=4 expect=ok
+UFZ1 tcb n=47 src=cov a=5 b=44 c=348437
+UFZ1 tc n=47 cpid=144 status=0 expect=ok
+UFZ1 tcb n=48 src=cov a=5 b=45 c=356356
+UFZ1 tc n=48 cpid=147 status=0 expect=ok
+UFZ1 tcb n=49 src=cov a=5 b=46 c=364275
+UFZ1 tc n=49 cpid=150 status=0 expect=ok
+UFZ1 tcb n=50 src=cov a=5 b=47 c=372194
+UFZ1 tc n=50 cpid=153 status=0 expect=ok
+    FAIL kernel/tests/test_ufuzz.c:577: bad == 0
+[ FAIL ] ufuzz.u52_fdops_programs_run_clean (1 failures)
+[ RUN  ] ufuzz.u4_emfile_boundary_is_exact
+UFZ1 tcb n=51 src=cov a=3 b=0 c=0
+UFZ1 tc n=51 cpid=156 status=0 expect=ok
+UFZ1 tcb n=52 src=cov a=3 b=0 c=0
+UFZ1 tc n=52 cpid=159 status=0 expect=ok
+UFZ1 tcb n=53 src=cov a=4 b=0 c=0
+UFZ1 diag pid=163 pass=1 cls=101 what=expectation diag=284 call=28 nr=2 emode=3 ret=31 want=-24 a0=35184376311662 a1=0
+UFZ1 trace pid=163 pass=1 n=29 v=3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
+  u3 self-check FAIL: expectation detail=28 nr=2 mode=3 ret=31 want=-24
+UFZ1 res src=cov cpid=162 wpid=163 a=4 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=53 cpid=162 status=4 expect=fail
+[ PASS ] ufuzz.u4_emfile_boundary_is_exact (4 checks)
+[ RUN  ] ufuzz.replay_restores_fs_base
+UFZ1 tcb n=54 src=selfcheck a=4 b=0 c=0
+UFZ1 tc n=54 cpid=165 status=0 expect=ok
+[ PASS ] ufuzz.replay_restores_fs_base (1 checks)
+[ RUN  ] ufuzz.contract_oracle_accepts_documented_errno
+UFZ1 tcb n=55 src=selfcheck a=6 b=0 c=0
+UFZ1 tc n=55 cpid=168 status=0 expect=ok
+[ PASS ] ufuzz.contract_oracle_accepts_documented_errno (1 checks)
+[ RUN  ] ufuzz.fd_oracles_accept_correct_programs
+UFZ1 tcb n=56 src=selfcheck a=8 b=0 c=0
+UFZ1 diag pid=172 pass=1 cls=108 what=isolation diag=1795 call=3
+UFZ1 trace pid=172 pass=1 n=1 v=-14
+  u3 self-check FAIL: isolation detail=3
+UFZ1 res src=selfcheck cpid=171 wpid=172 a=8 b=0 c=0 outcome=OTHER status=108
+UFZ1 tc n=56 cpid=171 status=4 expect=ok
+    FAIL kernel/tests/test_ufuzz.c:512: u4_run_selfcheck(8) == 0
+UFZ1 tcb n=57 src=selfcheck a=10 b=0 c=0
+UFZ1 tc n=57 cpid=174 status=0 expect=ok
+UFZ1 tcb n=58 src=selfcheck a=12 b=0 c=0
+UFZ1 tc n=58 cpid=177 status=0 expect=ok
+UFZ1 tcb n=59 src=selfcheck a=13 b=0 c=0
+UFZ1 tc n=59 cpid=180 status=0 expect=ok
+[ FAIL ] ufuzz.fd_oracles_accept_correct_programs (1 failures)
+[ RUN  ] ufuzz.selfcheck_failures_are_never_ok
+UFZ1 tcb n=60 src=selfcheck a=0 b=0 c=0
+UFZ1 diag pid=184 pass=1 cls=101 what=expectation diag=256 call=0 nr=39 emode=3 ret=184 want=-1 a0=0 a1=0
+UFZ1 trace pid=184 pass=1 n=1 v=184
+  u3 self-check FAIL: expectation detail=0 nr=39 mode=3 ret=184 want=-1
+UFZ1 res src=selfcheck cpid=183 wpid=184 a=0 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=60 cpid=183 status=4 expect=fail
+UFZ1 tcb n=61 src=selfcheck a=1 b=0 c=0
+UFZ1 diag pid=187 pass=1 cls=101 what=expectation diag=257 call=1 nr=39 emode=3 ret=187 want=-1 a0=0 a1=0
+UFZ1 trace pid=187 pass=1 n=2 v=187,187
+  u3 self-check FAIL: expectation detail=1 nr=39 mode=3 ret=187 want=-1
+UFZ1 res src=selfcheck cpid=186 wpid=187 a=1 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=61 cpid=186 status=4 expect=fail
+UFZ1 tcb n=62 src=selfcheck a=2 b=0 c=0
+UFZ1 diag pid=190 pass=2 cls=104 what=digest diag=1024 call=0
+UFZ1 trace pid=190 pass=2 n=1 v=16
+  u3 self-check FAIL: digest detail=0
+UFZ1 res src=selfcheck cpid=189 wpid=190 a=2 b=0 c=0 outcome=OTHER status=104
+UFZ1 tc n=62 cpid=189 status=4 expect=fail
+UFZ1 tcb n=63 src=selfcheck a=3 b=0 c=0
+UFZ1 diag pid=193 pass=1 cls=105 what=capacity diag=1280 call=0
+UFZ1 trace pid=193 pass=1 n=0 v=
+  u3 self-check FAIL: capacity detail=0
+UFZ1 res src=selfcheck cpid=192 wpid=193 a=3 b=0 c=0 outcome=OTHER status=105
+UFZ1 tc n=63 cpid=192 status=4 expect=fail
+UFZ1 tcb n=64 src=selfcheck a=5 b=0 c=0
+UFZ1 diag pid=196 pass=1 cls=107 what=contract diag=1536 call=0 nr=3 emode=0 ret=-9 want=0 a0=-1 a1=0
+UFZ1 trace pid=196 pass=1 n=1 v=-9
+  u3 self-check FAIL: contract detail=0
+UFZ1 res src=selfcheck cpid=195 wpid=196 a=5 b=0 c=0 outcome=OTHER status=107
+UFZ1 tc n=64 cpid=195 status=4 expect=fail
+UFZ1 tcb n=65 src=selfcheck a=7 b=0 c=0
+UFZ1 diag pid=199 pass=1 cls=101 what=expectation diag=256 call=0 nr=22 emode=3 ret=-14 want=0 a0=0 a1=0
+UFZ1 trace pid=199 pass=1 n=1 v=-14
+  u3 self-check FAIL: expectation detail=0 nr=22 mode=3 ret=-14 want=0
+UFZ1 res src=selfcheck cpid=198 wpid=199 a=7 b=0 c=0 outcome=OTHER status=101
+UFZ1 tc n=65 cpid=198 status=4 expect=fail
+UFZ1 tcb n=66 src=selfcheck a=9 b=0 c=0
+UFZ1 diag pid=202 pass=1 cls=108 what=isolation diag=1795 call=3
+UFZ1 trace pid=202 pass=1 n=1 v=3
+  u3 self-check FAIL: isolation detail=3
+UFZ1 res src=selfcheck cpid=201 wpid=202 a=9 b=0 c=0 outcome=OTHER status=108
+UFZ1 tc n=66 cpid=201 status=4 expect=fail
+UFZ1 tcb n=67 src=selfcheck a=11 b=0 c=0
+UFZ1 diag pid=205 pass=0 cls=108 what=isolation diag=2046 call=254
+  u3 self-check FAIL: isolation detail=254
+UFZ1 res src=selfcheck cpid=204 wpid=205 a=11 b=0 c=0 outcome=OTHER status=108
+UFZ1 tc n=67 cpid=204 status=4 expect=fail
+[ PASS ] ufuzz.selfcheck_failures_are_never_ok (8 checks)
+[ RUN  ] ufuzz.u4_ext2_guided_vs_random_paired
+UFZ1 tcb n=68 src=cov a=1 b=43981 c=0
+UFZ1 tc n=68 cpid=207 status=0 expect=ok
+UFZ1 tcb n=69 src=cov a=1 b=2089813196 c=292780202
+UFZ1 tc n=69 cpid=210 status=0 expect=ok
+UFZ1 edges n=69 new=33
+UFZ1 tcb n=70 src=cov a=1 b=1344439720 c=124235699
+UFZ1 tc n=70 cpid=213 status=0 expect=ok
+UFZ1 edges n=70 new=0
+UFZ1 tcb n=71 src=cov a=1 b=3781288 c=1998057101
+UFZ1 tc n=71 cpid=216 status=0 expect=ok
+UFZ1 edges n=71 new=5
+UFZ1 tcb n=72 src=cov a=1 b=534023397 c=866880628
+UFZ1 tc n=72 cpid=219 status=0 expect=ok
+UFZ1 edges n=72 new=0
+UFZ1 tcb n=73 src=cov a=1 b=2089813196 c=2005406882
+UFZ1 tc n=73 cpid=222 status=0 expect=ok
+UFZ1 edges n=73 new=0
+UFZ1 tcb n=74 src=cov a=1 b=531242392 c=228146733
+UFZ1 tc n=74 cpid=225 status=0 expect=ok
+UFZ1 edges n=74 new=1
+UFZ1 tcb n=75 src=cov a=1 b=531242392 c=1112186337
+UFZ1 tc n=75 cpid=228 status=0 expect=ok
+UFZ1 edges n=75 new=3
+UFZ1 tcb n=76 src=cov a=1 b=1742528374 c=1641718527
+UFZ1 tc n=76 cpid=231 status=0 expect=ok
+UFZ1 edges n=76 new=0
+UFZ1 tcb n=77 src=cov a=1 b=531242392 c=921362626
+UFZ1 tc n=77 cpid=234 status=0 expect=ok
+UFZ1 edges n=77 new=0
+UFZ1 tcb n=78 src=cov a=1 b=531242392 c=1282327403
+UFZ1 tc n=78 cpid=237 status=0 expect=ok
+UFZ1 edges n=78 new=0
+UFZ1 tcb n=79 src=cov a=1 b=480470244 c=465557097
+UFZ1 tc n=79 cpid=240 status=0 expect=ok
+UFZ1 edges n=79 new=0
+UFZ1 tcb n=80 src=cov a=1 b=531242392 c=1500594491
+UFZ1 tc n=80 cpid=243 status=0 expect=ok
+UFZ1 edges n=80 new=0
+UFZ1 tcb n=81 src=cov a=1 b=1153026718 c=1747168274
+UFZ1 tc n=81 cpid=246 status=0 expect=ok
+UFZ1 edges n=81 new=0
+UFZ1 tcb n=82 src=cov a=1 b=531242392 c=1732396315
+UFZ1 tc n=82 cpid=249 status=0 expect=ok
+UFZ1 edges n=82 new=0
+UFZ1 tcb n=83 src=cov a=1 b=2089813196 c=1174609942
+UFZ1 tc n=83 cpid=252 status=0 expect=ok
+UFZ1 edges n=83 new=0
+UFZ1 tcb n=84 src=cov a=1 b=658456178 c=647642113
+UFZ1 tc n=84 cpid=255 status=0 expect=ok
+UFZ1 edges n=84 new=0
+UFZ1 tcb n=85 src=cov a=1 b=531242392 c=1461522176
+UFZ1 tc n=85 cpid=258 status=0 expect=ok
+UFZ1 edges n=85 new=0
+UFZ1 tcb n=86 src=cov a=1 b=1421769410 c=709917829
+UFZ1 tc n=86 cpid=261 status=0 expect=ok
+UFZ1 edges n=86 new=0
+UFZ1 tcb n=87 src=cov a=1 b=976337711 c=453650420
+UFZ1 tc n=87 cpid=264 status=0 expect=ok
+UFZ1 edges n=87 new=0
+UFZ1 tcb n=88 src=cov a=1 b=531242392 c=203529961
+UFZ1 tc n=88 cpid=267 status=0 expect=ok
+UFZ1 edges n=88 new=0
+UFZ1 tcb n=89 src=cov a=1 b=531242392 c=1686916890
+UFZ1 tc n=89 cpid=270 status=0 expect=ok
+UFZ1 edges n=89 new=0
+UFZ1 tcb n=90 src=cov a=1 b=3781288 c=243852360
+UFZ1 tc n=90 cpid=273 status=0 expect=ok
+UFZ1 edges n=90 new=0
+UFZ1 tcb n=91 src=cov a=1 b=531242392 c=1142153872
+UFZ1 tc n=91 cpid=276 status=0 expect=ok
+UFZ1 edges n=91 new=0
+UFZ1 tcb n=92 src=cov a=1 b=2089813196 c=388069756
+UFZ1 tc n=92 cpid=279 status=0 expect=ok
+UFZ1 edges n=92 new=0
+UFZ1 tcb n=93 src=cov a=1 b=43981 c=0
+UFZ1 tc n=93 cpid=282 status=0 expect=ok
+UFZ1 tcb n=94 src=cov a=1 b=2089813196 c=292780202
+UFZ1 tc n=94 cpid=285 status=0 expect=ok
+UFZ1 edges n=94 new=33
+UFZ1 tcb n=95 src=cov a=1 b=921429722 c=1344439720
+UFZ1 tc n=95 cpid=288 status=0 expect=ok
+UFZ1 edges n=95 new=6
+UFZ1 tcb n=96 src=cov a=1 b=124235699 c=709971876
+UFZ1 tc n=96 cpid=291 status=0 expect=ok
+UFZ1 edges n=96 new=0
+UFZ1 tcb n=97 src=cov a=1 b=3781288 c=1998057101
+UFZ1 tc n=97 cpid=294 status=0 expect=ok
+UFZ1 edges n=97 new=0
+UFZ1 tcb n=98 src=cov a=1 b=1371834732 c=534023397
+UFZ1 tc n=98 cpid=297 status=0 expect=ok
+UFZ1 edges n=98 new=0
+UFZ1 tcb n=99 src=cov a=1 b=866880628 c=3465025
+UFZ1 tc n=99 cpid=300 status=0 expect=ok
+UFZ1 edges n=99 new=3
+UFZ1 tcb n=100 src=cov a=1 b=154742526 c=2005406882
+UFZ1 tc n=100 cpid=303 status=0 expect=ok
+UFZ1 edges n=100 new=0
+UFZ1 tcb n=101 src=cov a=1 b=173283508 c=531242392
+UFZ1 tc n=101 cpid=306 status=0 expect=ok
+UFZ1 edges n=101 new=0
+UFZ1 tcb n=102 src=cov a=1 b=228146733 c=1429461911
+UFZ1 tc n=102 cpid=309 status=0 expect=ok
+UFZ1 edges n=102 new=0
+UFZ1 tcb n=103 src=cov a=1 b=1630929794 c=1112186337
+UFZ1 tc n=103 cpid=312 status=0 expect=ok
+UFZ1 edges n=103 new=0
+UFZ1 tcb n=104 src=cov a=1 b=401724658 c=1742528374
+UFZ1 tc n=104 cpid=315 status=0 expect=ok
+UFZ1 edges n=104 new=0
+UFZ1 tcb n=105 src=cov a=1 b=1641718527 c=222885325
+UFZ1 tc n=105 cpid=318 status=0 expect=ok
+UFZ1 edges n=105 new=0
+UFZ1 tcb n=106 src=cov a=1 b=1992618279 c=921362626
+UFZ1 tc n=106 cpid=321 status=0 expect=ok
+UFZ1 edges n=106 new=0
+UFZ1 tcb n=107 src=cov a=1 b=435345543 c=1518836371
+UFZ1 tc n=107 cpid=324 status=0 expect=ok
+UFZ1 edges n=107 new=0
+UFZ1 tcb n=108 src=cov a=1 b=1282327403 c=33821240
+UFZ1 tc n=108 cpid=327 status=0 expect=ok
+UFZ1 edges n=108 new=0
+UFZ1 tcb n=109 src=cov a=1 b=480470244 c=465557097
+UFZ1 tc n=109 cpid=330 status=0 expect=ok
+UFZ1 edges n=109 new=0
+UFZ1 tcb n=110 src=cov a=1 b=893039463 c=926403003
+UFZ1 tc n=110 cpid=333 status=0 expect=ok
+UFZ1 edges n=110 new=0
+UFZ1 tcb n=111 src=cov a=1 b=1500594491 c=1283376946
+UFZ1 tc n=111 cpid=336 status=0 expect=ok
+UFZ1 edges n=111 new=0
+UFZ1 tcb n=112 src=cov a=1 b=1153026718 c=1747168274
+UFZ1 tc n=112 cpid=339 status=0 expect=ok
+UFZ1 edges n=112 new=0
+UFZ1 tcb n=113 src=cov a=1 b=631409183 c=1610852006
+UFZ1 tc n=113 cpid=342 status=0 expect=ok
+UFZ1 edges n=113 new=0
+UFZ1 tcb n=114 src=cov a=1 b=1732396315 c=718423843
+UFZ1 tc n=114 cpid=345 status=0 expect=ok
+UFZ1 edges n=114 new=0
+UFZ1 tcb n=115 src=cov a=1 b=210629880 c=1174609942
+UFZ1 tc n=115 cpid=348 status=0 expect=ok
+UFZ1 edges n=115 new=0
+UFZ1 tcb n=116 src=cov a=1 b=103949982 c=658456178
+UFZ1 tc n=116 cpid=351 status=0 expect=ok
+UFZ1 edges n=116 new=0
+UFZ1 tcb n=117 src=cov a=1 b=647642113 c=718610137
+UFZ1 tc n=117 cpid=354 status=0 expect=ok
+UFZ1 edges n=117 new=0
+UFZ1 tcb n=118 src=cov a=1 b=43981 c=0
+UFZ1 tc n=118 cpid=357 status=0 expect=ok
+UFZ1 tcb n=119 src=cov a=1 b=393321059 c=1020253788
+UFZ1 tc n=119 cpid=360 status=0 expect=ok
+UFZ1 edges n=119 new=24
+UFZ1 tcb n=120 src=cov a=1 b=393321059 c=1010706528
+UFZ1 tc n=120 cpid=363 status=0 expect=ok
+UFZ1 edges n=120 new=2
+UFZ1 tcb n=121 src=cov a=1 b=1178133138 c=1503960038
+UFZ1 tc n=121 cpid=366 status=0 expect=ok
+UFZ1 edges n=121 new=8
+UFZ1 tcb n=122 src=cov a=1 b=1679756568 c=919140493
+UFZ1 tc n=122 cpid=369 status=0 expect=ok
+UFZ1 edges n=122 new=5
+UFZ1 tcb n=123 src=cov a=1 b=650348362 c=1909577876
+UFZ1 tc n=123 cpid=372 status=0 expect=ok
+UFZ1 edges n=123 new=0
+UFZ1 tcb n=124 src=cov a=1 b=393321059 c=1094908632
+UFZ1 tc n=124 cpid=375 status=0 expect=ok
+UFZ1 edges n=124 new=0
+UFZ1 tcb n=125 src=cov a=1 b=393321059 c=1692352798
+UFZ1 tc n=125 cpid=378 status=0 expect=ok
+UFZ1 edges n=125 new=0
+UFZ1 tcb n=126 src=cov a=1 b=393321059 c=2140680710
+UFZ1 tc n=126 cpid=381 status=0 expect=ok
+UFZ1 edges n=126 new=0
+UFZ1 tcb n=127 src=cov a=1 b=370668937 c=987306755
+UFZ1 tc n=127 cpid=384 status=0 expect=ok
+UFZ1 edges n=127 new=0
+UFZ1 tcb n=128 src=cov a=1 b=1871583294 c=1288227013
+UFZ1 tc n=128 cpid=387 status=0 expect=ok
+UFZ1 edges n=128 new=0
+UFZ1 tcb n=129 src=cov a=1 b=150623677 c=1682488332
+UFZ1 tc n=129 cpid=390 status=0 expect=ok
+UFZ1 edges n=129 new=0
+UFZ1 tcb n=130 src=cov a=1 b=1178133138 c=598043880
+UFZ1 tc n=130 cpid=393 status=0 expect=ok
+UFZ1 edges n=130 new=0
+UFZ1 tcb n=131 src=cov a=1 b=987466636 c=653339621
+UFZ1 tc n=131 cpid=396 status=0 expect=ok
+UFZ1 edges n=131 new=0
+UFZ1 tcb n=132 src=cov a=1 b=2091311494 c=878395285
+UFZ1 tc n=132 cpid=399 status=0 expect=ok
+UFZ1 edges n=132 new=0
+UFZ1 tcb n=133 src=cov a=1 b=1178133138 c=1614848084
+UFZ1 tc n=133 cpid=402 status=0 expect=ok
+UFZ1 edges n=133 new=0
+UFZ1 tcb n=134 src=cov a=1 b=1679756568 c=895722054
+UFZ1 tc n=134 cpid=405 status=0 expect=ok
+UFZ1 edges n=134 new=0
+UFZ1 tcb n=135 src=cov a=1 b=2002890790 c=1248201464
+UFZ1 tc n=135 cpid=408 status=0 expect=ok
+UFZ1 edges n=135 new=0
+UFZ1 tcb n=136 src=cov a=1 b=5736739 c=886055993
+UFZ1 tc n=136 cpid=411 status=0 expect=ok
+UFZ1 edges n=136 new=0
+UFZ1 tcb n=137 src=cov a=1 b=2120980197 c=1044573918
+UFZ1 tc n=137 cpid=414 status=0 expect=ok
+UFZ1 edges n=137 new=0
+UFZ1 tcb n=138 src=cov a=1 b=1178133138 c=978878108
+UFZ1 tc n=138 cpid=417 status=0 expect=ok
+UFZ1 edges n=138 new=0
+UFZ1 tcb n=139 src=cov a=1 b=393321059 c=931680903
+UFZ1 tc n=139 cpid=420 status=0 expect=ok
+UFZ1 edges n=139 new=0
+UFZ1 tcb n=140 src=cov a=1 b=1508643812 c=905619621
+UFZ1 tc n=140 cpid=423 status=0 expect=ok
+UFZ1 edges n=140 new=0
+UFZ1 tcb n=141 src=cov a=1 b=1178133138 c=1920200001
+UFZ1 tc n=141 cpid=426 status=0 expect=ok
+UFZ1 edges n=141 new=0
+UFZ1 tcb n=142 src=cov a=1 b=1821839724 c=834557842
+UFZ1 tc n=142 cpid=429 status=0 expect=ok
+UFZ1 edges n=142 new=0
+UFZ1 tcb n=143 src=cov a=1 b=43981 c=0
+UFZ1 tc n=143 cpid=432 status=0 expect=ok
+UFZ1 tcb n=144 src=cov a=1 b=393321059 c=1020253788
+UFZ1 tc n=144 cpid=435 status=0 expect=ok
+UFZ1 edges n=144 new=24
+UFZ1 tcb n=145 src=cov a=1 b=437492745 c=635017129
+UFZ1 tc n=145 cpid=438 status=0 expect=ok
+UFZ1 edges n=145 new=7
+UFZ1 tcb n=146 src=cov a=1 b=1010706528 c=524707796
+UFZ1 tc n=146 cpid=441 status=0 expect=ok
+UFZ1 edges n=146 new=4
+UFZ1 tcb n=147 src=cov a=1 b=1178133138 c=1503960038
+UFZ1 tc n=147 cpid=444 status=0 expect=ok
+UFZ1 edges n=147 new=1
+UFZ1 tcb n=148 src=cov a=1 b=136572034 c=1679756568
+UFZ1 tc n=148 cpid=447 status=0 expect=ok
+UFZ1 edges n=148 new=5
+UFZ1 tcb n=149 src=cov a=1 b=919140493 c=154131842
+UFZ1 tc n=149 cpid=450 status=0 expect=ok
+UFZ1 edges n=149 new=0
+UFZ1 tcb n=150 src=cov a=1 b=650348362 c=1909577876
+UFZ1 tc n=150 cpid=453 status=0 expect=ok
+UFZ1 edges n=150 new=0
+UFZ1 tcb n=151 src=cov a=1 b=65460255 c=402242137
+UFZ1 tc n=151 cpid=456 status=0 expect=ok
+UFZ1 edges n=151 new=0
+UFZ1 tcb n=152 src=cov a=1 b=1094908632 c=901018769
+UFZ1 tc n=152 cpid=459 status=0 expect=ok
+UFZ1 edges n=152 new=0
+UFZ1 tcb n=153 src=cov a=1 b=289213833 c=1692352798
+UFZ1 tc n=153 cpid=462 status=0 expect=ok
+UFZ1 edges n=153 new=0
+UFZ1 tcb n=154 src=cov a=1 b=1008694585 c=2061932976
+UFZ1 tc n=154 cpid=465 status=0 expect=ok
+UFZ1 edges n=154 new=0
+UFZ1 tcb n=155 src=cov a=1 b=2140680710 c=1899706684
+UFZ1 tc n=155 cpid=468 status=0 expect=ok
+UFZ1 edges n=155 new=0
+UFZ1 tcb n=156 src=cov a=1 b=370668937 c=987306755
+UFZ1 tc n=156 cpid=471 status=0 expect=ok
+UFZ1 edges n=156 new=0
+UFZ1 tcb n=157 src=cov a=1 b=1377350948 c=1871583294
+UFZ1 tc n=157 cpid=474 status=0 expect=ok
+UFZ1 edges n=157 new=0
+UFZ1 tcb n=158 src=cov a=1 b=1288227013 c=355347880
+UFZ1 tc n=158 cpid=477 status=0 expect=ok
+UFZ1 edges n=158 new=0
+UFZ1 tcb n=159 src=cov a=1 b=150623677 c=1682488332
+UFZ1 tc n=159 cpid=480 status=0 expect=ok
+UFZ1 edges n=159 new=0
+UFZ1 tcb n=160 src=cov a=1 b=665680391 c=127608206
+UFZ1 tc n=160 cpid=483 status=0 expect=ok
+UFZ1 edges n=160 new=0
+UFZ1 tcb n=161 src=cov a=1 b=598043880 c=2116455516
+UFZ1 tc n=161 cpid=486 status=0 expect=ok
+UFZ1 edges n=161 new=0
+UFZ1 tcb n=162 src=cov a=1 b=987466636 c=653339621
+UFZ1 tc n=162 cpid=489 status=0 expect=ok
+UFZ1 edges n=162 new=0
+UFZ1 tcb n=163 src=cov a=1 b=1023364152 c=2091311494
+UFZ1 tc n=163 cpid=492 status=0 expect=ok
+UFZ1 edges n=163 new=0
+UFZ1 tcb n=164 src=cov a=1 b=878395285 c=29809981
+UFZ1 tc n=164 cpid=495 status=0 expect=ok
+UFZ1 edges n=164 new=0
+UFZ1 tcb n=165 src=cov a=1 b=199007162 c=1614848084
+UFZ1 tc n=165 cpid=498 status=0 expect=ok
+UFZ1 edges n=165 new=0
+UFZ1 tcb n=166 src=cov a=1 b=603228091 c=912912359
+UFZ1 tc n=166 cpid=501 status=0 expect=ok
+UFZ1 edges n=166 new=0
+UFZ1 tcb n=167 src=cov a=1 b=895722054 c=892950700
+UFZ1 tc n=167 cpid=504 status=0 expect=ok
+UFZ1 edges n=167 new=0
+UFZ1 tcb n=168 src=cov a=1 b=43981 c=0
+UFZ1 tc n=168 cpid=507 status=0 expect=ok
+UFZ1 tcb n=169 src=cov a=1 b=1510030286 c=2144115564
+UFZ1 tc n=169 cpid=510 status=0 expect=ok
+UFZ1 edges n=169 new=32
+UFZ1 tcb n=170 src=cov a=1 b=4419269 c=128415539
+UFZ1 tc n=170 cpid=513 status=0 expect=ok
+UFZ1 edges n=170 new=4
+UFZ1 tcb n=171 src=cov a=1 b=4419269 c=110325471
+UFZ1 tc n=171 cpid=516 status=0 expect=ok
+UFZ1 edges n=171 new=0
+UFZ1 tcb n=172 src=cov a=1 b=4419269 c=488375117
+UFZ1 tc n=172 cpid=519 status=0 expect=ok
+UFZ1 edges n=172 new=5
+UFZ1 tcb n=173 src=cov a=1 b=136449705 c=869959361
+UFZ1 tc n=173 cpid=522 status=0 expect=ok
+UFZ1 edges n=173 new=0
+UFZ1 tcb n=174 src=cov a=1 b=1510030286 c=195098593
+UFZ1 tc n=174 cpid=525 status=0 expect=ok
+UFZ1 edges n=174 new=0
+UFZ1 tcb n=175 src=cov a=1 b=1482670365 c=1015009848
+UFZ1 tc n=175 cpid=528 status=0 expect=ok
+UFZ1 edges n=175 new=0
+UFZ1 tcb n=176 src=cov a=1 b=1391411000 c=1868374769
+UFZ1 tc n=176 cpid=531 status=0 expect=ok
+UFZ1 edges n=176 new=0
+UFZ1 tcb n=177 src=cov a=1 b=4419269 c=1761751641
+UFZ1 tc n=177 cpid=534 status=0 expect=ok
+UFZ1 edges n=177 new=0
+UFZ1 tcb n=178 src=cov a=1 b=1707917526 c=1770689700
+UFZ1 tc n=178 cpid=537 status=0 expect=ok
+UFZ1 edges n=178 new=0
+UFZ1 tcb n=179 src=cov a=1 b=2004910376 c=378112043
+UFZ1 tc n=179 cpid=540 status=0 expect=ok
+UFZ1 edges n=179 new=0
+UFZ1 tcb n=180 src=cov a=1 b=1510030286 c=272995259
+UFZ1 tc n=180 cpid=543 status=0 expect=ok
+UFZ1 edges n=180 new=0
+UFZ1 tcb n=181 src=cov a=1 b=4419269 c=1112703250
+UFZ1 tc n=181 cpid=546 status=0 expect=ok
+UFZ1 edges n=181 new=0
+UFZ1 tcb n=182 src=cov a=1 b=1802558712 c=1550939024
+UFZ1 tc n=182 cpid=549 status=0 expect=ok
+UFZ1 edges n=182 new=0
+UFZ1 tcb n=183 src=cov a=1 b=1143113033 c=1051733700
+UFZ1 tc n=183 cpid=552 status=0 expect=ok
+UFZ1 edges n=183 new=0
+UFZ1 tcb n=184 src=cov a=1 b=4419269 c=1593456146
+UFZ1 tc n=184 cpid=555 status=0 expect=ok
+UFZ1 edges n=184 new=0
+UFZ1 tcb n=185 src=cov a=1 b=498413015 c=1774410936
+UFZ1 tc n=185 cpid=558 status=0 expect=ok
+UFZ1 edges n=185 new=0
+UFZ1 tcb n=186 src=cov a=1 b=4419269 c=326795367
+UFZ1 tc n=186 cpid=561 status=0 expect=ok
+UFZ1 edges n=186 new=0
+UFZ1 tcb n=187 src=cov a=1 b=1510030286 c=854011367
+UFZ1 tc n=187 cpid=564 status=0 expect=ok
+UFZ1 edges n=187 new=0
+UFZ1 tcb n=188 src=cov a=1 b=1217428467 c=475029990
+UFZ1 tc n=188 cpid=567 status=0 expect=ok
+UFZ1 edges n=188 new=0
+UFZ1 tcb n=189 src=cov a=1 b=313652689 c=976187909
+UFZ1 tc n=189 cpid=570 status=0 expect=ok
+UFZ1 edges n=189 new=0
+UFZ1 tcb n=190 src=cov a=1 b=2065396192 c=1016638597
+UFZ1 tc n=190 cpid=573 status=0 expect=ok
+UFZ1 edges n=190 new=0
+UFZ1 tcb n=191 src=cov a=1 b=4419269 c=1418750089
+UFZ1 tc n=191 cpid=576 status=0 expect=ok
+UFZ1 edges n=191 new=0
+UFZ1 tcb n=192 src=cov a=1 b=4419269 c=38389669
+UFZ1 tc n=192 cpid=579 status=0 expect=ok
+UFZ1 edges n=192 new=0
+UFZ1 tcb n=193 src=cov a=1 b=43981 c=0
+UFZ1 tc n=193 cpid=582 status=0 expect=ok
+UFZ1 tcb n=194 src=cov a=1 b=1510030286 c=2144115564
+UFZ1 tc n=194 cpid=585 status=0 expect=ok
+UFZ1 edges n=194 new=33
+UFZ1 tcb n=195 src=cov a=1 b=1916200896 c=4419269
+UFZ1 tc n=195 cpid=588 status=0 expect=ok
+UFZ1 edges n=195 new=1
+UFZ1 tcb n=196 src=cov a=1 b=128415539 c=598637909
+UFZ1 tc n=196 cpid=591 status=0 expect=ok
+UFZ1 edges n=196 new=5
+UFZ1 tcb n=197 src=cov a=1 b=313127095 c=110325471
+UFZ1 tc n=197 cpid=594 status=0 expect=ok
+UFZ1 edges n=197 new=0
+UFZ1 tcb n=198 src=cov a=1 b=1663262983 c=1743748877
+UFZ1 tc n=198 cpid=597 status=0 expect=ok
+UFZ1 edges n=198 new=3
+UFZ1 tcb n=199 src=cov a=1 b=488375117 c=1719713668
+UFZ1 tc n=199 cpid=600 status=0 expect=ok
+UFZ1 edges n=199 new=0
+UFZ1 tcb n=200 src=cov a=1 b=136449705 c=869959361
+UFZ1 tc n=200 cpid=603 status=0 expect=ok
+UFZ1 edges n=200 new=0
+UFZ1 tcb n=201 src=cov a=1 b=685445245 c=48965949
+UFZ1 tc n=201 cpid=606 status=0 expect=ok
+UFZ1 edges n=201 new=0
+UFZ1 tcb n=202 src=cov a=1 b=195098593 c=2101556592
+UFZ1 tc n=202 cpid=609 status=0 expect=ok
+UFZ1 edges n=202 new=0
+UFZ1 tcb n=203 src=cov a=1 b=1482670365 c=1015009848
+UFZ1 tc n=203 cpid=612 status=0 expect=ok
+UFZ1 edges n=203 new=0
+UFZ1 tcb n=204 src=cov a=1 b=832395526 c=1391411000
+UFZ1 tc n=204 cpid=615 status=0 expect=ok
+UFZ1 edges n=204 new=0
+UFZ1 tcb n=205 src=cov a=1 b=1868374769 c=1719949499
+UFZ1 tc n=205 cpid=618 status=0 expect=ok
+UFZ1 edges n=205 new=0
+UFZ1 tcb n=206 src=cov a=1 b=1315029130 c=1761751641
+UFZ1 tc n=206 cpid=621 status=0 expect=ok
+UFZ1 edges n=206 new=0
+UFZ1 tcb n=207 src=cov a=1 b=544424026 c=1707917526
+UFZ1 tc n=207 cpid=624 status=0 expect=ok
+UFZ1 edges n=207 new=0
+UFZ1 tcb n=208 src=cov a=1 b=1770689700 c=1595586514
+UFZ1 tc n=208 cpid=627 status=0 expect=ok
+UFZ1 edges n=208 new=0
+UFZ1 tcb n=209 src=cov a=1 b=2004910376 c=378112043
+UFZ1 tc n=209 cpid=630 status=0 expect=ok
+UFZ1 edges n=209 new=0
+UFZ1 tcb n=210 src=cov a=1 b=1895239203 c=2042270622
+UFZ1 tc n=210 cpid=633 status=0 expect=ok
+UFZ1 edges n=210 new=0
+UFZ1 tcb n=211 src=cov a=1 b=272995259 c=709486153
+UFZ1 tc n=211 cpid=636 status=0 expect=ok
+UFZ1 edges n=211 new=0
+UFZ1 tcb n=212 src=cov a=1 b=363083530 c=1112703250
+UFZ1 tc n=212 cpid=639 status=0 expect=ok
+UFZ1 edges n=212 new=0
+UFZ1 tcb n=213 src=cov a=1 b=1371768568 c=1802558712
+UFZ1 tc n=213 cpid=642 status=0 expect=ok
+UFZ1 edges n=213 new=0
+UFZ1 tcb n=214 src=cov a=1 b=1550939024 c=1087973830
+UFZ1 tc n=214 cpid=645 status=0 expect=ok
+UFZ1 edges n=214 new=0
+UFZ1 tcb n=215 src=cov a=1 b=1143113033 c=1051733700
+UFZ1 tc n=215 cpid=648 status=0 expect=ok
+UFZ1 edges n=215 new=0
+UFZ1 tcb n=216 src=cov a=1 b=808421561 c=900486337
+UFZ1 tc n=216 cpid=651 status=0 expect=ok
+UFZ1 edges n=216 new=0
+UFZ1 tcb n=217 src=cov a=1 b=1593456146 c=809310794
+UFZ1 tc n=217 cpid=654 status=0 expect=ok
+UFZ1 edges n=217 new=0
+[ PASS ] ufuzz.u4_ext2_guided_vs_random_paired (4 checks)
+[ RUN  ] ufuzz.u4_ext2_tiers_reach_new_coverage
+UFZ1 tcb n=218 src=cov a=2 b=53504 c=53504
+UFZ1 tc n=218 cpid=657 status=0 expect=ok
+UFZ1 tcb n=219 src=cov a=2 b=40960 c=45056
+UFZ1 tc n=219 cpid=660 status=0 expect=ok
+UFZ1 tcb n=220 src=cov a=2 b=40961 c=45057
+UFZ1 tc n=220 cpid=663 status=0 expect=ok
+UFZ1 tcb n=221 src=cov a=2 b=40962 c=45058
+UFZ1 tc n=221 cpid=666 status=0 expect=ok
+UFZ1 tcb n=222 src=cov a=2 b=40963 c=45059
+UFZ1 tc n=222 cpid=669 status=0 expect=ok
+UFZ1 tcb n=223 src=cov a=2 b=40964 c=45060
+UFZ1 tc n=223 cpid=672 status=0 expect=ok
+UFZ1 tcb n=224 src=cov a=2 b=40965 c=45061
+UFZ1 tc n=224 cpid=675 status=0 expect=ok
+UFZ1 tcb n=225 src=cov a=2 b=40966 c=45062
+UFZ1 tc n=225 cpid=678 status=0 expect=ok
+UFZ1 tcb n=226 src=cov a=2 b=40967 c=45063
+UFZ1 tc n=226 cpid=681 status=0 expect=ok
+UFZ1 tcb n=227 src=cov a=2 b=40968 c=45064
+UFZ1 tc n=227 cpid=684 status=0 expect=ok
+UFZ1 tcb n=228 src=cov a=2 b=40969 c=45065
+UFZ1 tc n=228 cpid=687 status=0 expect=ok
+UFZ1 tcb n=229 src=cov a=2 b=40970 c=45066
+UFZ1 tc n=229 cpid=690 status=0 expect=ok
+UFZ1 tcb n=230 src=cov a=2 b=40971 c=45067
+UFZ1 tc n=230 cpid=693 status=0 expect=ok
+UFZ1 tcb n=231 src=cov a=2 b=49152 c=53248
+UFZ1 tc n=231 cpid=696 status=0 expect=ok
+UFZ1 tcb n=232 src=cov a=2 b=49153 c=53249
+UFZ1 tc n=232 cpid=699 status=0 expect=ok
+UFZ1 tcb n=233 src=cov a=2 b=49154 c=53250
+UFZ1 tc n=233 cpid=702 status=0 expect=ok
+UFZ1 tcb n=234 src=cov a=2 b=49155 c=53251
+UFZ1 tc n=234 cpid=705 status=0 expect=ok
+UFZ1 tcb n=235 src=cov a=2 b=49156 c=53252
+UFZ1 tc n=235 cpid=708 status=0 expect=ok
+UFZ1 tcb n=236 src=cov a=2 b=49157 c=53253
+UFZ1 tc n=236 cpid=711 status=0 expect=ok
+UFZ1 tcb n=237 src=cov a=2 b=49158 c=53254
+UFZ1 tc n=237 cpid=714 status=0 expect=ok
+UFZ1 tcb n=238 src=cov a=2 b=49159 c=53255
+UFZ1 tc n=238 cpid=717 status=0 expect=ok
+UFZ1 tcb n=239 src=cov a=2 b=49160 c=53256
+UFZ1 tc n=239 cpid=720 status=0 expect=ok
+UFZ1 tcb n=240 src=cov a=2 b=49161 c=53257
+UFZ1 tc n=240 cpid=723 status=0 expect=ok
+UFZ1 tcb n=241 src=cov a=2 b=49162 c=53258
+UFZ1 tc n=241 cpid=726 status=0 expect=ok
+UFZ1 tcb n=242 src=cov a=2 b=49163 c=53259
+UFZ1 tc n=242 cpid=729 status=0 expect=ok
+UFZ1 tcb n=243 src=cov a=1 b=57344 c=61440
+UFZ1 tc n=243 cpid=732 status=0 expect=ok
+UFZ1 tcb n=244 src=cov a=1 b=57345 c=61441
+UFZ1 tc n=244 cpid=735 status=0 expect=ok
+UFZ1 tcb n=245 src=cov a=1 b=57346 c=61442
+UFZ1 tc n=245 cpid=738 status=0 expect=ok
+UFZ1 tcb n=246 src=cov a=1 b=57347 c=61443
+UFZ1 tc n=246 cpid=741 status=0 expect=ok
+UFZ1 tcb n=247 src=cov a=1 b=57348 c=61444
+UFZ1 tc n=247 cpid=744 status=0 expect=ok
+UFZ1 tcb n=248 src=cov a=1 b=57349 c=61445
+UFZ1 tc n=248 cpid=747 status=0 expect=ok
+UFZ1 tcb n=249 src=cov a=1 b=57350 c=61446
+UFZ1 tc n=249 cpid=750 status=0 expect=ok
+UFZ1 tcb n=250 src=cov a=1 b=57351 c=61447
+UFZ1 tc n=250 cpid=753 status=0 expect=ok
+UFZ1 tcb n=251 src=cov a=1 b=57352 c=61448
+UFZ1 tc n=251 cpid=756 status=0 expect=ok
+UFZ1 tcb n=252 src=cov a=1 b=57353 c=61449
+UFZ1 tc n=252 cpid=759 status=0 expect=ok
+UFZ1 tcb n=253 src=cov a=1 b=57354 c=61450
+UFZ1 tc n=253 cpid=762 status=0 expect=ok
+UFZ1 tcb n=254 src=cov a=1 b=57355 c=61451
+UFZ1 tc n=254 cpid=765 status=0 expect=ok
+[ PASS ] ufuzz.u4_ext2_tiers_reach_new_coverage (2 checks)
+[ RUN  ] ufuzz.u4_coverage_guided_campaign
+UFZ1 tcb n=255 src=cov a=0 b=43981 c=0
+UFZ1 tc n=255 cpid=768 status=0 expect=ok
+UFZ1 tcb n=256 src=cov a=0 b=643661976 c=518618192
+UFZ1 tc n=256 cpid=771 status=0 expect=ok
+UFZ1 edges n=256 new=24
+UFZ1 tcb n=257 src=cov a=0 b=643661976 c=2009616363
+UFZ1 tc n=257 cpid=774 status=0 expect=ok
+UFZ1 edges n=257 new=0
+UFZ1 tcb n=258 src=cov a=0 b=998668161 c=1991749685
+UFZ1 tc n=258 cpid=777 status=0 expect=ok
+UFZ1 edges n=258 new=0
+UFZ1 tcb n=259 src=cov a=0 b=867258161 c=235521634
+UFZ1 tc n=259 cpid=780 status=0 expect=ok
+UFZ1 edges n=259 new=1
+UFZ1 tcb n=260 src=cov a=0 b=129484850 c=1665362628
+UFZ1 tc n=260 cpid=783 status=0 expect=ok
+UFZ1 edges n=260 new=0
+UFZ1 tcb n=261 src=cov a=0 b=643661976 c=1055949062
+UFZ1 tc n=261 cpid=786 status=0 expect=ok
+UFZ1 edges n=261 new=0
+UFZ1 tcb n=262 src=cov a=0 b=643661976 c=1304007010
+UFZ1 tc n=262 cpid=789 status=0 expect=ok
+UFZ1 edges n=262 new=0
+UFZ1 tcb n=263 src=cov a=0 b=867258161 c=1118528976
+UFZ1 tc n=263 cpid=792 status=0 expect=ok
+UFZ1 edges n=263 new=0
+UFZ1 tcb n=264 src=cov a=0 b=855307740 c=175525601
+UFZ1 tc n=264 cpid=795 status=0 expect=ok
+UFZ1 edges n=264 new=0
+UFZ1 tcb n=265 src=cov a=0 b=643661976 c=642746865
+UFZ1 tc n=265 cpid=798 status=0 expect=ok
+UFZ1 edges n=265 new=0
+UFZ1 tcb n=266 src=cov a=0 b=643661976 c=665033520
+UFZ1 tc n=266 cpid=801 status=0 expect=ok
+UFZ1 edges n=266 new=0
+UFZ1 tcb n=267 src=cov a=0 b=643661976 c=1327826249
+UFZ1 tc n=267 cpid=804 status=0 expect=ok
+UFZ1 edges n=267 new=0
+UFZ1 tcb n=268 src=cov a=0 b=867258161 c=1814738787
+UFZ1 tc n=268 cpid=807 status=0 expect=ok
+UFZ1 edges n=268 new=0
+UFZ1 tcb n=269 src=cov a=0 b=867258161 c=581947515
+UFZ1 tc n=269 cpid=810 status=0 expect=ok
+UFZ1 edges n=269 new=0
+UFZ1 tcb n=270 src=cov a=0 b=1347683186 c=970268563
+UFZ1 tc n=270 cpid=813 status=0 expect=ok
+UFZ1 edges n=270 new=0
+UFZ1 tcb n=271 src=cov a=0 b=643661976 c=1607384620
+UFZ1 tc n=271 cpid=816 status=0 expect=ok
+UFZ1 edges n=271 new=0
+UFZ1 tcb n=272 src=cov a=0 b=643661976 c=1311414143
+UFZ1 tc n=272 cpid=819 status=0 expect=ok
+UFZ1 edges n=272 new=0
+UFZ1 tcb n=273 src=cov a=0 b=802823032 c=1052504235
+UFZ1 tc n=273 cpid=822 status=0 expect=ok
+UFZ1 edges n=273 new=0
+UFZ1 tcb n=274 src=cov a=0 b=867258161 c=298465828
+UFZ1 tc n=274 cpid=825 status=0 expect=ok
+UFZ1 edges n=274 new=0
+UFZ1 tcb n=275 src=cov a=0 b=1736383756 c=1652388487
+UFZ1 tc n=275 cpid=828 status=0 expect=ok
+UFZ1 edges n=275 new=0
+UFZ1 tcb n=276 src=cov a=0 b=1359686662 c=1782781144
+UFZ1 tc n=276 cpid=831 status=0 expect=ok
+UFZ1 edges n=276 new=0
+UFZ1 tcb n=277 src=cov a=0 b=1677838627 c=1001766307
+UFZ1 tc n=277 cpid=834 status=0 expect=ok
+UFZ1 edges n=277 new=0
+UFZ1 tcb n=278 src=cov a=0 b=867258161 c=2103339895
+UFZ1 tc n=278 cpid=837 status=0 expect=ok
+UFZ1 edges n=278 new=0
+UFZ1 tcb n=279 src=cov a=0 b=643661976 c=493531160
+UFZ1 tc n=279 cpid=840 status=0 expect=ok
+UFZ1 edges n=279 new=0
+UFZ1 tcb n=280 src=cov a=0 b=220930171 c=1190184432
+UFZ1 tc n=280 cpid=843 status=0 expect=ok
+UFZ1 edges n=280 new=0
+UFZ1 tcb n=281 src=cov a=0 b=867258161 c=1718281074
+UFZ1 tc n=281 cpid=846 status=0 expect=ok
+UFZ1 edges n=281 new=0
+UFZ1 tcb n=282 src=cov a=0 b=867258161 c=111268507
+UFZ1 tc n=282 cpid=849 status=0 expect=ok
+UFZ1 edges n=282 new=0
+UFZ1 tcb n=283 src=cov a=0 b=867258161 c=677917480
+UFZ1 tc n=283 cpid=852 status=0 expect=ok
+UFZ1 edges n=283 new=0
+UFZ1 tcb n=284 src=cov a=0 b=867258161 c=1826941759
+UFZ1 tc n=284 cpid=855 status=0 expect=ok
+UFZ1 edges n=284 new=0
+UFZ1 tcb n=285 src=cov a=0 b=867258161 c=573866441
+UFZ1 tc n=285 cpid=858 status=0 expect=ok
+UFZ1 edges n=285 new=0
+UFZ1 tcb n=286 src=cov a=0 b=643661976 c=495886645
+UFZ1 tc n=286 cpid=861 status=0 expect=ok
+UFZ1 edges n=286 new=0
+UFZ1 tcb n=287 src=cov a=0 b=867258161 c=1333787182
+UFZ1 tc n=287 cpid=864 status=0 expect=ok
+UFZ1 edges n=287 new=0
+UFZ1 tcb n=288 src=cov a=0 b=661719568 c=1502985307
+UFZ1 tc n=288 cpid=867 status=0 expect=ok
+UFZ1 edges n=288 new=0
+UFZ1 tcb n=289 src=cov a=0 b=867258161 c=554182308
+UFZ1 tc n=289 cpid=870 status=0 expect=ok
+UFZ1 edges n=289 new=0
+UFZ1 tcb n=290 src=cov a=0 b=1576866891 c=1084915777
+UFZ1 tc n=290 cpid=873 status=0 expect=ok
+UFZ1 edges n=290 new=0
+UFZ1 tcb n=291 src=cov a=0 b=867258161 c=2113278165
+UFZ1 tc n=291 cpid=876 status=0 expect=ok
+UFZ1 edges n=291 new=0
+UFZ1 tcb n=292 src=cov a=0 b=643661976 c=286808537
+UFZ1 tc n=292 cpid=879 status=0 expect=ok
+UFZ1 edges n=292 new=0
+UFZ1 tcb n=293 src=cov a=0 b=867258161 c=1407098154
+UFZ1 tc n=293 cpid=882 status=0 expect=ok
+UFZ1 edges n=293 new=0
+UFZ1 tcb n=294 src=cov a=0 b=643661976 c=1816148934
+UFZ1 tc n=294 cpid=885 status=0 expect=ok
+UFZ1 edges n=294 new=0
+UFZ1 tcb n=295 src=cov a=0 b=643661976 c=977267027
+UFZ1 tc n=295 cpid=888 status=0 expect=ok
+UFZ1 edges n=295 new=0
+UFZ1 tcb n=296 src=cov a=0 b=1434465953 c=424485647
+UFZ1 tc n=296 cpid=891 status=0 expect=ok
+UFZ1 edges n=296 new=0
+UFZ1 tcb n=297 src=cov a=0 b=867258161 c=446646623
+UFZ1 tc n=297 cpid=894 status=0 expect=ok
+UFZ1 edges n=297 new=0
+UFZ1 tcb n=298 src=cov a=0 b=700619802 c=193747225
+UFZ1 tc n=298 cpid=897 status=0 expect=ok
+UFZ1 edges n=298 new=0
+UFZ1 tcb n=299 src=cov a=0 b=643661976 c=30327508
+UFZ1 tc n=299 cpid=900 status=0 expect=ok
+UFZ1 edges n=299 new=0
+UFZ1 tcb n=300 src=cov a=0 b=867258161 c=895441280
+UFZ1 tc n=300 cpid=903 status=0 expect=ok
+UFZ1 edges n=300 new=0
+UFZ1 tcb n=301 src=cov a=0 b=867258161 c=489974927
+UFZ1 tc n=301 cpid=906 status=0 expect=ok
+UFZ1 edges n=301 new=0
+UFZ1 tcb n=302 src=cov a=0 b=1583538360 c=1540694464
+UFZ1 tc n=302 cpid=909 status=0 expect=ok
+UFZ1 edges n=302 new=0
+UFZ1 tcb n=303 src=cov a=0 b=1503085004 c=456865181
+UFZ1 tc n=303 cpid=912 status=0 expect=ok
+UFZ1 edges n=303 new=0
+UFZ1 tcb n=304 src=cov a=0 b=959805189 c=1794047463
+UFZ1 tc n=304 cpid=915 status=0 expect=ok
+UFZ1 edges n=304 new=0
+UFZ1 tcb n=305 src=cov a=0 b=928771017 c=337077886
+UFZ1 tc n=305 cpid=918 status=0 expect=ok
+UFZ1 edges n=305 new=0
+UFZ1 tcb n=306 src=cov a=0 b=643661976 c=2095054480
+UFZ1 tc n=306 cpid=921 status=0 expect=ok
+UFZ1 edges n=306 new=0
+UFZ1 tcb n=307 src=cov a=0 b=867258161 c=1889313289
+UFZ1 tc n=307 cpid=924 status=0 expect=ok
+UFZ1 edges n=307 new=0
+UFZ1 tcb n=308 src=cov a=0 b=1760059927 c=1248410988
+UFZ1 tc n=308 cpid=927 status=0 expect=ok
+UFZ1 edges n=308 new=0
+UFZ1 tcb n=309 src=cov a=0 b=643661976 c=1109964685
+UFZ1 tc n=309 cpid=930 status=0 expect=ok
+UFZ1 edges n=309 new=0
+UFZ1 tcb n=310 src=cov a=0 b=1199485236 c=1208587142
+UFZ1 tc n=310 cpid=933 status=0 expect=ok
+UFZ1 edges n=310 new=0
+UFZ1 tcb n=311 src=cov a=0 b=1044566717 c=829015415
+UFZ1 tc n=311 cpid=936 status=0 expect=ok
+UFZ1 edges n=311 new=0
+UFZ1 tcb n=312 src=cov a=0 b=928001341 c=1206648782
+UFZ1 tc n=312 cpid=939 status=0 expect=ok
+UFZ1 edges n=312 new=0
+UFZ1 tcb n=313 src=cov a=0 b=64158296 c=1595204140
+UFZ1 tc n=313 cpid=942 status=0 expect=ok
+UFZ1 edges n=313 new=0
+UFZ1 tcb n=314 src=cov a=0 b=2105831377 c=2086986599
+UFZ1 tc n=314 cpid=945 status=0 expect=ok
+UFZ1 edges n=314 new=0
+UFZ1 tcb n=315 src=cov a=0 b=848959998 c=941642718
+UFZ1 tc n=315 cpid=948 status=0 expect=ok
+UFZ1 edges n=315 new=0
+UFZ1 tcb n=316 src=cov a=0 b=43981 c=0
+UFZ1 tc n=316 cpid=951 status=0 expect=ok
+UFZ1 tcb n=317 src=cov a=0 b=643661976 c=518618192
+UFZ1 tc n=317 cpid=954 status=0 expect=ok
+UFZ1 edges n=317 new=28
+UFZ1 tcb n=318 src=cov a=0 b=643661976 c=2009616363
+UFZ1 tc n=318 cpid=957 status=0 expect=ok
+UFZ1 edges n=318 new=0
+UFZ1 tcb n=319 src=cov a=0 b=998668161 c=1991749685
+UFZ1 tc n=319 cpid=960 status=0 expect=ok
+UFZ1 edges n=319 new=0
+UFZ1 tcb n=320 src=cov a=0 b=867258161 c=235521634
+UFZ1 tc n=320 cpid=963 status=0 expect=ok
+UFZ1 edges n=320 new=0
+UFZ1 tcb n=321 src=cov a=0 b=129484850 c=1665362628
+UFZ1 tc n=321 cpid=966 status=0 expect=ok
+UFZ1 edges n=321 new=0
+UFZ1 tcb n=322 src=cov a=0 b=643661976 c=1055949062
+UFZ1 tc n=322 cpid=969 status=0 expect=ok
+UFZ1 edges n=322 new=0
+UFZ1 tcb n=323 src=cov a=0 b=643661976 c=1304007010
+UFZ1 tc n=323 cpid=972 status=0 expect=ok
+UFZ1 edges n=323 new=0
+UFZ1 tcb n=324 src=cov a=0 b=643661976 c=1118528976
+UFZ1 tc n=324 cpid=975 status=0 expect=ok
+UFZ1 edges n=324 new=0
+UFZ1 tcb n=325 src=cov a=0 b=855307740 c=175525601
+UFZ1 tc n=325 cpid=978 status=0 expect=ok
+UFZ1 edges n=325 new=0
+UFZ1 tcb n=326 src=cov a=0 b=643661976 c=642746865
+UFZ1 tc n=326 cpid=981 status=0 expect=ok
+UFZ1 edges n=326 new=0
+UFZ1 tcb n=327 src=cov a=0 b=643661976 c=665033520
+UFZ1 tc n=327 cpid=984 status=0 expect=ok
+UFZ1 edges n=327 new=0
+UFZ1 tcb n=328 src=cov a=0 b=643661976 c=1327826249
+UFZ1 tc n=328 cpid=987 status=0 expect=ok
+UFZ1 edges n=328 new=0
+UFZ1 tcb n=329 src=cov a=0 b=643661976 c=1814738787
+UFZ1 tc n=329 cpid=990 status=0 expect=ok
+UFZ1 edges n=329 new=0
+UFZ1 tcb n=330 src=cov a=0 b=643661976 c=581947515
+UFZ1 tc n=330 cpid=993 status=0 expect=ok
+UFZ1 edges n=330 new=0
+UFZ1 tcb n=331 src=cov a=0 b=1347683186 c=970268563
+UFZ1 tc n=331 cpid=996 status=0 expect=ok
+UFZ1 edges n=331 new=0
+UFZ1 tcb n=332 src=cov a=0 b=643661976 c=1607384620
+UFZ1 tc n=332 cpid=999 status=0 expect=ok
+UFZ1 edges n=332 new=0
+UFZ1 tcb n=333 src=cov a=0 b=643661976 c=1311414143
+UFZ1 tc n=333 cpid=1002 status=0 expect=ok
+UFZ1 edges n=333 new=0
+UFZ1 tcb n=334 src=cov a=0 b=802823032 c=1052504235
+UFZ1 tc n=334 cpid=1005 status=0 expect=ok
+UFZ1 edges n=334 new=0
+UFZ1 tcb n=335 src=cov a=0 b=643661976 c=298465828
+UFZ1 tc n=335 cpid=1008 status=0 expect=ok
+UFZ1 edges n=335 new=0
+UFZ1 tcb n=336 src=cov a=0 b=1736383756 c=1652388487
+UFZ1 tc n=336 cpid=1011 status=0 expect=ok
+UFZ1 edges n=336 new=0
+UFZ1 tcb n=337 src=cov a=0 b=1359686662 c=1782781144
+UFZ1 tc n=337 cpid=1014 status=0 expect=ok
+UFZ1 edges n=337 new=0
+UFZ1 tcb n=338 src=cov a=0 b=1677838627 c=1001766307
+UFZ1 tc n=338 cpid=1017 status=0 expect=ok
+UFZ1 edges n=338 new=0
+UFZ1 tcb n=339 src=cov a=0 b=643661976 c=2103339895
+UFZ1 tc n=339 cpid=1020 status=0 expect=ok
+UFZ1 edges n=339 new=0
+UFZ1 tcb n=340 src=cov a=0 b=643661976 c=493531160
+UFZ1 tc n=340 cpid=1023 status=0 expect=ok
+UFZ1 edges n=340 new=0
+UFZ1 tcb n=341 src=cov a=0 b=220930171 c=1190184432
+UFZ1 tc n=341 cpid=1026 status=0 expect=ok
+UFZ1 edges n=341 new=0
+UFZ1 tcb n=342 src=cov a=0 b=643661976 c=1718281074
+UFZ1 tc n=342 cpid=1029 status=0 expect=ok
+UFZ1 edges n=342 new=0
+UFZ1 tcb n=343 src=cov a=0 b=643661976 c=111268507
+UFZ1 tc n=343 cpid=1032 status=0 expect=ok
+UFZ1 edges n=343 new=0
+UFZ1 tcb n=344 src=cov a=0 b=643661976 c=677917480
+UFZ1 tc n=344 cpid=1035 status=0 expect=ok
+UFZ1 edges n=344 new=0
+UFZ1 tcb n=345 src=cov a=0 b=643661976 c=1826941759
+UFZ1 tc n=345 cpid=1038 status=0 expect=ok
+UFZ1 edges n=345 new=0
+UFZ1 tcb n=346 src=cov a=0 b=643661976 c=573866441
+UFZ1 tc n=346 cpid=1041 status=0 expect=ok
+UFZ1 edges n=346 new=0
+UFZ1 tcb n=347 src=cov a=0 b=643661976 c=495886645
+UFZ1 tc n=347 cpid=1044 status=0 expect=ok
+UFZ1 edges n=347 new=0
+UFZ1 tcb n=348 src=cov a=0 b=643661976 c=1333787182
+UFZ1 tc n=348 cpid=1047 status=0 expect=ok
+UFZ1 edges n=348 new=0
+UFZ1 tcb n=349 src=cov a=0 b=661719568 c=1502985307
+UFZ1 tc n=349 cpid=1050 status=0 expect=ok
+UFZ1 edges n=349 new=0
+UFZ1 tcb n=350 src=cov a=0 b=643661976 c=554182308
+UFZ1 tc n=350 cpid=1053 status=0 expect=ok
+UFZ1 edges n=350 new=0
+UFZ1 tcb n=351 src=cov a=0 b=1576866891 c=1084915777
+UFZ1 tc n=351 cpid=1056 status=0 expect=ok
+UFZ1 edges n=351 new=0
+UFZ1 tcb n=352 src=cov a=0 b=643661976 c=2113278165
+UFZ1 tc n=352 cpid=1059 status=0 expect=ok
+UFZ1 edges n=352 new=0
+UFZ1 tcb n=353 src=cov a=0 b=643661976 c=286808537
+UFZ1 tc n=353 cpid=1062 status=0 expect=ok
+UFZ1 edges n=353 new=0
+UFZ1 tcb n=354 src=cov a=0 b=643661976 c=1407098154
+UFZ1 tc n=354 cpid=1065 status=0 expect=ok
+UFZ1 edges n=354 new=0
+UFZ1 tcb n=355 src=cov a=0 b=643661976 c=1816148934
+UFZ1 tc n=355 cpid=1068 status=0 expect=ok
+UFZ1 edges n=355 new=0
+UFZ1 tcb n=356 src=cov a=0 b=643661976 c=977267027
+UFZ1 tc n=356 cpid=1071 status=0 expect=ok
+UFZ1 edges n=356 new=0
+UFZ1 tcb n=357 src=cov a=0 b=1434465953 c=424485647
+UFZ1 tc n=357 cpid=1074 status=0 expect=ok
+UFZ1 edges n=357 new=0
+UFZ1 tcb n=358 src=cov a=0 b=643661976 c=446646623
+UFZ1 tc n=358 cpid=1077 status=0 expect=ok
+UFZ1 edges n=358 new=0
+UFZ1 tcb n=359 src=cov a=0 b=700619802 c=193747225
+UFZ1 tc n=359 cpid=1080 status=0 expect=ok
+UFZ1 edges n=359 new=0
+UFZ1 tcb n=360 src=cov a=0 b=643661976 c=30327508
+UFZ1 tc n=360 cpid=1083 status=0 expect=ok
+UFZ1 edges n=360 new=0
+UFZ1 tcb n=361 src=cov a=0 b=643661976 c=895441280
+UFZ1 tc n=361 cpid=1086 status=0 expect=ok
+UFZ1 edges n=361 new=0
+UFZ1 tcb n=362 src=cov a=0 b=643661976 c=489974927
+UFZ1 tc n=362 cpid=1089 status=0 expect=ok
+UFZ1 edges n=362 new=0
+UFZ1 tcb n=363 src=cov a=0 b=1583538360 c=1540694464
+UFZ1 tc n=363 cpid=1092 status=0 expect=ok
+UFZ1 edges n=363 new=0
+UFZ1 tcb n=364 src=cov a=0 b=1503085004 c=456865181
+UFZ1 tc n=364 cpid=1095 status=0 expect=ok
+UFZ1 edges n=364 new=0
+UFZ1 tcb n=365 src=cov a=0 b=959805189 c=1794047463
+UFZ1 tc n=365 cpid=1098 status=0 expect=ok
+UFZ1 edges n=365 new=0
+UFZ1 tcb n=366 src=cov a=0 b=928771017 c=337077886
+UFZ1 tc n=366 cpid=1101 status=0 expect=ok
+UFZ1 edges n=366 new=0
+UFZ1 tcb n=367 src=cov a=0 b=643661976 c=2095054480
+UFZ1 tc n=367 cpid=1104 status=0 expect=ok
+UFZ1 edges n=367 new=0
+UFZ1 tcb n=368 src=cov a=0 b=643661976 c=1889313289
+UFZ1 tc n=368 cpid=1107 status=0 expect=ok
+UFZ1 edges n=368 new=0
+UFZ1 tcb n=369 src=cov a=0 b=1760059927 c=1248410988
+UFZ1 tc n=369 cpid=1110 status=0 expect=ok
+UFZ1 edges n=369 new=0
+UFZ1 tcb n=370 src=cov a=0 b=643661976 c=1109964685
+UFZ1 tc n=370 cpid=1113 status=0 expect=ok
+UFZ1 edges n=370 new=0
+UFZ1 tcb n=371 src=cov a=0 b=1199485236 c=1208587142
+UFZ1 tc n=371 cpid=1116 status=0 expect=ok
+UFZ1 edges n=371 new=0
+UFZ1 tcb n=372 src=cov a=0 b=1044566717 c=829015415
+UFZ1 tc n=372 cpid=1119 status=0 expect=ok
+UFZ1 edges n=372 new=0
+UFZ1 tcb n=373 src=cov a=0 b=928001341 c=1206648782
+UFZ1 tc n=373 cpid=1122 status=0 expect=ok
+UFZ1 edges n=373 new=0
+UFZ1 tcb n=374 src=cov a=0 b=64158296 c=1595204140
+UFZ1 tc n=374 cpid=1125 status=0 expect=ok
+UFZ1 edges n=374 new=0
+UFZ1 tcb n=375 src=cov a=0 b=2105831377 c=2086986599
+UFZ1 tc n=375 cpid=1128 status=0 expect=ok
+UFZ1 edges n=375 new=0
+UFZ1 tcb n=376 src=cov a=0 b=848959998 c=941642718
+UFZ1 tc n=376 cpid=1131 status=0 expect=ok
+UFZ1 edges n=376 new=0
+UFZ1 tcb n=377 src=cov a=0 b=43981 c=0
+UFZ1 tc n=377 cpid=1134 status=0 expect=ok
+UFZ1 tcb n=378 src=cov a=0 b=643661976 c=518618192
+UFZ1 tc n=378 cpid=1137 status=0 expect=ok
+UFZ1 edges n=378 new=41
+UFZ1 tcb n=379 src=cov a=0 b=824967839 c=236145959
+UFZ1 tc n=379 cpid=1140 status=0 expect=ok
+UFZ1 edges n=379 new=0
+UFZ1 tcb n=380 src=cov a=0 b=2009616363 c=1316631872
+UFZ1 tc n=380 cpid=1143 status=0 expect=ok
+UFZ1 edges n=380 new=0
+UFZ1 tcb n=381 src=cov a=0 b=998668161 c=1991749685
+UFZ1 tc n=381 cpid=1146 status=0 expect=ok
+UFZ1 edges n=381 new=0
+UFZ1 tcb n=382 src=cov a=0 b=581005982 c=867258161
+UFZ1 tc n=382 cpid=1149 status=0 expect=ok
+UFZ1 edges n=382 new=0
+UFZ1 tcb n=383 src=cov a=0 b=235521634 c=1640740344
+UFZ1 tc n=383 cpid=1152 status=0 expect=ok
+UFZ1 edges n=383 new=0
+UFZ1 tcb n=384 src=cov a=0 b=129484850 c=1665362628
+UFZ1 tc n=384 cpid=1155 status=0 expect=ok
+UFZ1 edges n=384 new=0
+UFZ1 tcb n=385 src=cov a=0 b=227546821 c=827300352
+UFZ1 tc n=385 cpid=1158 status=0 expect=ok
+UFZ1 edges n=385 new=0
+UFZ1 tcb n=386 src=cov a=0 b=1055949062 c=1597794537
+UFZ1 tc n=386 cpid=1161 status=0 expect=ok
+UFZ1 edges n=386 new=0
+UFZ1 tcb n=387 src=cov a=0 b=903596288 c=1304007010
+UFZ1 tc n=387 cpid=1164 status=0 expect=ok
+UFZ1 edges n=387 new=0
+UFZ1 tcb n=388 src=cov a=0 b=1451585031 c=924528481
+UFZ1 tc n=388 cpid=1167 status=0 expect=ok
+UFZ1 edges n=388 new=0
+UFZ1 tcb n=389 src=cov a=0 b=1118528976 c=2005432474
+UFZ1 tc n=389 cpid=1170 status=0 expect=ok
+UFZ1 edges n=389 new=0
+UFZ1 tcb n=390 src=cov a=0 b=855307740 c=175525601
+UFZ1 tc n=390 cpid=1173 status=0 expect=ok
+UFZ1 edges n=390 new=0
+UFZ1 tcb n=391 src=cov a=0 b=1116688771 c=1135423824
+UFZ1 tc n=391 cpid=1176 status=0 expect=ok
+UFZ1 edges n=391 new=0
+UFZ1 tcb n=392 src=cov a=0 b=642746865 c=555402127
+UFZ1 tc n=392 cpid=1179 status=0 expect=ok
+UFZ1 edges n=392 new=0
+UFZ1 tcb n=393 src=cov a=0 b=598167742 c=665033520
+UFZ1 tc n=393 cpid=1182 status=0 expect=ok
+UFZ1 edges n=393 new=0
+UFZ1 tcb n=394 src=cov a=0 b=1093673515 c=357646948
+UFZ1 tc n=394 cpid=1185 status=0 expect=ok
+UFZ1 edges n=394 new=0
+UFZ1 tcb n=395 src=cov a=0 b=1327826249 c=1523907717
+UFZ1 tc n=395 cpid=1188 status=0 expect=ok
+UFZ1 edges n=395 new=0
+UFZ1 tcb n=396 src=cov a=0 b=82566685 c=1814738787
+UFZ1 tc n=396 cpid=1191 status=0 expect=ok
+UFZ1 edges n=396 new=0
+UFZ1 tcb n=397 src=cov a=0 b=1871611631 c=1938716065
+UFZ1 tc n=397 cpid=1194 status=0 expect=ok
+UFZ1 edges n=397 new=0
+UFZ1 tcb n=398 src=cov a=0 b=581947515 c=903837592
+UFZ1 tc n=398 cpid=1197 status=0 expect=ok
+UFZ1 edges n=398 new=0
+UFZ1 tcb n=399 src=cov a=0 b=1347683186 c=970268563
+UFZ1 tc n=399 cpid=1200 status=0 expect=ok
+UFZ1 edges n=399 new=0
+UFZ1 tcb n=400 src=cov a=0 b=1755806287 c=1983057670
+UFZ1 tc n=400 cpid=1203 status=0 expect=ok
+UFZ1 edges n=400 new=0
+UFZ1 tcb n=401 src=cov a=0 b=1607384620 c=214241577
+UFZ1 tc n=401 cpid=1206 status=0 expect=ok
+UFZ1 edges n=401 new=0
+UFZ1 tcb n=402 src=cov a=0 b=46034260 c=1311414143
+UFZ1 tc n=402 cpid=1209 status=0 expect=ok
+UFZ1 edges n=402 new=0
+UFZ1 tcb n=403 src=cov a=0 b=1987793896 c=802823032
+UFZ1 tc n=403 cpid=1212 status=0 expect=ok
+UFZ1 edges n=403 new=0
+UFZ1 tcb n=404 src=cov a=0 b=1052504235 c=372549299
+UFZ1 tc n=404 cpid=1215 status=0 expect=ok
+UFZ1 edges n=404 new=0
+UFZ1 tcb n=405 src=cov a=0 b=290554725 c=298465828
+UFZ1 tc n=405 cpid=1218 status=0 expect=ok
+UFZ1 edges n=405 new=0
+UFZ1 tcb n=406 src=cov a=0 b=718349230 c=1736383756
+UFZ1 tc n=406 cpid=1221 status=0 expect=ok
+UFZ1 edges n=406 new=0
+UFZ1 tcb n=407 src=cov a=0 b=1652388487 c=809721608
+UFZ1 tc n=407 cpid=1224 status=0 expect=ok
+UFZ1 edges n=407 new=0
+UFZ1 tcb n=408 src=cov a=0 b=1359686662 c=1782781144
+UFZ1 tc n=408 cpid=1227 status=0 expect=ok
+UFZ1 edges n=408 new=0
+UFZ1 tcb n=409 src=cov a=0 b=555188474 c=1677838627
+UFZ1 tc n=409 cpid=1230 status=0 expect=ok
+UFZ1 edges n=409 new=0
+UFZ1 tcb n=410 src=cov a=0 b=1001766307 c=640566129
+UFZ1 tc n=410 cpid=1233 status=0 expect=ok
+UFZ1 edges n=410 new=0
+UFZ1 tcb n=411 src=cov a=0 b=1329287833 c=2103339895
+UFZ1 tc n=411 cpid=1236 status=0 expect=ok
+UFZ1 edges n=411 new=0
+UFZ1 tcb n=412 src=cov a=0 b=1998431475 c=335647000
+UFZ1 tc n=412 cpid=1239 status=0 expect=ok
+UFZ1 edges n=412 new=0
+UFZ1 tcb n=413 src=cov a=0 b=493531160 c=1060874942
+UFZ1 tc n=413 cpid=1242 status=0 expect=ok
+UFZ1 edges n=413 new=0
+UFZ1 tcb n=414 src=cov a=0 b=220930171 c=1190184432
+UFZ1 tc n=414 cpid=1245 status=0 expect=ok
+UFZ1 edges n=414 new=0
+UFZ1 tcb n=415 src=cov a=0 b=1081958023 c=1625250687
+UFZ1 tc n=415 cpid=1248 status=0 expect=ok
+UFZ1 edges n=415 new=0
+UFZ1 tcb n=416 src=cov a=0 b=1718281074 c=631853815
+UFZ1 tc n=416 cpid=1251 status=0 expect=ok
+UFZ1 edges n=416 new=0
+UFZ1 tcb n=417 src=cov a=0 b=1578126405 c=111268507
+UFZ1 tc n=417 cpid=1254 status=0 expect=ok
+UFZ1 edges n=417 new=0
+UFZ1 tcb n=418 src=cov a=0 b=560281033 c=943136671
+UFZ1 tc n=418 cpid=1257 status=0 expect=ok
+UFZ1 edges n=418 new=0
+UFZ1 tcb n=419 src=cov a=0 b=677917480 c=1097170845
+UFZ1 tc n=419 cpid=1260 status=0 expect=ok
+UFZ1 edges n=419 new=0
+UFZ1 tcb n=420 src=cov a=0 b=398237613 c=1826941759
+UFZ1 tc n=420 cpid=1263 status=0 expect=ok
+UFZ1 edges n=420 new=0
+UFZ1 tcb n=421 src=cov a=0 b=1453790697 c=710710089
+UFZ1 tc n=421 cpid=1266 status=0 expect=ok
+UFZ1 edges n=421 new=0
+UFZ1 tcb n=422 src=cov a=0 b=573866441 c=830589851
+UFZ1 tc n=422 cpid=1269 status=0 expect=ok
+UFZ1 edges n=422 new=0
+UFZ1 tcb n=423 src=cov a=0 b=1671865796 c=495886645
+UFZ1 tc n=423 cpid=1272 status=0 expect=ok
+UFZ1 edges n=423 new=0
+UFZ1 tcb n=424 src=cov a=0 b=1592519923 c=699060003
+UFZ1 tc n=424 cpid=1275 status=0 expect=ok
+UFZ1 edges n=424 new=0
+UFZ1 tcb n=425 src=cov a=0 b=1333787182 c=1905026492
+UFZ1 tc n=425 cpid=1278 status=0 expect=ok
+UFZ1 edges n=425 new=0
+UFZ1 tcb n=426 src=cov a=0 b=661719568 c=1502985307
+UFZ1 tc n=426 cpid=1281 status=0 expect=ok
+UFZ1 edges n=426 new=0
+UFZ1 tcb n=427 src=cov a=0 b=1158776719 c=1477828935
+UFZ1 tc n=427 cpid=1284 status=0 expect=ok
+UFZ1 edges n=427 new=0
+UFZ1 tcb n=428 src=cov a=0 b=554182308 c=151135334
+UFZ1 tc n=428 cpid=1287 status=0 expect=ok
+UFZ1 edges n=428 new=0
+UFZ1 tcb n=429 src=cov a=0 b=1576866891 c=1084915777
+UFZ1 tc n=429 cpid=1290 status=0 expect=ok
+UFZ1 edges n=429 new=0
+UFZ1 tcb n=430 src=cov a=0 b=977012221 c=282548977
+UFZ1 tc n=430 cpid=1293 status=0 expect=ok
+UFZ1 edges n=430 new=0
+UFZ1 tcb n=431 src=cov a=0 b=2113278165 c=1468042961
+UFZ1 tc n=431 cpid=1296 status=0 expect=ok
+UFZ1 edges n=431 new=0
+UFZ1 tcb n=432 src=cov a=0 b=1421039464 c=286808537
+UFZ1 tc n=432 cpid=1299 status=0 expect=ok
+UFZ1 edges n=432 new=0
+UFZ1 tcb n=433 src=cov a=0 b=2104208851 c=713504237
+UFZ1 tc n=433 cpid=1302 status=0 expect=ok
+UFZ1 edges n=433 new=0
+UFZ1 tcb n=434 src=cov a=0 b=1407098154 c=1319722261
+UFZ1 tc n=434 cpid=1305 status=0 expect=ok
+UFZ1 edges n=434 new=0
+UFZ1 tcb n=435 src=cov a=0 b=1134848492 c=1816148934
+UFZ1 tc n=435 cpid=1308 status=0 expect=ok
+UFZ1 edges n=435 new=0
+UFZ1 tcb n=436 src=cov a=0 b=612501437 c=564967340
+UFZ1 tc n=436 cpid=1311 status=0 expect=ok
+UFZ1 edges n=436 new=0
+UFZ1 tcb n=437 src=cov a=0 b=977267027 c=1804760232
+UFZ1 tc n=437 cpid=1314 status=0 expect=ok
+UFZ1 edges n=437 new=0
+[ PASS ] ufuzz.u4_coverage_guided_campaign (5 checks)
+[ RUN  ] ufuzz.u4_generated_programs_run_clean
+UFZ1 tcb n=438 src=cov a=0 b=0 c=0
+UFZ1 tc n=438 cpid=1317 status=0 expect=ok
+UFZ1 tcb n=439 src=cov a=0 b=0 c=0
+UFZ1 tc n=439 cpid=1320 status=0 expect=ok
+UFZ1 tcb n=440 src=cov a=0 b=1 c=1
+UFZ1 tc n=440 cpid=1323 status=0 expect=ok
+UFZ1 tcb n=441 src=cov a=0 b=2 c=2
+UFZ1 tc n=441 cpid=1326 status=0 expect=ok
+UFZ1 tcb n=442 src=cov a=0 b=3 c=3
+UFZ1 tc n=442 cpid=1329 status=0 expect=ok
+UFZ1 tcb n=443 src=cov a=0 b=4 c=4
+UFZ1 tc n=443 cpid=1332 status=0 expect=ok
+UFZ1 tcb n=444 src=cov a=0 b=5 c=5
+UFZ1 tc n=444 cpid=1335 status=0 expect=ok
+UFZ1 tcb n=445 src=cov a=0 b=6 c=6
+UFZ1 tc n=445 cpid=1338 status=0 expect=ok
+UFZ1 tcb n=446 src=cov a=0 b=7 c=7
+UFZ1 tc n=446 cpid=1341 status=0 expect=ok
+UFZ1 tcb n=447 src=cov a=0 b=8 c=8
+UFZ1 tc n=447 cpid=1344 status=0 expect=ok
+UFZ1 tcb n=448 src=cov a=0 b=9 c=9
+UFZ1 tc n=448 cpid=1347 status=0 expect=ok
+UFZ1 tcb n=449 src=cov a=0 b=10 c=10
+UFZ1 tc n=449 cpid=1350 status=0 expect=ok
+UFZ1 tcb n=450 src=cov a=0 b=11 c=11
+UFZ1 tc n=450 cpid=1353 status=0 expect=ok
+UFZ1 tcb n=451 src=cov a=0 b=12 c=12
+UFZ1 tc n=451 cpid=1356 status=0 expect=ok
+UFZ1 tcb n=452 src=cov a=0 b=13 c=13
+UFZ1 tc n=452 cpid=1359 status=0 expect=ok
+UFZ1 tcb n=453 src=cov a=0 b=14 c=14
+UFZ1 tc n=453 cpid=1362 status=0 expect=ok
+UFZ1 tcb n=454 src=cov a=0 b=15 c=15
+UFZ1 tc n=454 cpid=1365 status=0 expect=ok
+UFZ1 tcb n=455 src=cov a=0 b=16 c=16
+UFZ1 tc n=455 cpid=1368 status=0 expect=ok
+UFZ1 tcb n=456 src=cov a=0 b=17 c=17
+UFZ1 tc n=456 cpid=1371 status=0 expect=ok
+UFZ1 tcb n=457 src=cov a=0 b=18 c=18
+UFZ1 tc n=457 cpid=1374 status=0 expect=ok
+UFZ1 tcb n=458 src=cov a=0 b=19 c=19
+UFZ1 tc n=458 cpid=1377 status=0 expect=ok
+UFZ1 tcb n=459 src=cov a=0 b=20 c=20
+UFZ1 tc n=459 cpid=1380 status=0 expect=ok
+UFZ1 tcb n=460 src=cov a=0 b=21 c=21
+UFZ1 tc n=460 cpid=1383 status=0 expect=ok
+UFZ1 tcb n=461 src=cov a=0 b=22 c=22
+UFZ1 tc n=461 cpid=1386 status=0 expect=ok
+UFZ1 tcb n=462 src=cov a=0 b=23 c=23
+UFZ1 tc n=462 cpid=1389 status=0 expect=ok
+UFZ1 tcb n=463 src=cov a=1 b=0 c=0
+UFZ1 tc n=463 cpid=1392 status=0 expect=ok
+UFZ1 tcb n=464 src=cov a=1 b=0 c=0
+UFZ1 tc n=464 cpid=1395 status=0 expect=ok
+UFZ1 tcb n=465 src=cov a=1 b=1 c=1
+UFZ1 tc n=465 cpid=1398 status=0 expect=ok
+UFZ1 tcb n=466 src=cov a=1 b=2 c=2
+UFZ1 tc n=466 cpid=1401 status=0 expect=ok
+UFZ1 tcb n=467 src=cov a=1 b=3 c=3
+UFZ1 tc n=467 cpid=1404 status=0 expect=ok
+UFZ1 tcb n=468 src=cov a=1 b=4 c=4
+UFZ1 tc n=468 cpid=1407 status=0 expect=ok
+UFZ1 tcb n=469 src=cov a=1 b=5 c=5
+UFZ1 tc n=469 cpid=1410 status=0 expect=ok
+UFZ1 tcb n=470 src=cov a=1 b=6 c=6
+UFZ1 tc n=470 cpid=1413 status=0 expect=ok
+UFZ1 tcb n=471 src=cov a=1 b=7 c=7
+UFZ1 tc n=471 cpid=1416 status=0 expect=ok
+UFZ1 tcb n=472 src=cov a=1 b=8 c=8
+UFZ1 tc n=472 cpid=1419 status=0 expect=ok
+UFZ1 tcb n=473 src=cov a=1 b=9 c=9
+UFZ1 tc n=473 cpid=1422 status=0 expect=ok
+UFZ1 tcb n=474 src=cov a=1 b=10 c=10
+UFZ1 tc n=474 cpid=1425 status=0 expect=ok
+UFZ1 tcb n=475 src=cov a=1 b=11 c=11
+UFZ1 tc n=475 cpid=1428 status=0 expect=ok
+UFZ1 tcb n=476 src=cov a=1 b=12 c=12
+UFZ1 tc n=476 cpid=1431 status=0 expect=ok
+UFZ1 tcb n=477 src=cov a=1 b=13 c=13
+UFZ1 tc n=477 cpid=1434 status=0 expect=ok
+UFZ1 tcb n=478 src=cov a=1 b=14 c=14
+UFZ1 tc n=478 cpid=1437 status=0 expect=ok
+UFZ1 tcb n=479 src=cov a=1 b=15 c=15
+UFZ1 tc n=479 cpid=1440 status=0 expect=ok
+UFZ1 tcb n=480 src=cov a=1 b=16 c=16
+UFZ1 tc n=480 cpid=1443 status=0 expect=ok
+UFZ1 tcb n=481 src=cov a=1 b=17 c=17
+UFZ1 tc n=481 cpid=1446 status=0 expect=ok
+UFZ1 tcb n=482 src=cov a=1 b=18 c=18
+UFZ1 tc n=482 cpid=1449 status=0 expect=ok
+UFZ1 tcb n=483 src=cov a=1 b=19 c=19
+UFZ1 tc n=483 cpid=1452 status=0 expect=ok
+UFZ1 tcb n=484 src=cov a=1 b=20 c=20
+UFZ1 tc n=484 cpid=1455 status=0 expect=ok
+UFZ1 tcb n=485 src=cov a=1 b=21 c=21
+UFZ1 tc n=485 cpid=1458 status=0 expect=ok
+UFZ1 tcb n=486 src=cov a=1 b=22 c=22
+UFZ1 tc n=486 cpid=1461 status=0 expect=ok
+UFZ1 tcb n=487 src=cov a=1 b=23 c=23
+UFZ1 tc n=487 cpid=1464 status=0 expect=ok
+[ PASS ] ufuzz.u4_generated_programs_run_clean (6 checks)
+[ RUN  ] ufuzz.u4_coverage_plumbing_attributes_novelty
+UFZ1 ufault pid=1472 vec=14 err=0x6 rip=0x200000402d5e cr2=0x1
+[ PASS ] ufuzz.u4_coverage_plumbing_attributes_novelty (3 checks)
+[ RUN  ] ufuzz.u3_typed_programs_execute_and_replay
+[ PASS ] ufuzz.u3_typed_programs_execute_and_replay (2 checks)
+[ RUN  ] ufuzz.reset_oracle_is_sensitive
+[ PASS ] ufuzz.reset_oracle_is_sensitive (3 checks)
+[ RUN  ] ufuzz.reset_campaign_no_drift
+UFZ1 ufault pid=1544 vec=14 err=0x6 rip=0x200000402d5e cr2=0x1
+UFZ1 ufault pid=1553 vec=14 err=0x6 rip=0x200000402d5e cr2=0x1
+UFZ1 ufault pid=1562 vec=14 err=0x6 rip=0x200000402d5e cr2=0x1
+[ PASS ] ufuzz.reset_campaign_no_drift (8 checks)
+[ RUN  ] ufuzz.worker_lifecycle_contained
+UFZ1 ufault pid=1571 vec=14 err=0x6 rip=0x200000402d5e cr2=0x1
+[ PASS ] ufuzz.worker_lifecycle_contained (2 checks)
+=== qemu exit status: 3 ===
+=== RESULT: FAIL (kernel exit code 1) ===
+make: *** [Makefile:542: test-suite] Error 1

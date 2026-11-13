@@ -11,6 +11,7 @@
 #include <lib/string.h>
 #include <mm/kheap.h>
 #include <errno.h>
+#include <irq.h>
 
 KTEST(vfs, create_write_read_close) {
     int fd = vfs_open("/scratch.txt", O_CREAT | O_RDWR);
@@ -209,4 +210,218 @@ KTEST(vfs, symlink_follow_readlink_and_loop) {
     KEXPECT_EQ(vfs_symlink("/loopb", "/loopa"), 0);
     KEXPECT_EQ(vfs_symlink("/loopa", "/loopb"), 0);
     KEXPECT_EQ(vfs_resolve("/loopa") == NULL, 1);
+}
+
+/* T-V01: the VFS must enforce the open access mode (O_ACCMODE) on fd read/write.
+ * Before the fix, vfs_fd_read/vfs_fd_write ignored it, so a file opened O_RDONLY
+ * could be WRITTEN (a ring-3 program could overwrite a file it only opened for
+ * reading) and an O_WRONLY file could be READ.
+ *
+ * Fail-first: remove the O_ACCMODE guard in vfs_fd_write and the write below
+ * returns 4 instead of -EBADF, flipping the KEXPECT. */
+KTEST(vfs, accmode_enforced_on_rw) {
+    char rb[4];
+    vfs_unlink("/accmode_t");                            /* best-effort clean */
+
+    int fd = vfs_open("/accmode_t", O_CREAT | O_WRONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_WRONLY write works  */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_RDONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_read(fd, rb, 4), 4);          /* O_RDONLY read works   */
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), -EBADF);/* O_RDONLY write BLOCKED */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_WRONLY);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_WRONLY write works   */
+    KEXPECT_EQ((int)vfs_fd_read(fd, rb, 4), -EBADF);     /* O_WRONLY read BLOCKED  */
+    vfs_close(fd);
+
+    fd = vfs_open("/accmode_t", O_RDWR);
+    KASSERT_TEST(fd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(fd, "abcd", 4), 4);     /* O_RDWR: both allowed   */
+    KEXPECT((int)vfs_fd_read(fd, rb, 4) >= 0);
+    vfs_close(fd);
+
+    vfs_unlink("/accmode_t");
+}
+
+/* T-V02: a failed open() must have NO side effect. When the fd table is full,
+ * vfs_open(path, O_CREAT|O_TRUNC) used to create and/or truncate the file at the
+ * top of the function and only THEN discover (via fd_alloc) that there is no free
+ * fd, returning -EMFILE. So a failed open had already destroyed the file's
+ * contents — a POSIX contract violation (a failed open must not create/truncate).
+ * The fix reserves an fd slot BEFORE applying the create/truncate side effects.
+ *
+ * Fail-first: before the fix the truncate at line 222 fires even though the open
+ * goes on to fail at fd_alloc, so the victim comes back empty and the content
+ * KEXPECTs below flip (read returns 0, not 4). */
+KTEST(vfs, failed_open_has_no_side_effect) {
+    vfs_unlink("/victim");                               /* best-effort clean */
+
+    /* A victim file with known content. */
+    int vfd = vfs_open("/victim", O_CREAT | O_RDWR);
+    KASSERT_TEST(vfd >= 0);
+    KEXPECT_EQ((int)vfs_fd_write(vfd, "DATA", 4), 4);
+    KEXPECT_EQ(vfs_close(vfd), 0);
+
+    /* Exhaust the fd table with side-effect-free opens (O_RDONLY of /dev/zero)
+     * until the next fd_alloc would fail — i.e. 0 free slots remain. */
+    int hoard[VFS_MAX_FDS];
+    int nh = 0;
+    for (;;) {
+        int fd = vfs_open("/dev/zero", O_RDONLY);
+        if (fd < 0) { KEXPECT_EQ(fd, -EMFILE); break; }
+        KASSERT_TEST(nh < VFS_MAX_FDS);
+        hoard[nh++] = fd;
+    }
+    KASSERT_TEST(nh > 0);
+
+    /* With the table full, a create+truncate open must fail WITHOUT touching the
+     * file on disk. */
+    int bad = vfs_open("/victim", O_CREAT | O_TRUNC | O_RDWR);
+    KEXPECT_EQ(bad, -EMFILE);
+    KEXPECT(bad < 0);
+
+    /* Free one slot and re-open the victim: its content must be intact ("DATA",
+     * 4 bytes), proving the failed open did NOT truncate it. */
+    KEXPECT_EQ(vfs_close(hoard[--nh]), 0);
+    int rfd = vfs_open("/victim", O_RDONLY);
+    KASSERT_TEST(rfd >= 0);
+    char rb[8]; memset(rb, 0, sizeof(rb));
+    KEXPECT_EQ((int)vfs_fd_read(rfd, rb, sizeof(rb)), 4);   /* NOT truncated to 0 */
+    KEXPECT_EQ(memcmp(rb, "DATA", 4), 0);
+    vfs_close(rfd);
+
+    /* Release every hoarded fd so later tests are not fd-starved. */
+    while (nh > 0) vfs_close(hoard[--nh]);
+    vfs_unlink("/victim");
+}
+
+/* ---- U5.2: fcntl(F_DUPFD) floor contract ----------------------------------
+ * F_DUPFD returns the lowest free fd >= arg, where fds 0-2 are always open (an
+ * empty slot is the implicit console), so arg 0..2 means "lowest free >= 3".
+ * arg < 0 is -EINVAL; arg >= VFS_MAX_FDS can never be satisfied: -EMFILE. The
+ * floor is judged on the full (long) value — 0x80000000 must not wrap to a
+ * negative int and be clamped to 0. Any fd a broken kernel hands back is closed
+ * so the table is left as found. */
+static int vfs_lowest_free_from3(void) {
+    for (int i = 3; i < VFS_MAX_FDS; i++) if (!vfs_file(i)) return i;
+    return -1;
+}
+KTEST(vfs, fcntl_dupfd_floor_contract) {
+    int fd = vfs_open("/dev/zero", O_RDONLY);
+    KASSERT_TEST(fd >= 3);
+    long r;
+
+    r = vfs_fcntl(fd, F_DUPFD, -1);
+    KEXPECT_EQ(r, -EINVAL);
+    if (r >= 0) vfs_close((int)r);
+
+    static const long hi[3] = { VFS_MAX_FDS, 0x80000000L, 0x7fffffff };
+    for (int i = 0; i < 3; i++) {
+        r = vfs_fcntl(fd, F_DUPFD, hi[i]);
+        KEXPECT_EQ(r, -EMFILE);
+        if (r >= 0) vfs_close((int)r);
+    }
+    for (long lo = 0; lo <= 2; lo++) {
+        int want = vfs_lowest_free_from3();
+        r = vfs_fcntl(fd, F_DUPFD, lo);
+        KEXPECT_EQ(r, want);                  /* never 0..2 */
+        if (r >= 0) vfs_close((int)r);
+    }
+    /* A floor ABOVE the lowest free fd must be honoured: the result is the
+     * lowest free fd >= floor, not the lowest free fd overall. */
+    int lowest = vfs_lowest_free_from3();
+    KASSERT_TEST(lowest >= 3 && lowest + 2 < VFS_MAX_FDS);
+    int floor = -1;
+    for (int i = lowest + 1; i < VFS_MAX_FDS; i++) if (!vfs_file(i)) { floor = i; break; }
+    KASSERT_TEST(floor > lowest);
+    r = vfs_fcntl(fd, F_DUPFD, floor);
+    KEXPECT_EQ(r, floor);
+    if (r >= 0) vfs_close((int)r);
+    vfs_close(fd);
+}
+
+/* ---- U5.2: fds 0-2 are always open ----------------------------------------
+ * An empty slot 0-2 is the implicit console. It must behave as an open fd for
+ * every descriptor operation: dup2 and F_DUPFD can copy it (the copy is a
+ * console description: O_RDWR, a character device), dup2(1, 1) returns 1, and
+ * the copies are freed exactly (kheap net-zero). A FILLED slot 0-2 is whatever
+ * was installed there: fstat must describe the installed file, not the console. */
+KTEST(vfs, console_fds_are_always_open) {
+    KASSERT_TEST(vfs_file(1) == NULL && vfs_file(2) == NULL);   /* implicit console */
+    size_t hp0 = kheap_get_used();
+    struct stat st;
+
+    int n = vfs_lowest_free_from3();
+    KASSERT_TEST(n >= 3);
+    long r = vfs_dup2(1, n);
+    KEXPECT_EQ(r, n);
+    if (r == n) {
+        KEXPECT_EQ(vfs_fcntl(n, F_GETFL, 0), O_RDWR);
+        KEXPECT_EQ(vfs_fstat(n, &st), 0);
+        KEXPECT(S_ISCHR(st.st_mode));
+        KEXPECT_EQ(vfs_close(n), 0);
+    }
+    int want = vfs_lowest_free_from3();
+    r = vfs_fcntl(2, F_DUPFD, 3);
+    KEXPECT_EQ(r, want);
+    if (r >= 3) KEXPECT_EQ(vfs_close((int)r), 0);
+    KEXPECT_EQ(vfs_dup2(1, 1), 1);
+    KEXPECT(vfs_file(1) == NULL);             /* dup2(x, x) changes nothing */
+    KEXPECT_EQ(kheap_get_used(), hp0);
+
+    /* A filled slot: install a pipe read end on fd 0, fstat(0) must match the
+     * pipe's own fstat; closing fd 0 returns it to the implicit console. */
+    int p[2];
+    KASSERT_TEST(vfs_pipe(p) == 0);
+    struct stat sp;
+    KEXPECT_EQ(vfs_fstat(p[0], &sp), 0);
+    KEXPECT_EQ(vfs_dup2(p[0], 0), 0);
+    KEXPECT_EQ(vfs_fstat(0, &st), 0);
+    KEXPECT_EQ(st.st_mode, sp.st_mode);
+    KEXPECT_EQ(vfs_close(0), 0);
+    KEXPECT(vfs_file(0) == NULL);
+    vfs_close(p[0]); vfs_close(p[1]);
+}
+
+/* ---- U5.2: vfs_pipe allocation-failure rollback ----------------------------
+ * vfs_pipe makes four allocations (vnode, pipe, read file, write file). Fail
+ * each one in turn with the kheap injector: the call must return -ENOMEM and
+ * leave the fd table and the heap exactly as found (every partial allocation
+ * freed, no fd published). Interrupts are off around the call so the injector
+ * counts only vfs_pipe's own allocations (it does not sleep). n = 4 fails none
+ * of them: the pipe must then succeed — proof the four failures above covered
+ * every allocation, not a prefix. */
+static unsigned vfs_fd_bitmap(void) {
+    unsigned m = 0;
+    for (int i = 0; i < VFS_MAX_FDS; i++) if (vfs_file(i)) m |= 1u << i;
+    return m;
+}
+KTEST(vfs, pipe_alloc_failure_rolls_back) {
+    (void)vfs_file(0);                          /* fd table allocated before arming */
+    for (int n = 0; n <= 4; n++) {
+        unsigned fds0 = vfs_fd_bitmap();
+        size_t hp0 = kheap_get_used();
+        int p[2] = { -1, -1 };
+        irqflags_t f = local_irq_save();
+        kheap_test_fail_after(n);
+        int rc = vfs_pipe(p);
+        kheap_test_fail_after(-1);
+        local_irq_restore(f);
+        if (n < 4) {
+            KEXPECT_EQ(rc, -ENOMEM);
+            KEXPECT_EQ(vfs_fd_bitmap(), fds0);  /* no fd published */
+            KEXPECT_EQ(kheap_get_used(), hp0);  /* every partial allocation freed */
+        } else {
+            KEXPECT_EQ(rc, 0);
+            if (rc == 0) { vfs_close(p[0]); vfs_close(p[1]); }
+            KEXPECT_EQ(vfs_fd_bitmap(), fds0);
+            KEXPECT_EQ(kheap_get_used(), hp0);
+        }
+    }
 }

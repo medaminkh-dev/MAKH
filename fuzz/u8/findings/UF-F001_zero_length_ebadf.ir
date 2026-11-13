@@ -1,0 +1,34 @@
+# u7 batch count=5
+### prog 0
+abi 1
+prng lcg 0
+handles fd
+buf 0 8 0000000000000000
+path 0 /bin/hello
+call open path:0 imm:0 -> fd:0 =nonneg
+call write res:0 buf:0 imm:0 =exact:-9
+call close res:0 =exact:0
+### prog 1
+abi 1
+prng lcg 0
+handles -
+buf 0 8 0000000000000000
+call write imm:-1 buf:0 imm:0 =exact:-9
+### prog 2
+abi 1
+prng lcg 0
+handles -
+buf 0 8 0000000000000000
+call read imm:-1 buf:0 imm:0 =exact:-9
+### prog 3
+abi 1
+prng lcg 0
+handles -
+buf 0 8 0000000000000000
+call write imm:29 buf:0 imm:0 =exact:-9
+### prog 4
+abi 1
+prng lcg 0
+handles -
+buf 0 8 0000000000000000
+call write imm:-1 buf:0 imm:1 =exact:-9

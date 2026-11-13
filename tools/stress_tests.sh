@@ -31,4 +31,11 @@ done
 fails=$(grep -l "RESULT: FAIL" "$OUT"/*.log | wc -l)
 echo "stress: $RUNS runs, $fails failed (logs in $OUT)"
 grep -h -E "    FAIL|diag\]|TIMEOUT" "$OUT"/*.log | sort | uniq -c
+# Name the test each failed run was in when it died. A TIMEOUT alone only says
+# "did not power off", and the per-run logs stay on the runner, so without this
+# a stress hang cannot be root-caused from the CI log.
+for f in $(grep -l "RESULT: FAIL" "$OUT"/*.log); do
+    echo "== $(basename "$f"): last test started:"
+    grep "\[ RUN" "$f" | tail -1
+done
 [ "$fails" -eq 0 ]

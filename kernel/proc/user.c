@@ -20,6 +20,7 @@
 #include <elf.h>
 #include <fs/vfs.h>
 #include <arch/usermode.h>
+#include <arch/cpu.h>
 #include <mm/vmspace.h>
 #include <mm/vmm.h>
 #include <mm/pmm.h>
@@ -333,6 +334,11 @@ long proc_clone(trapframe_t* tf) {
 
     if (!(flags & CLONE_VM) || child_stack == 0) return proc_fork(tf);  /* a process */
 
+    /* A CLONE_SETTLS tls becomes the child's fs_base, wrmsr'd in ring 0 at its
+     * first context switch — reject a non-canonical / kernel-half value here,
+     * exactly as do_arch_prctl does, so it can never fault the kernel. */
+    if ((flags & CLONE_SETTLS) && !user_fs_base_ok(newtls)) return -EINVAL;
+
     address_space_t* as = (address_space_t*)parent->aspace;
 
     process_t* c = proc_table_alloc();
@@ -533,9 +539,14 @@ long proc_execve(trapframe_t* tf, uint64_t upath, uint64_t uargv, uint64_t uenvp
 
 /* Called from the exception handler when a running user process faults. The
  * process is terminated with 128 + SIGSEGV (POSIX convention). Never returns. */
-void proc_user_fault(long vector) {
+void proc_user_fault(long vector, uint64_t err, uint64_t rip, uint64_t cr2) {
     KLOG_W("USER", "pid %u killed by SIGSEGV (vector %ld)\n",
            current_process ? current_process->pid : 0, vector);
+    /* UFUZZ U6: a machine-readable fault record (the parent only sees exit
+     * status 139); err is 0xdeadbeef for vectors without an error code. */
+    kprintf("UFZ1 ufault pid=%u vec=%ld err=0x%lx rip=0x%lx cr2=0x%lx\n",
+            current_process ? current_process->pid : 0, vector,
+            (unsigned long)err, (unsigned long)rip, (unsigned long)cr2);
     thread_exit(128 + SIGSEGV);
 }
 
@@ -565,7 +576,10 @@ int sys_waitpid(int pid, int* status) {
             return cpid;
         }
         if (!have_children) { local_irq_restore(f); return -ECHILD; }
-        /* Children still alive: block until one exits (or a signal arrives). */
-        sched_wait_event(&cur->child_wq, 0, f);
+        /* Children still alive: block until one exits (or a signal arrives).
+         * T-P01: a signal must interrupt the wait. sched_wait_event returns 2
+         * when a signal woke us; propagate -EINTR instead of silently
+         * re-blocking, so a handler (or a kill) can break a waitpid. */
+        if (sched_wait_event(&cur->child_wq, 0, f) == 2) return -EINTR;
     }
 }

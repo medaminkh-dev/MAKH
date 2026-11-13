@@ -57,6 +57,9 @@
 #define EALREADY       114   /* Operation already in progress */
 #define EINPROGRESS    115   /* Operation now in progress */
 
+#define EACCES          13   /* Permission denied */
+#define EXDEV           18   /* Cross-device link */
+
 /* Per-thread errno (stored in the current thread's PCB). */
 int* __errno_location(void);
 #define errno (*__errno_location())

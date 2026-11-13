@@ -193,6 +193,7 @@ long      vfs_fd_write(int fd, const void* buf, size_t n);
 long      vfs_lseek(int fd, long off, int whence);
 int       vfs_close(int fd);
 file_t*   vfs_file(int fd);               /* raw file for a fd, or NULL */
+int       vfs_is_console_copy(int fd);    /* a dup of an implicit console fd 0-2 */
 
 /* -------- pipes / descriptor duplication (Phase 20-K) -------- */
 int       vfs_pipe(int fds[2]);           /* fds[0]=read end, fds[1]=write end */

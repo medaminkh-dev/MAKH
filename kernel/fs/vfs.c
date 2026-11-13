@@ -15,6 +15,8 @@
 #include <sched.h>
 #include <irq.h>
 #include <signal.h>
+#include <tty.h>
+#include <vga.h>
 
 static vnode_t* root_vnode;
 
@@ -199,6 +201,42 @@ static file_t** fd_table(void) {
     return (file_t**)current_process->fd_table;
 }
 
+/* fds 0-2 are always open: an EMPTY slot 0-2 is the implicit console, served by
+ * the read/write fast path in syscall.c without any file_t. A dup of such a slot
+ * (dup2 / F_DUPFD) needs a real open-file description, so it gets a NEW one on
+ * this static console vnode: reads come from the tty line discipline, writes go
+ * to the terminal — the same backends the fast path uses. The vnode is static
+ * (its refcount starts at 1 and never reaches 0; file_put only frees FIFO and
+ * socket vnodes), each description is a normal refcounted file_t. */
+static long console_read(vnode_t* vn, void* buf, size_t n, uint64_t off) {
+    (void)vn; (void)off;
+    return tty_read_blocking((char*)buf, n);
+}
+static long console_write(vnode_t* vn, const void* buf, size_t n, uint64_t off) {
+    (void)vn; (void)off;
+    terminal_write((const char*)buf, n);
+    return (long)n;
+}
+static const vfs_ops_t console_ops = { .read = console_read, .write = console_write };
+static vnode_t console_vnode = { .type = VNODE_CHR, .ops = &console_ops,
+                                 .refcount = 1, .mode = 0620 };
+
+/* A new console description holding one reference, or NULL on -ENOMEM. */
+static file_t* console_file_new(void) {
+    file_t* f = kcalloc(1, sizeof(file_t));
+    if (!f) return NULL;
+    f->vnode = &console_vnode; f->flags = O_RDWR; f->used = 1; f->refcount = 1;
+    console_vnode.refcount++;
+    return f;
+}
+
+/* 1 if fd is a copy of the console (dup2 / F_DUPFD of an empty slot 0-2). */
+int vfs_is_console_copy(int fd) {
+    file_t** t = fd_table();
+    if (!t || fd < 0 || fd >= VFS_MAX_FDS || !t[fd]) return 0;
+    return t[fd]->vnode == &console_vnode;
+}
+
 file_t* vfs_file(int fd) {
     file_t** t = fd_table();
     if (!t || fd < 0 || fd >= VFS_MAX_FDS) return NULL;
@@ -212,32 +250,68 @@ static int fd_alloc(file_t** t) {
     return -EMFILE;
 }
 
+/* Pick a free slot AND publish `f` in it as ONE step, atomic w.r.t. preemption.
+ * fd_alloc() only finds a NULL slot; the kernel is preemptible (the IRQ tail
+ * reschedules even in ring 0), so if a timer tick landed between that scan and
+ * the store, a sibling thread sharing this table (CLONE_FILES) could pick the
+ * SAME slot and one open-file description would silently overwrite the other —
+ * e.g. a pipe end lost, so its reader never sees EOF. MAKH is single-CPU, so
+ * deferring preemption across the scan+store makes it atomic. Nothing in here
+ * sleeps. Every free-slot allocation site goes through this (open, pipe, socket
+ * install; F_DUPFD scans from its own floor under the same guard). */
+static int fd_install(file_t** t, file_t* f) {
+    preempt_disable();
+    int fd = fd_alloc(t);
+    if (fd >= 0) t[fd] = f;
+    preempt_enable();
+    return fd;
+}
+
 int vfs_open(const char* path, int flags) {
     file_t** t = fd_table();
     if (!t) return -ENOMEM;
 
     vnode_t* vn = vfs_resolve(path);
-    if (!vn && (flags & O_CREAT)) vn = vfs_create(path, VNODE_REG);
-    if (!vn) return -ENOENT;
-    if ((flags & O_TRUNC) && vn->ops && vn->ops->truncate) vn->ops->truncate(vn, 0);
+    if (!vn && !(flags & O_CREAT)) return -ENOENT;   /* no such file, nothing to open */
 
-    int fd = fd_alloc(t);
-    if (fd < 0) return fd;
     file_t* f = kcalloc(1, sizeof(file_t));
     if (!f) return -ENOMEM;
+
+    /* POSIX: a failed open() must neither create nor truncate. Refuse a full
+     * table up front, BEFORE any filesystem side effect. This is only a PROBE —
+     * the slot is claimed by fd_install() below, atomically, AFTER the work. An
+     * unpublished slot must never be held across create/truncate (ext2 block
+     * I/O, preemptible): a sibling thread sharing this table could pick the same
+     * slot in that window and the two descriptions would collide. */
+    if (fd_alloc(t) < 0) { kfree(f); return -EMFILE; }
+
+    if (!vn) vn = vfs_create(path, VNODE_REG);       /* O_CREAT: create + link */
+    if (!vn) { kfree(f); return -ENOENT; }
+    if ((flags & O_TRUNC) && vn->ops && vn->ops->truncate) vn->ops->truncate(vn, 0);
+
     f->vnode = vn;
     f->flags = flags;
     f->offset = (flags & O_APPEND) ? vn->size : 0;
     f->used = 1;
     f->refcount = 1;              /* one fd owns this description */
     vn->refcount++;
-    t[fd] = f;
+    int fd = fd_install(t, f);    /* claim + publish the slot atomically */
+    if (fd < 0) {
+        /* Only reachable if a sibling thread sharing this table took the last
+         * free slot while we created/truncated. Undo what this call owns. */
+        if (vn->refcount) vn->refcount--;
+        kfree(f);
+    }
     return fd;
 }
 
 long vfs_fd_read(int fd, void* buf, size_t n) {
     file_t* f = vfs_file(fd);
     if (!f) return -EBADF;
+    /* Enforce the access mode (T-V01): a description opened O_WRONLY must not be
+     * readable. Without this, O_ACCMODE was ignored and a write-only fd could be
+     * read. */
+    if ((f->flags & O_ACCMODE) == O_WRONLY) return -EBADF;
     long r = vfs_read(f->vnode, buf, n, f->offset);
     if (r > 0) f->offset += (uint64_t)r;
     return r;
@@ -246,6 +320,11 @@ long vfs_fd_read(int fd, void* buf, size_t n) {
 long vfs_fd_write(int fd, const void* buf, size_t n) {
     file_t* f = vfs_file(fd);
     if (!f) return -EBADF;
+    /* Enforce the access mode (T-V01): a description opened O_RDONLY must not be
+     * writable. Without this, O_ACCMODE was ignored and a read-only fd could be
+     * written — e.g. a ring-3 program could overwrite a file it only opened for
+     * reading. */
+    if ((f->flags & O_ACCMODE) == O_RDONLY) return -EBADF;
     if (f->flags & O_APPEND) f->offset = f->vnode->size;
     long r = vfs_write(f->vnode, buf, n, f->offset);
     if (r > 0) f->offset += (uint64_t)r;
@@ -358,14 +437,17 @@ int vfs_chmod(const char* path, uint32_t mode) {
 }
 
 int vfs_fstat(int fd, struct stat* st) {
-    if (fd >= 0 && fd <= 2) {                   /* the console/tty: a char device */
+    /* An empty slot 0-2, or any copy of it, is the console/tty: a char device.
+     * A FILLED slot 0-2 is whatever was installed there (e.g. a pipe dup2'd onto
+     * stdout) and is described by its own vnode. */
+    file_t* f = vfs_file(fd);
+    if ((!f && fd >= 0 && fd <= 2) || (f && f->vnode == &console_vnode)) {
         memset(st, 0, sizeof(*st));
         st->st_mode  = S_IFCHR | 0620;
         st->st_nlink = 1;
         st->st_rdev  = 0x0501;                  /* arbitrary (major 5, minor 1) */
         return 0;
     }
-    file_t* f = vfs_file(fd);
     if (!f || !f->vnode) return -EBADF;
     fill_stat(f->vnode, st);
     return 0;
@@ -423,12 +505,27 @@ long vfs_fcntl(int fd, int cmd, long arg) {
         case F_SETFD: return 0;                    /* accept, ignore */
         case F_DUPFD: {                            /* lowest free fd >= arg */
             file_t** t = fd_table();
-            if (!t || !f) return -EBADF;
-            int lo = (int)arg; if (lo < 0) lo = 0;
+            if (!t) return -EBADF;
+            /* Judge the floor on its full value: a negative floor is invalid,
+             * and one at or past the table end can never be satisfied. An int
+             * cast first would wrap 0x80000000 negative and clamp it to 0. */
+            if (arg < 0) return -EINVAL;
+            if (arg >= VFS_MAX_FDS) return -EMFILE;
+            /* fds 0-2 are always open (an empty slot is the implicit console),
+             * so they are never "free": the lowest free fd is at least 3. */
+            int lo = (arg < 3) ? 3 : (int)arg;
+            /* The source: its description, or for an empty slot 0-2 a new
+             * console description (allocated before any slot is touched). */
+            file_t* src = f;
+            if (!src && !(src = console_file_new())) return -ENOMEM;
+            int got = -EMFILE;
+            preempt_disable();                     /* scan+publish atomically (fd_install) */
             for (int i = lo; i < VFS_MAX_FDS; i++) {
-                if (!t[i]) { t[i] = f; f->refcount++; return i; }
+                if (!t[i]) { t[i] = src; if (f) f->refcount++; got = i; break; }
             }
-            return -EMFILE;
+            preempt_enable();
+            if (got < 0 && !f) file_put(src);      /* unused console copy */
+            return got;
         }
         default:      return -EINVAL;
     }
@@ -544,12 +641,10 @@ int vfs_pipe(int fds[2]) {
     rf->vnode = vn; rf->flags = O_RDONLY; rf->used = 1; rf->refcount = 1;
     wf->vnode = vn; wf->flags = O_WRONLY; wf->used = 1; wf->refcount = 1;
 
-    int rfd = fd_alloc(t);
+    int rfd = fd_install(t, rf);
     if (rfd < 0) { kfree(vn); kfree(p); kfree(rf); kfree(wf); return rfd; }
-    t[rfd] = rf;
-    int wfd = fd_alloc(t);
+    int wfd = fd_install(t, wf);
     if (wfd < 0) { t[rfd] = NULL; kfree(vn); kfree(p); kfree(rf); kfree(wf); return wfd; }
-    t[wfd] = wf;
 
     fds[0] = rfd;
     fds[1] = wfd;
@@ -563,21 +658,28 @@ int vfs_install_vnode(vnode_t* vn, int flags) {
     file_t* f = kcalloc(1, sizeof(file_t));
     if (!f) return -ENOMEM;
     f->vnode = vn; f->flags = flags; f->used = 1; f->refcount = 1;
-    int fd = fd_alloc(t);
-    if (fd < 0) { kfree(f); return fd; }
-    t[fd] = f;
+    int fd = fd_install(t, f);
+    if (fd < 0) kfree(f);
     return fd;
 }
 
 int vfs_dup2(int oldfd, int newfd) {
     file_t** t = fd_table();
     if (!t) return -ENOMEM;
-    if (oldfd < 0 || oldfd >= VFS_MAX_FDS || !t[oldfd]) return -EBADF;
+    if (oldfd < 0 || oldfd >= VFS_MAX_FDS) return -EBADF;
+    /* An empty slot 0-2 is the implicit console: open, so a valid source. */
+    int console = !t[oldfd] && oldfd <= 2;
+    if (!t[oldfd] && !console) return -EBADF;
     if (newfd < 0 || newfd >= VFS_MAX_FDS) return -EBADF;
     if (oldfd == newfd) return newfd;
+    /* Take the source reference BEFORE releasing newfd's old description (which
+     * may be the same one), and allocate a console copy before touching newfd,
+     * so a failure (-ENOMEM) leaves the table unchanged. */
+    file_t* src = t[oldfd];
+    if (console) { if (!(src = console_file_new())) return -ENOMEM; }
+    else src->refcount++;                 /* another fd on this description */
     if (t[newfd]) { file_t* old = t[newfd]; t[newfd] = NULL; file_put(old); }
-    t[newfd] = t[oldfd];
-    t[newfd]->refcount++;                 /* another fd on this description */
+    t[newfd] = src;
     return newfd;
 }
 

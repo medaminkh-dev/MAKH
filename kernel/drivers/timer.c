@@ -89,6 +89,13 @@ void timer_init(uint32_t frequency) {
  * short - it runs with interrupts disabled. The reschedule itself is deferred
  * to the IRQ tail (idt.c) so the PIC is acked before any context switch.
  */
+/* Test seam (T-L04): run a callback once on the next tick, then clear it. Lets
+ * a KTEST deliver an event (e.g. a buffered keyboard char) from *true* IRQ
+ * context while the test thread is halted, so a get_char that halts with
+ * interrupts disabled is exposed as a hang. NULL in production: one branch. */
+static void (* volatile timer_oneshot)(void) = 0;
+void timer_test_fire_once(void (*fn)(void)) { timer_oneshot = fn; }
+
 void timer_handler(registers_t* regs) {
     (void)regs;  // Unused parameter
 
@@ -97,6 +104,8 @@ void timer_handler(registers_t* regs) {
     // happens at the IRQ tail once the PIC has been acked - see idt.c.
     timer_ticks++;
     sched_tick();
+
+    if (timer_oneshot) { void (*fn)(void) = timer_oneshot; timer_oneshot = 0; fn(); }
 }
 
 /**

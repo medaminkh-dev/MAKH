@@ -27,7 +27,7 @@ SUCCESS_STATUS = 1  # kernel called qemu_debug_exit(0)
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: run_tests.py <test-iso> [--timeout N]", file=sys.stderr)
+        print("usage: run_tests.py <test-iso> [--timeout N] [--ext2 IMG]", file=sys.stderr)
         return 2
 
     iso = sys.argv[1]
@@ -68,6 +68,13 @@ def main():
     ext2 = os.path.join(os.path.dirname(iso) or ".", "ext2.img")
     if not os.path.exists(ext2):
         ext2 = "build/ext2.img"
+    # U7: `--ext2 <img>` attaches a different ext2 image (a per-batch copy of
+    # build/ext2.img carrying /u7/batch.ir, from tools/u7_batch.py image).
+    if "--ext2" in sys.argv:
+        ext2 = sys.argv[sys.argv.index("--ext2") + 1]
+        if not os.path.exists(ext2):
+            print(f"error: ext2 image not found: {ext2}", file=sys.stderr)
+            return 2
     if os.path.exists(ext2):
         cmd += [
             "-drive", f"file={ext2},if=none,id=vblk1,format=raw,snapshot=on",
@@ -79,7 +86,8 @@ def main():
     print(f"timeout: {timeout}s\n", flush=True)
 
     try:
-        proc = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True)
+        proc = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True,
+                              errors="replace")   # junk bytes must not crash the runner
         status = proc.returncode
     except subprocess.TimeoutExpired as e:
         sys.stdout.write(e.stdout.decode() if isinstance(e.stdout, bytes) else (e.stdout or ""))

@@ -17,6 +17,7 @@
 #include <arch/pic.h>
 #include <kernel.h>
 #include <vga.h>
+#include <irq.h>
 
 // Circular buffer for keystrokes
 static char keyboard_buffer[KEYBOARD_BUFFER_SIZE];
@@ -31,6 +32,16 @@ static volatile uint8_t caps_on = 0;
 
 // Current LED state
 static uint8_t led_state = 0;
+
+// Deferred LED update (T-L02): the keyboard IRQ must never block on the PS/2
+// controller, so CapsLock in interrupt context only records the wanted LED
+// state here; keyboard_service_leds() performs the actual (bounded) PS/2 I/O
+// later from task context.
+static volatile uint8_t led_update_pending = 0;
+static volatile uint8_t led_pending_value  = 0;
+
+// Upper bound on PS/2 controller polls before giving up (T-L03).
+#define PS2_SPIN_MAX 500000u
 
 // Extended scancode state (for 0xE0/0xE1 prefixes)
 static uint8_t extended_scancode = 0;
@@ -176,35 +187,48 @@ static char keyboard_buffer_read(void) {
  * 
  * Waits for input buffer to be clear before sending.
  */
-static void keyboard_send_data(uint8_t data) {
-    // Wait for input buffer to be clear
-    while (inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_INPUT) {
+/* Bounded busy-wait on the PS/2 controller (T-L03): poll busy() until it reads
+ * 0 (ready), or `limit` polls elapse. Returns 0 if ready, -1 on timeout — so a
+ * wedged or missing controller can never hang the system. Exposed (non-static)
+ * so a KTEST can drive it with a stub predicate; the driver passes the real
+ * status-port reads below. */
+int ps2_spin_until(int (*busy)(void), uint32_t limit) {
+    for (uint32_t i = 0; i < limit; i++) {
+        if (!busy()) return 0;
         io_wait();
     }
+    return -1;
+}
+
+static int kbd_input_full(void)   { return inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_INPUT; }
+static int kbd_output_empty(void) { return !(inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OUTPUT); }
+
+static void keyboard_send_data(uint8_t data) {
+    // Wait (bounded) for the input buffer to clear; a stuck controller returns
+    // instead of spinning forever. Drop the byte on timeout rather than hang.
+    if (ps2_spin_until(kbd_input_full, PS2_SPIN_MAX) != 0) return;
     outb(KEYBOARD_DATA_PORT, data);
 }
 
 /**
  * keyboard_read_data - Read data from keyboard
- * 
- * Waits for output buffer to have data.
- * Returns the data byte.
+ *
+ * Waits (bounded) for the output buffer to fill.
+ * Returns the data byte, or -1 on timeout.
  */
-static uint8_t keyboard_read_data(void) {
-    // Wait for output buffer to be full (bit 0 = 1)
-    while (!(inb(KEYBOARD_STATUS_PORT) & KEYBOARD_STATUS_OUTPUT)) {
-        io_wait();
-    }
+static int keyboard_read_data(void) {
+    if (ps2_spin_until(kbd_output_empty, PS2_SPIN_MAX) != 0) return -1;
     return inb(KEYBOARD_DATA_PORT);
 }
 
 /**
  * keyboard_wait_ack - Wait for ACK response from keyboard
- * 
- * Returns 1 on ACK, 0 on timeout or error.
+ *
+ * Returns 1 on ACK, 0 on timeout or error. (read_data returns -1 on timeout,
+ * which is != KEYBOARD_ACK, so the timeout path really does return 0 now.)
  */
 static int keyboard_wait_ack(void) {
-    uint8_t response = keyboard_read_data();
+    int response = keyboard_read_data();
     return (response == KEYBOARD_ACK);
 }
 
@@ -224,6 +248,23 @@ void keyboard_set_leds(uint8_t leds) {
     // Send LED state
     keyboard_send_data(leds);
     keyboard_wait_ack();
+}
+
+/**
+ * keyboard_service_leds - Flush a pending LED update from TASK (non-IRQ) context.
+ *
+ * T-L02: the keyboard IRQ handler must never block on the PS/2 controller, so
+ * CapsLock in interrupt context only sets led_update_pending. This performs the
+ * actual bounded PS/2 I/O later, with interrupts enabled. A no-op when nothing
+ * is pending; safe to call from any non-interrupt path (e.g. keyboard_get_char).
+ */
+void keyboard_service_leds(void) {
+    irqflags_t f = local_irq_save();
+    if (!led_update_pending) { local_irq_restore(f); return; }
+    uint8_t v = led_pending_value;
+    led_update_pending = 0;
+    local_irq_restore(f);
+    keyboard_set_leds(v);                 /* bounded PS/2 I/O, outside the IRQ */
 }
 
 /**
@@ -322,12 +363,12 @@ static void keyboard_handle_scancode(uint8_t scancode) {
             if (!is_release) {
                 // Toggle caps lock on press (not release)
                 caps_on = !caps_on;
-                // Update LED
-                if (caps_on) {
-                    keyboard_set_leds(led_state | KEYBOARD_LED_CAPS);
-                } else {
-                    keyboard_set_leds(led_state & ~KEYBOARD_LED_CAPS);
-                }
+                // T-L02: we are in the IRQ handler — never block on the PS/2
+                // controller here. Record the wanted LED state and defer the
+                // actual write to keyboard_service_leds() in task context.
+                led_pending_value = caps_on ? (uint8_t)(led_state | KEYBOARD_LED_CAPS)
+                                            : (uint8_t)(led_state & ~KEYBOARD_LED_CAPS);
+                led_update_pending = 1;
             }
             return;
             
@@ -443,8 +484,9 @@ void keyboard_init(void) {
     // Reset keyboard
     keyboard_send_data(KEYBOARD_CMD_RESET);
     
-    // Wait for response (ACK followed by 0xAA for success)
-    uint8_t response = keyboard_read_data();
+    // Wait for response (ACK followed by 0xAA for success); read_data returns
+    // -1 on timeout, so a missing controller no longer hangs boot.
+    int response = keyboard_read_data();
     if (response == KEYBOARD_ACK) {
         response = keyboard_read_data();
         if (response == 0xAA) {
@@ -472,15 +514,21 @@ void keyboard_init(void) {
  * This function blocks until a key is available.
  */
 char keyboard_get_char(void) {
-    char c;
-    
-    // Wait until there's a character in the buffer
-    while ((c = keyboard_buffer_read()) == 0) {
-        // Enable interrupts and halt CPU until next interrupt
-        __asm__ volatile("hlt");
+    for (;;) {
+        // Flush any deferred LED update (T-L02) from task context, interrupts on.
+        keyboard_service_leds();
+
+        // T-L04: check the buffer with interrupts OFF, so a keyboard IRQ cannot
+        // fill it in the window between the check and the sleep.
+        __asm__ volatile("cli");
+        char c = keyboard_buffer_read();
+        if (c) { __asm__ volatile("sti"); return c; }
+
+        // Buffer empty: `sti` defers interrupt delivery until after the NEXT
+        // instruction, so `sti; hlt` atomically enables interrupts and halts —
+        // no lost wakeup, and we never hlt with interrupts disabled.
+        __asm__ volatile("sti; hlt");
     }
-    
-    return c;
 }
 
 /**
@@ -499,3 +547,13 @@ void keyboard_clear_buffer(void) {
     buffer_head = 0;
     buffer_tail = 0;
 }
+
+/* ---- test seam ------------------------------------------------------------
+ * These let a KTEST drive the scancode path and inspect the deferred-LED state
+ * without a physical keyboard. keyboard_inject_scancode feeds the same code the
+ * IRQ handler runs; the accessors expose the otherwise-static state. */
+void keyboard_inject_scancode(uint8_t sc)   { keyboard_handle_scancode(sc); }
+int  keyboard_test_led_pending(void)        { return led_update_pending; }
+uint8_t keyboard_test_led_value(void)       { return led_pending_value; }
+int  keyboard_test_caps(void)               { return caps_on; }
+void keyboard_test_push(char c)             { keyboard_buffer_write(c); }

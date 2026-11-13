@@ -74,7 +74,15 @@ void syscall_init(void) {
 /* -------------------------------------------------------------------------- */
 
 static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (count == 0) return 0;
+    /* A zero-length write transfers nothing but still validates the fd: it
+     * reports exactly the error a 1-byte write would (UF-F001; Linux checks the
+     * fd first too). Backed: the description must be writable. Unbacked: only
+     * stdout/stderr are the console. */
+    if (count == 0) {
+        file_t* zf = vfs_file((int)fd);
+        if (zf) return ((zf->flags & O_ACCMODE) == O_RDONLY) ? -EBADF : 0;
+        return (fd == 1 || fd == 2) ? 0 : -EBADF;
+    }
     /* An open description (a file, or a pipe dup2'd onto 0/1/2) takes priority;
      * otherwise 1/2 fall back to the console. This keeps the default stdout path
      * unchanged while letting a pipeline redirect it (Phase 20-K). */
@@ -109,7 +117,13 @@ static int64_t do_write(uint64_t fd, uint64_t ubuf, uint64_t count, int from_use
 }
 
 static int64_t do_read(uint64_t fd, uint64_t ubuf, uint64_t count, int from_user) {
-    if (count == 0) return 0;
+    /* As do_write: a zero-length read validates the fd (UF-F001). Backed: the
+     * description must be readable. Unbacked: fds 0-2 are the console/EOF. */
+    if (count == 0) {
+        file_t* zf = vfs_file((int)fd);
+        if (zf) return ((zf->flags & O_ACCMODE) == O_WRONLY) ? -EBADF : 0;
+        return (fd <= 2) ? 0 : -EBADF;
+    }
     file_t* f = vfs_file((int)fd);
     if (!f) {                                      /* fall back: tty / EOF / EBADF */
         if (fd == 0) {
@@ -328,7 +342,7 @@ static int64_t do_uname(uint64_t ubuf, int from_user) {
     char uts[6 * 65];
     memset(uts, 0, sizeof uts);
     static const char* const f[6] = {
-        "MAKH", "makh", "1.3.0", "MAKH 1.3.0 x86_64", "x86_64", "(none)"
+        "MAKH", "makh", KERNEL_VERSION, "MAKH " KERNEL_VERSION " x86_64", "x86_64", "(none)"
     };
     for (int i = 0; i < 6; i++) {
         size_t l = strlen(f[i]); if (l > 64) l = 64;
@@ -482,7 +496,8 @@ static int64_t do_brk(uint64_t newbrk) {
  * are supported. fd must be the terminal (0/1/2); anything else is -ENOTTY.
  * arg points at a pid_t (the foreground process group). */
 static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_user) {
-    if (fd != 0 && fd != 1 && fd != 2) return -ENOTTY;
+    /* The tty: fds 0-2, or a copy of one made by dup2 / F_DUPFD. */
+    if (fd != 0 && fd != 1 && fd != 2 && !vfs_is_console_copy((int)fd)) return -ENOTTY;
     switch (request) {
         case TCGETS: {
             termios_t* t = tty_termios();
@@ -707,6 +722,12 @@ static int64_t do_arch_prctl(uint64_t code, uint64_t addr) {
     if (!cur || !cur->is_user) return -ENOSYS;
     switch (code) {
         case ARCH_SET_FS:
+            /* Reject a non-canonical / kernel-half base BEFORE it touches the
+             * PCB or the MSR: wrmsr IA32_FS_BASE #GP(0)s on a non-canonical
+             * value, and this runs in ring 0, so an unchecked value here (and
+             * the one re-pinned at every context switch from cur->fs_base)
+             * would fault the kernel, not the process. See user_fs_base_ok. */
+            if (!user_fs_base_ok(addr)) return -EPERM;
             cur->fs_base = addr;
             wrmsr(IA32_FS_BASE, addr);          /* effective immediately */
             return 0;

@@ -33,4 +33,7 @@ uint64_t timer_get_ticks(void);
 void timer_sleep(uint32_t ms);
 void timer_print_stats(void);
 
+/* Test seam (T-L04): invoke fn() once from IRQ context on the next tick. */
+void timer_test_fire_once(void (*fn)(void));
+
 #endif
