@@ -299,3 +299,81 @@ KTEST(vfs, failed_open_has_no_side_effect) {
     while (nh > 0) vfs_close(hoard[--nh]);
     vfs_unlink("/victim");
 }
+
+/* ---- U5.2: fcntl(F_DUPFD) floor contract ----------------------------------
+ * F_DUPFD returns the lowest free fd >= arg, where fds 0-2 are always open (an
+ * empty slot is the implicit console), so arg 0..2 means "lowest free >= 3".
+ * arg < 0 is -EINVAL; arg >= VFS_MAX_FDS can never be satisfied: -EMFILE. The
+ * floor is judged on the full (long) value — 0x80000000 must not wrap to a
+ * negative int and be clamped to 0. Any fd a broken kernel hands back is closed
+ * so the table is left as found. */
+static int vfs_lowest_free_from3(void) {
+    for (int i = 3; i < VFS_MAX_FDS; i++) if (!vfs_file(i)) return i;
+    return -1;
+}
+KTEST(vfs, fcntl_dupfd_floor_contract) {
+    int fd = vfs_open("/dev/zero", O_RDONLY);
+    KASSERT_TEST(fd >= 3);
+    long r;
+
+    r = vfs_fcntl(fd, F_DUPFD, -1);
+    KEXPECT_EQ(r, -EINVAL);
+    if (r >= 0) vfs_close((int)r);
+
+    static const long hi[3] = { VFS_MAX_FDS, 0x80000000L, 0x7fffffff };
+    for (int i = 0; i < 3; i++) {
+        r = vfs_fcntl(fd, F_DUPFD, hi[i]);
+        KEXPECT_EQ(r, -EMFILE);
+        if (r >= 0) vfs_close((int)r);
+    }
+    for (long lo = 0; lo <= 2; lo++) {
+        int want = vfs_lowest_free_from3();
+        r = vfs_fcntl(fd, F_DUPFD, lo);
+        KEXPECT_EQ(r, want);                  /* never 0..2 */
+        if (r >= 0) vfs_close((int)r);
+    }
+    vfs_close(fd);
+}
+
+/* ---- U5.2: fds 0-2 are always open ----------------------------------------
+ * An empty slot 0-2 is the implicit console. It must behave as an open fd for
+ * every descriptor operation: dup2 and F_DUPFD can copy it (the copy is a
+ * console description: O_RDWR, a character device), dup2(1, 1) returns 1, and
+ * the copies are freed exactly (kheap net-zero). A FILLED slot 0-2 is whatever
+ * was installed there: fstat must describe the installed file, not the console. */
+KTEST(vfs, console_fds_are_always_open) {
+    KASSERT_TEST(vfs_file(1) == NULL && vfs_file(2) == NULL);   /* implicit console */
+    size_t hp0 = kheap_get_used();
+    struct stat st;
+
+    int n = vfs_lowest_free_from3();
+    KASSERT_TEST(n >= 3);
+    long r = vfs_dup2(1, n);
+    KEXPECT_EQ(r, n);
+    if (r == n) {
+        KEXPECT_EQ(vfs_fcntl(n, F_GETFL, 0), O_RDWR);
+        KEXPECT_EQ(vfs_fstat(n, &st), 0);
+        KEXPECT(S_ISCHR(st.st_mode));
+        KEXPECT_EQ(vfs_close(n), 0);
+    }
+    int want = vfs_lowest_free_from3();
+    r = vfs_fcntl(2, F_DUPFD, 3);
+    KEXPECT_EQ(r, want);
+    if (r >= 3) KEXPECT_EQ(vfs_close((int)r), 0);
+    KEXPECT_EQ(vfs_dup2(1, 1), 1);
+    KEXPECT(vfs_file(1) == NULL);             /* dup2(x, x) changes nothing */
+    KEXPECT_EQ(kheap_get_used(), hp0);
+
+    /* A filled slot: install a pipe read end on fd 0, fstat(0) must match the
+     * pipe's own fstat; closing fd 0 returns it to the implicit console. */
+    int p[2];
+    KASSERT_TEST(vfs_pipe(p) == 0);
+    struct stat sp;
+    KEXPECT_EQ(vfs_fstat(p[0], &sp), 0);
+    KEXPECT_EQ(vfs_dup2(p[0], 0), 0);
+    KEXPECT_EQ(vfs_fstat(0, &st), 0);
+    KEXPECT_EQ(st.st_mode, sp.st_mode);
+    KEXPECT_EQ(vfs_close(0), 0);
+    KEXPECT(vfs_file(0) == NULL);
+    vfs_close(p[0]); vfs_close(p[1]);
+}

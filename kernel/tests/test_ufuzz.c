@@ -480,6 +480,7 @@ KTEST(ufuzz, fd_oracles_accept_correct_programs) {
     KEXPECT_EQ(u4_run_selfcheck(8), 0);              /* pipe(NULL) = -EFAULT */
     KEXPECT_EQ(u4_run_selfcheck(10), 0);             /* open + close leaves baseline */
     KEXPECT_EQ(u4_run_selfcheck(12), 0);             /* need_free = 1 */
+    KEXPECT_EQ(u4_run_selfcheck(13), 0);             /* F_DUPFD >= 32: -EMFILE documented */
 }
 
 KTEST(ufuzz, contract_oracle_accepts_documented_errno) {
@@ -519,6 +520,32 @@ KTEST(ufuzz, u4_emfile_boundary_is_exact) {
     ufuzz_settle();
     KEXPECT_EQ(pmm_get_free_memory(), pg0);     /* 29 open descriptions fully released, */
     KEXPECT_EQ(kheap_get_used(), hp0);          /* incl. the control's exit with 29 open */
+}
+
+/* ---- U5.2: fd surface (pipe / pipe2 / dup2 / fcntl / openat / socket) -------
+ * Mode 5 programs carry an exact expected result for every call (computed from a
+ * baseline-relative model of the fd table) and must leave the fd table exactly
+ * as the worker found it after each replay pass. Every seed must run clean, and
+ * the batch must be pmm/kheap net-zero (no leaked description, pipe or socket). */
+KTEST(ufuzz, u52_fdops_programs_run_clean) {
+    UFUZZ_SKIP_IF_NOTIMING();
+    const unsigned K = 48;
+    (void)u4_run_cov(5, 0, 0);                  /* warmup: absorb first-touch cost */
+    ufuzz_settle();
+    size_t pg0 = pmm_get_free_memory();
+    size_t hp0 = kheap_get_used();
+
+    int bad = 0;
+    for (unsigned s = 0; s < K; s++) {
+        int st = u4_run_cov(5, s, s * 7919u + 1);
+        if (st != 0) { bad++; kprintf("u52: NOT-CLEAN mode=5 base=%u mut=%u status=%d\n",
+                                      s, s * 7919u + 1, st); }
+    }
+    KEXPECT_EQ(bad, 0);
+
+    ufuzz_settle();
+    KEXPECT_EQ(pmm_get_free_memory(), pg0);
+    KEXPECT_EQ(kheap_get_used(), hp0);
 }
 
 /* Mode 6: every vfs_pipe failure path reachable from Ring 3 (EFAULT copy-out,

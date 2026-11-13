@@ -29,7 +29,7 @@ static const u3_abi_errno_row U3_ABI_ERRNO[] = {
     { 21, 2, { 2, 14 } },   /* ENOENT EFAULT */
     { 22, 2, { 14, 24 } },   /* EFAULT EMFILE */
     { 28, 0, { 0 } },   /* - */
-    { 33, 1, { 9 } },   /* EBADF */
+    { 33, 2, { 9, 12 } },   /* EBADF ENOMEM */
     { 35, 3, { 4, 14, 22 } },   /* EINTR EINVAL EFAULT */
     { 39, 0, { 0 } },   /* - */
     { 41, 3, { 22, 24, 97 } },   /* EAFNOSUPPORT EINVAL EMFILE */
@@ -42,7 +42,7 @@ static const u3_abi_errno_row U3_ABI_ERRNO[] = {
     { 61, 3, { 4, 10, 14 } },   /* ECHILD EINTR EFAULT */
     { 62, 2, { 3, 22 } },   /* ESRCH EINVAL */
     { 63, 1, { 14 } },   /* EFAULT */
-    { 72, 2, { 9, 22 } },   /* EBADF EINVAL */
+    { 72, 4, { 9, 12, 22, 24 } },   /* EBADF EINVAL EMFILE ENOMEM */
     { 79, 2, { 14, 34 } },   /* ERANGE EFAULT */
     { 80, 3, { 2, 14, 20 } },   /* ENOENT ENOTDIR EFAULT */
     { 82, 3, { 2, 14, 18 } },   /* ENOENT EXDEV EFAULT */

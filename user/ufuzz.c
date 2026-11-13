@@ -576,7 +576,9 @@ static int run_cov_one(int mode, unsigned long base_seed, unsigned long mut_seed
  *   9 / 10  open() with no close / open()+close() (the fd-baseline isolation
  *           guard: a program that leaks an fd past a pass must be caught);
  *  11 / 12  need_free = 32 (more than the table can ever have free) / need_free
- *           = 1 (the baseline-precondition check). */
+ *           = 1 (the baseline-precondition check).
+ *  13       fcntl(fd, F_DUPFD, 32) = -EMFILE judged against fcntl's documented
+ *           errno set: a POSITIVE control (the contract must list EMFILE). */
 static int run_selfcheck(int kind) {
     u3g_ncalls = u3g_nbufs = u3g_nhandles = u3g_nfd = u3g_naddr = 0;
     u3g_overflow = 0;
@@ -606,6 +608,13 @@ static int run_selfcheck(int kind) {
     } else if (kind == 9 || kind == 10) {
         u3g_emit_open();                                        /* expect: a new fd */
         if (kind == 10) u3g_emit_close(u3g_live_fd[0]);
+    } else if (kind == 13) {
+        u3g_emit_open();
+        c = u3g_begin(U3G_FCNTL, 3, U3_BIND_NONE, 0);
+        u3g_set(c, 0, U3_RES, u3g_live_fd[0]); u3g_set(c, 1, U3_IMM, U3G_F_DUPFD);
+        u3g_set(c, 2, U3_IMM, 32);
+        c->expect_mode = U3_EXACT; c->expect_val = -U3G_EMFILE;
+        u3g_emit_close(u3g_live_fd[0]);
     } else if (kind == 11 || kind == 12) {
         (void)u3g_begin(U3G_GETPID, 0, U3_BIND_NONE, 0);
     } else if (kind == 4) {

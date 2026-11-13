@@ -482,7 +482,8 @@ static int64_t do_brk(uint64_t newbrk) {
  * are supported. fd must be the terminal (0/1/2); anything else is -ENOTTY.
  * arg points at a pid_t (the foreground process group). */
 static int64_t do_ioctl(uint64_t fd, uint64_t request, uint64_t arg, int from_user) {
-    if (fd != 0 && fd != 1 && fd != 2) return -ENOTTY;
+    /* The tty: fds 0-2, or a copy of one made by dup2 / F_DUPFD. */
+    if (fd != 0 && fd != 1 && fd != 2 && !vfs_is_console_copy((int)fd)) return -ENOTTY;
     switch (request) {
         case TCGETS: {
             termios_t* t = tty_termios();

@@ -353,9 +353,10 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
   - `oldfd` : `int` — resource `fd`
   - `newfd` : `int` — resource `fd`
 - **returns:** `int` — newfd; -errno
-- **errno:** `EBADF`
+- **errno:** `EBADF`, `ENOMEM`
 - **resources:** +fd
 - **side effects:** closes newfd first if it was open
+- **notes:** fds 0-2 are always open: an empty slot 0-2 is the implicit console and is a valid oldfd (the copy is a new console description). oldfd == newfd returns newfd unchanged
 
 ### `nanosleep` — SYS_NANOSLEEP (nr 35, implemented)
 
@@ -498,9 +499,9 @@ This inventory is what UFUZZ treats as the MAKH Ring-3 syscall ABI. It is checke
   - `cmd` : `int`
   - `arg` : `unsigned long` — interpretation depends on cmd
 - **returns:** `int` — cmd-dependent; -errno
-- **errno:** `EBADF`, `EINVAL`
+- **errno:** `EBADF`, `EINVAL`, `EMFILE`, `ENOMEM`
 - **resources:** +fd
-- **notes:** a subset of commands (e.g. F_DUPFD / F_GETFD / F_SETFD / F_GETFL); creates an fd only for F_DUPFD
+- **notes:** commands F_DUPFD / F_GETFD / F_SETFD / F_GETFL / F_SETFL; others -EINVAL. F_DUPFD returns the lowest free fd >= arg (fds 0-2 are always open, so arg 0..2 means >= 3); arg < 0 is -EINVAL, arg >= 32 (the table size) or no free slot is -EMFILE. F_GETFD is always 0 and F_SETFD is accepted but FD_CLOEXEC is not tracked. F_SETFL changes only O_APPEND / O_NONBLOCK. Creates an fd only for F_DUPFD
 
 ### `getcwd` — SYS_GETCWD (nr 79, implemented)
 

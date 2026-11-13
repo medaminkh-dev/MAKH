@@ -252,9 +252,10 @@
         {"name":"oldfd","kind":"scalar","ctype":"int","res":"fd"},
         {"name":"newfd","kind":"scalar","ctype":"int","res":"fd"}
       ],
-      "ret":{"ctype":"int","meaning":"newfd; -errno"},"errno":["EBADF"],
+      "ret":{"ctype":"int","meaning":"newfd; -errno"},"errno":["EBADF","ENOMEM"],
       "resources":{"creates":["fd"],"consumes":[],"releases":[]},
-      "side_effects":"closes newfd first if it was open" },
+      "side_effects":"closes newfd first if it was open",
+      "notes":"fds 0-2 are always open: an empty slot 0-2 is the implicit console and is a valid oldfd (the copy is a new console description). oldfd == newfd returns newfd unchanged" },
 
     { "name": "nanosleep", "sys": "SYS_NANOSLEEP", "nr": 35, "impl": "implemented", "handler": "do_nanosleep", "src": "kernel/syscall/syscall.c",
       "args":[
@@ -364,9 +365,9 @@
         {"name":"cmd","kind":"scalar","ctype":"int"},
         {"name":"arg","kind":"scalar","ctype":"unsigned long","notes":"interpretation depends on cmd"}
       ],
-      "ret":{"ctype":"int","meaning":"cmd-dependent; -errno"},"errno":["EBADF","EINVAL"],
+      "ret":{"ctype":"int","meaning":"cmd-dependent; -errno"},"errno":["EBADF","EINVAL","EMFILE","ENOMEM"],
       "resources":{"creates":["fd"],"consumes":[],"releases":[]},
-      "notes":"a subset of commands (e.g. F_DUPFD / F_GETFD / F_SETFD / F_GETFL); creates an fd only for F_DUPFD" },
+      "notes":"commands F_DUPFD / F_GETFD / F_SETFD / F_GETFL / F_SETFL; others -EINVAL. F_DUPFD returns the lowest free fd >= arg (fds 0-2 are always open, so arg 0..2 means >= 3); arg < 0 is -EINVAL, arg >= 32 (the table size) or no free slot is -EMFILE. F_GETFD is always 0 and F_SETFD is accepted but FD_CLOEXEC is not tracked. F_SETFL changes only O_APPEND / O_NONBLOCK. Creates an fd only for F_DUPFD" },
 
     { "name": "getcwd", "sys": "SYS_GETCWD", "nr": 79, "impl": "implemented", "handler": "do_getcwd", "src": "kernel/syscall/syscall.c",
       "args":[
