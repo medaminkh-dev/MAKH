@@ -1,0 +1,46 @@
+=== MAKH test runner ===
+qemu: qemu-system-x86_64 -cdrom makhos-suite.iso -m 256M -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -accel tcg -drive file=build/testdisk.img,if=none,id=vblk0,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off -drive file=build/ext2.img,if=none,id=vblk1,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk1,disable-modern=on,disable-legacy=off
+UFZ1 build id=275af01-dirty
+[ RUN  ] ufuzz.u52_pipe_failure_paths_roll_back
+UFZ1 tcb n=0 src=cov a=6 b=0 c=0
+UFZ1 tc n=0 cpid=3 status=0 expect=ok
+UFZ1 tcb n=1 src=cov a=6 b=0 c=0
+UFZ1 tc n=1 cpid=6 status=0 expect=ok
+[ PASS ] ufuzz.u52_pipe_failure_paths_roll_back (3 checks)
+[ RUN  ] ufuzz.u52_fdops_programs_run_clean
+UFZ1 tcb n=2 src=cov a=5 b=0 c=0
+UFZ1 tc n=2 cpid=9 status=0 expect=ok
+UFZ1 tcb n=3 src=cov a=5 b=0 c=1
+UFZ1 tc n=3 cpid=12 status=0 expect=ok
+UFZ1 tcb n=4 src=cov a=5 b=1 c=7920
+UFZ1 tc n=4 cpid=15 status=0 expect=ok
+UFZ1 tcb n=5 src=cov a=5 b=2 c=15839
+UFZ1 tc n=5 cpid=18 status=0 expect=ok
+UFZ1 tcb n=6 src=cov a=5 b=3 c=23758
+UFZ1 tc n=6 cpid=21 status=0 expect=ok
+UFZ1 tcb n=7 src=cov a=5 b=4 c=31677
+UFZ1 tc n=7 cpid=24 status=0 expect=ok
+UFZ1 tcb n=8 src=cov a=5 b=5 c=39596
+UFZ1 tc n=8 cpid=27 status=0 expect=ok
+UFZ1 tcb n=9 src=cov a=5 b=6 c=47515
+UFZ1 tc n=9 cpid=30 status=0 expect=ok
+UFZ1 tcb n=10 src=cov a=5 b=7 c=55434
+UFZ1 tc n=10 cpid=33 status=0 expect=ok
+UFZ1 tcb n=11 src=cov a=5 b=8 c=63353
+UFZ1 tc n=11 cpid=36 status=0 expect=ok
+UFZ1 tcb n=12 src=cov a=5 b=9 c=71272
+!!! EXCEPTION CAUGHT !!!
+Exception: Page Fault (vector 14)
+Error code: 0x0
+RIP=0xffffffff80122476 RSP=0xffff9000007afa90 RBP=0xffff9000007afac0 RFLAGS=46
+Page fault address: 0x4
+Thread: 'user' pid 40
+  #-  0xffffffff80122476  (faulting RIP)
+Backtrace:
+  #0  0xffffffff801238cf
+  #1  0xffffffff801098dc
+  #2  0xffffffff8010adab
+  #3  0xffffffff801012cd
+=== qemu exit status: 7 ===
+=== RESULT: FAIL (kernel exit code 3) ===
+make: *** [Makefile:542: test-suite] Error 1

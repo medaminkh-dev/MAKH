@@ -1,0 +1,160 @@
+=== MAKH test runner ===
+qemu: qemu-system-x86_64 -cdrom makhos-stress.iso -m 256M -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -accel tcg -drive file=build/testdisk.img,if=none,id=vblk0,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off -drive file=build/ext2.img,if=none,id=vblk1,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk1,disable-modern=on,disable-legacy=off
+[ RUN  ] string.strchr
+[ PASS ] string.strchr (4 checks)
+[ RUN  ] string.strlen_strcmp_strcpy
+[ PASS ] string.strlen_strcmp_strcpy (7 checks)
+[ RUN  ] string.memmove_overlap_forward
+[ PASS ] string.memmove_overlap_forward (8 checks)
+[ RUN  ] string.memcpy_nonoverlapping
+[ PASS ] string.memcpy_nonoverlapping (1 checks)
+[ RUN  ] string.memset_and_memcmp
+[ PASS ] string.memset_and_memcmp (66 checks)
+[ RUN  ] kheap.expand_failure_is_atomic
+[ PASS ] kheap.expand_failure_is_atomic (4 checks)
+[ RUN  ] kheap.integrity_walker_detects_smashed_footer
+[ PASS ] kheap.integrity_walker_detects_smashed_footer (4 checks)
+[ RUN  ] kheap.integrity_walker_passes_after_churn
+[ PASS ] kheap.integrity_walker_passes_after_churn (66 checks)
+[ RUN  ] kheap.krealloc_preserves_prefix
+[ PASS ] kheap.krealloc_preserves_prefix (18 checks)
+[ RUN  ] kheap.free_and_coalesce_reclaims_space
+[ PASS ] kheap.free_and_coalesce_reclaims_space (201 checks)
+[ RUN  ] kheap.kcalloc_zeroes
+[ PASS ] kheap.kcalloc_zeroes (257 checks)
+[ RUN  ] kheap.write_read_does_not_corrupt_neighbours
+[ PASS ] kheap.write_read_does_not_corrupt_neighbours (4128 checks)
+[ RUN  ] kheap.returns_16byte_aligned
+[ PASS ] kheap.returns_16byte_aligned (22 checks)
+[ RUN  ] vmm.hhdm_aliases_physical_frame
+[ PASS ] vmm.hhdm_aliases_physical_frame (5 checks)
+[ RUN  ] pmm.allocated_frame_is_writable
+[ PASS ] pmm.allocated_frame_is_writable (3 checks)
+[ RUN  ] pmm.free_then_realloc_conserves_count
+[ PASS ] pmm.free_then_realloc_conserves_count (3 checks)
+[ RUN  ] pmm.alloc_is_page_aligned_and_unique
+[ PASS ] pmm.alloc_is_page_aligned_and_unique (152 checks)
+[ RUN  ] fmt.uint64_to_hex_basic
+[ PASS ] fmt.uint64_to_hex_basic (3 checks)
+[ RUN  ] fmt.uint64_to_string_basic
+[ PASS ] fmt.uint64_to_string_basic (4 checks)
+[ RUN  ] sched.new_threads_have_armed_stack_canary
+[ PASS ] sched.new_threads_have_armed_stack_canary (4 checks)
+[ RUN  ] sched.exiting_children_are_unlinked_and_orphans_reparented
+[ PASS ] sched.exiting_children_are_unlinked_and_orphans_reparented (44 checks)
+[ RUN  ] sched.init_is_findable_and_tree_consistent
+[ PASS ] sched.init_is_findable_and_tree_consistent (3 checks)
+[ RUN  ] sched.higher_priority_runs_first
+[ PASS ] sched.higher_priority_runs_first (5 checks)
+[ RUN  ] sched.create_join_churn_no_leak
+[ PASS ] sched.create_join_churn_no_leak (3002 checks)
+[ RUN  ] sched.producer_consumer_wait_queue
+[ PASS ] sched.producer_consumer_wait_queue (5 checks)
+[ RUN  ] sched.sleep_waits_at_least_requested
+[ PASS ] sched.sleep_waits_at_least_requested (2 checks)
+[ RUN  ] sched.preemption_runs_a_busy_thread_while_we_sleep
+[ PASS ] sched.preemption_runs_a_busy_thread_while_we_sleep (3 checks)
+[ RUN  ] sched.many_threads_all_make_progress
+[ PASS ] sched.many_threads_all_make_progress (17 checks)
+[ RUN  ] sched.join_returns_exit_code
+[ PASS ] sched.join_returns_exit_code (3 checks)
+[ RUN  ] pthread.invalid_arguments_rejected
+[ PASS ] pthread.invalid_arguments_rejected (31 checks)
+[ RUN  ] pthread.sem_timedwait_times_out
+[ PASS ] pthread.sem_timedwait_times_out (3 checks)
+[ RUN  ] pthread.detached_threads_are_reaped
+[ PASS ] pthread.detached_threads_are_reaped (52 checks)
+[ RUN  ] pthread.join_after_exit_and_retval_churn
+[ PASS ] pthread.join_after_exit_and_retval_churn (601 checks)
+[ RUN  ] pthread.cond_broadcast_wakes_all
+[ PASS ] pthread.cond_broadcast_wakes_all (12 checks)
+[ RUN  ] pthread.spinlock_mutual_exclusion
+[ PASS ] pthread.spinlock_mutual_exclusion (1 checks)
+[ RUN  ] pthread.semaphore_trywait
+[ PASS ] pthread.semaphore_trywait (3 checks)
+[ RUN  ] pthread.semaphore_limits_concurrency
+[ PASS ] pthread.semaphore_limits_concurrency (2 checks)
+[ RUN  ] pthread.tls_isolation_and_destructor
+[ PASS ] pthread.tls_isolation_and_destructor (7 checks)
+[ RUN  ] pthread.once_runs_exactly_once
+[ PASS ] pthread.once_runs_exactly_once (1 checks)
+[ RUN  ] pthread.barrier_releases_all
+[ PASS ] pthread.barrier_releases_all (2 checks)
+[ RUN  ] pthread.rwlock_reader_writer_invariants
+[ PASS ] pthread.rwlock_reader_writer_invariants (1 checks)
+[ RUN  ] pthread.cond_timedwait_times_out
+[ PASS ] pthread.cond_timedwait_times_out (2 checks)
+[ RUN  ] pthread.cond_producer_consumer
+[ PASS ] pthread.cond_producer_consumer (6 checks)
+[ RUN  ] pthread.mutex_trylock_busy
+[ PASS ] pthread.mutex_trylock_busy (3 checks)
+[ RUN  ] pthread.mutex_recursive_and_errorcheck
+[ PASS ] pthread.mutex_recursive_and_errorcheck (8 checks)
+[ RUN  ] pthread.mutex_mutual_exclusion
+[ PASS ] pthread.mutex_mutual_exclusion (13 checks)
+[ RUN  ] pthread.create_join_returns_value
+[ PASS ] pthread.create_join_returns_value (3 checks)
+[ RUN  ] net_hw.nic_counters_move
+[ PASS ] net_hw.nic_counters_move (5 checks)
+[ RUN  ] net_hw.ping_gateway
+[ PASS ] net_hw.ping_gateway (1 checks)
+[ RUN  ] net_hw.arp_resolves_gateway
+[ PASS ] net_hw.arp_resolves_gateway (4 checks)
+[ RUN  ] net.tcp_accept_timeout_and_close_unblocks
+[ PASS ] net.tcp_accept_timeout_and_close_unblocks (8 checks)
+[ RUN  ] net.tcp_concurrent_clients
+[ PASS ] net.tcp_concurrent_clients (31 checks)
+[ RUN  ] net.tcp_connect_refused
+[ PASS ] net.tcp_connect_refused (3 checks)
+[ RUN  ] net.tcp_bulk_with_packet_loss
+[ PASS ] net.tcp_bulk_with_packet_loss (2 checks)
+[ RUN  ] net.tcp_bulk_200k_flow_control
+[ PASS ] net.tcp_bulk_200k_flow_control (1 checks)
+[ RUN  ] net.tcp_loopback_echo
+[ PASS ] net.tcp_loopback_echo (10 checks)
+[ RUN  ] net.socket_api_errors
+[ PASS ] net.socket_api_errors (21 checks)
+[ RUN  ] net.udp_timeout_and_truncation
+[ PASS ] net.udp_timeout_and_truncation (7 checks)
+[ RUN  ] net.udp_many_datagrams_in_order
+[ PASS ] net.udp_many_datagrams_in_order (122 checks)
+[ RUN  ] net.udp_loopback_roundtrip
+[ PASS ] net.udp_loopback_roundtrip (9 checks)
+[ RUN  ] net.ping_loopback
+[ PASS ] net.ping_loopback (5 checks)
+[ RUN  ] net.route_selection
+[ PASS ] net.route_selection (8 checks)
+[ RUN  ] net.ip_string_roundtrip
+[ PASS ] net.ip_string_roundtrip (11 checks)
+[ RUN  ] net.inet_checksum_vectors
+[ PASS ] net.inet_checksum_vectors (3 checks)
+[ RUN  ] shell.ping_loopback_succeeds
+[ PASS ] shell.ping_loopback_succeeds (1 checks)
+[ RUN  ] shell.ping_validates_arguments
+[ PASS ] shell.ping_validates_arguments (6 checks)
+[ RUN  ] shell.mem_and_heapcheck_report_healthy_heap
+[ PASS ] shell.mem_and_heapcheck_report_healthy_heap (2 checks)
+[ RUN  ] shell.info_commands_succeed
+[ PASS ] shell.info_commands_succeed (7 checks)
+[ RUN  ] shell.overlong_line_is_truncated_safely
+[ PASS ] shell.overlong_line_is_truncated_safely (1 checks)
+[ RUN  ] shell.unknown_command_is_127
+[ PASS ] shell.unknown_command_is_127 (1 checks)
+[ RUN  ] shell.empty_and_blank_lines_are_noops
+[ PASS ] shell.empty_and_blank_lines_are_noops (3 checks)
+[ RUN  ] shell.tokenizer_caps_argc
+[ PASS ] shell.tokenizer_caps_argc (2 checks)
+[ RUN  ] shell.tokenizer_splits_on_runs_of_whitespace
+[ PASS ] shell.tokenizer_splits_on_runs_of_whitespace (4 checks)
+[ RUN  ] kfuzz.campaign_over_all_targets_builds_coverage
+[ PASS ] kfuzz.campaign_over_all_targets_builds_coverage (4 checks)
+[ RUN  ] kfuzz.target_ext2img
+*** KERNEL PANIC ***
+KFUZZ watchdog: target 'ext2img' hung on seed 0xff2be74ccec109b6
+Backtrace:
+  #0  0xffffffff8010bee3
+  #1  0xffffffff80107488
+  #2  0xffffffff80118a44
+  #3  0xffffffff801188e0
+=== qemu exit status: 5 ===
+=== RESULT: FAIL (kernel exit code 2) ===

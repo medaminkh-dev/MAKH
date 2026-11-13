@@ -1,0 +1,21 @@
+=== MAKH test runner ===
+qemu: qemu-system-x86_64 -cdrom makhos-suite.iso -m 256M -display none -serial stdio -no-reboot -device isa-debug-exit,iobase=0xf4,iosize=0x04 -accel tcg -drive file=build/testdisk.img,if=none,id=vblk0,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk0,disable-modern=on,disable-legacy=off -drive file=build/ext2.img,if=none,id=vblk1,format=raw,snapshot=on -device virtio-blk-pci,drive=vblk1,disable-modern=on,disable-legacy=off
+UFZ1 build id=275af01-dirty
+[ RUN  ] ufuzzreplay.run
+UFZ1 replay begin a=5 b=9 c=71272 runs=5
+UFZ1 tcb n=0 src=cov a=5 b=9 c=71272
+!!! EXCEPTION CAUGHT !!!
+Exception: Page Fault (vector 14)
+Error code: 0x0
+RIP=0xffffffff80122476 RSP=0xffff9000007b0d80 RBP=0xffff9000007b0db0 RFLAGS=46
+Page fault address: 0x4
+Thread: 'user' pid 4
+  #-  0xffffffff80122476  (faulting RIP)
+Backtrace:
+  #0  0xffffffff801238cf
+  #1  0xffffffff801098dc
+  #2  0xffffffff8010adab
+  #3  0xffffffff801012cd
+=== qemu exit status: 7 ===
+=== RESULT: FAIL (kernel exit code 3) ===
+make: *** [Makefile:542: test-suite] Error 1
